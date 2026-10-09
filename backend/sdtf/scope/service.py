@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session
 
 from ..catalog.business_objects import BUSINESS_OBJECTS
 from ..catalog.tables import TABLES
-from ..graph.service import Graph, TraversalPolicy, load_graph, split_node, traverse
+from ..graph.service import Graph, TraversalPolicy, split_node
 from ..models import BusinessObjectInstance, SapSystem, ScopeManifest
 from .models import ScopeDefinition
 
@@ -21,10 +21,14 @@ def _bo_index(session: Session, system_id: str) -> dict[str, BusinessObjectInsta
     return {f"{r.object_type}:{r.object_key}": r for r in rows}
 
 
-def select_seeds(defn: ScopeDefinition, g: Graph, idx: dict[str, BusinessObjectInstance]) -> tuple[list[str], list[dict]]:
+def _nodes(g) -> dict[str, dict]:
+    return g.nodes if isinstance(g, Graph) else g
+
+
+def select_seeds(defn: ScopeDefinition, g, idx: dict[str, BusinessObjectInstance]) -> tuple[list[str], list[dict]]:
     seeds, skipped = [], []
     scope_ccs = set(defn.company_codes)
-    for nid, node in g.nodes.items():
+    for nid, node in _nodes(g).items():
         t = node["type"]
         bo = BUSINESS_OBJECTS.get(t)
         if bo is None or node["attributes"].get("missing"):
@@ -68,12 +72,13 @@ def select_seeds(defn: ScopeDefinition, g: Graph, idx: dict[str, BusinessObjectI
     return seeds, skipped
 
 
-def classify(defn: ScopeDefinition, g: Graph, idx: dict[str, BusinessObjectInstance], included: dict[str, str]) -> dict[str, dict]:
+def classify(defn: ScopeDefinition, g, idx: dict[str, BusinessObjectInstance], included: dict[str, str]) -> dict[str, dict]:
     scope_ccs = set(defn.company_codes)
     out: dict[str, dict] = {}
-    export_controlled = {split_node(n)[1] for n in g.nodes if n.startswith("Z.ExportControl:")}
+    nodes = _nodes(g)
+    export_controlled = {split_node(n)[1] for n in nodes if n.startswith("Z.ExportControl:")}
     for nid, inclusion in included.items():
-        node = g.nodes[nid]
+        node = nodes[nid]
         t = node["type"]
         bo = BUSINESS_OBJECTS.get(t)
         ccs = node["attributes"].get("company_codes") or []
@@ -177,18 +182,21 @@ def impact_of(classification: dict[str, dict], traces: list[dict], stopped: list
 
 
 def evaluate_scope(session: Session, defn: ScopeDefinition) -> dict:
-    g = load_graph(session, defn.source_system_id)
-    if not g.nodes:
+    """Seeds and classification need node attributes only; expansion is delegated to the graph store, which
+    traverses in process (relational) or server-side by frontier (Neo4j) without loading all edges here."""
+    from ..graph.store import get_graph_store
+
+    store = get_graph_store(session)
+    nodes = {n["id"]: n for n in store.iter_nodes(defn.source_system_id)}
+    if not nodes:
         raise ValueError("Dependency graph has not been built for the source system")
     idx = _bo_index(session, defn.source_system_id)
-    seeds, skipped = select_seeds(defn, g, idx)
+    seeds, skipped = select_seeds(defn, nodes, idx)
     pol = TraversalPolicy()
     pol.edge_policies.update(defn.edge_policies)
     pol.type_policies.update(defn.type_policies)
-    if defn.shared_object_policy == "EXCLUDE":
-        pass  # handled in classification (shared masters become EXCLUDED but are still discovered for reporting)
-    res = traverse(g, seeds, pol)
-    classification = classify(defn, g, idx, res.included)
+    res = store.traverse(defn.source_system_id, seeds, pol)
+    classification = classify(defn, nodes, idx, res.included)
     impact = impact_of(classification, res.traces, res.stopped, skipped, res.missing)
     return {"definition": defn.model_dump(), "impact": impact, "classification": classification, "traces": res.traces, "stopped": res.stopped, "skipped": skipped, "missing": res.missing}
 

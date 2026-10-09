@@ -16,7 +16,7 @@ Legend: P0 next increment · P1 following · P2 later. Sizes are relative (S/M/L
 | ✅ | Multi-source MERGER orchestration, key-collision planner, master-data dedup (done: `runtime/merge.py`, `catalog/dedup.py`) | L |
 | ✅ | OpenTelemetry traces/metrics/JSON logs (ADR-0011) | M |
 | ✅ | Property-graph backend adapter: Neo4j store behind `GraphStore` (ADR-0004) | M |
-| P1 | Server-side policy traversal in Neo4j for scope evaluation on very large graphs | M |
+| ✅ | Server-side policy traversal in Neo4j (frontier traversal with identical policy semantics); scope evaluation no longer loads edges | M |
 | P1 | Scope designer: saved scenarios, scenario matrix comparison across >2 manifests | S |
 | P1 | Carve-out: asset vs share deal templates, residual cleanup execution with approval workflow | M |
 | P1 | Rule editor: visual mapping grid, lookup table upload, per-rule approval | M |

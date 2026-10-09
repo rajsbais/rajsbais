@@ -16,6 +16,10 @@ graph into the in-process `Graph` for scope traversal. Selected by `SDTF_GRAPH_B
 ## Consequences
 + No extra infrastructure by default; transactional consistency with manifests; Neo4j available for large
   landscapes and for graph-native exploration by analysts.
-− Scope traversal still loads the system graph into memory (server-side traversal with policies is the next
-  step); the Neo4j adapter is verified at Cypher-statement level and through an opt-in integration test, not
-  against a live server in this environment.
++ Traversal is part of the store contract: the relational store traverses in process; the Neo4j store runs a
+  server-side *frontier* traversal (one adjacency query per depth level over the current frontier, chunked), applying
+  the same policy function as the in-process algorithm, so inclusion ranks, stopped and missing sets are identical
+  while only the frontier's edges are transferred. Scope evaluation streams node rows (no edges) for seeds and
+  classification and delegates expansion to the store.
+− The Neo4j adapter is verified at Cypher-statement level (including traversal parity across policies) and through
+  an opt-in integration test, not against a live server in this environment.

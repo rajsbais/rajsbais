@@ -25,6 +25,13 @@ FOLLOW / REFERENCE / STOP / FLAG, max depth, direction. Output: `included{node: 
 (node, from, edge, policy, depth, reason), `stopped[]`, `missing[]`. Inclusion strength only ever increases
 (REFERENCE < FLAGGED < FULL) so results are order-independent.
 
+## Server-side traversal
+`GraphStore.traverse` is the entry point used by scope evaluation and the API. The relational store runs the
+algorithm above in process; the Neo4j store runs it as a frontier traversal: per depth level one adjacency query
+over the current frontier (chunks of 5,000 ids, reverse query added for `direction=BOTH`), with policy decisions
+made by the shared `apply_edge_policy` function, so results are identical and memory is bounded by the included
+set rather than the graph. Scope evaluation streams node rows only (`iter_nodes`) for seeding and classification.
+
 ## Version awareness
 Node types and resolvers are keyed by object type; the catalog carries ECC vs S/4 applicability and the compatibility
 registry maps data-model changes (MKPF/MSEG→MATDOC, BSEG→ACDOCA, KNA1/LFA1→BP). A second resolver set for S/4 sources

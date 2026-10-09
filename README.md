@@ -38,7 +38,7 @@ migrations, deployment) for the Phase 1 foundation and the first vertical slice.
 ## Quick start
 ```bash
 python3 -m venv .venv && . .venv/bin/activate && pip install -e "backend[dev]"
-cd backend && pytest -q                      # 89 tests (+ opt-in UI e2e and Neo4j integration)
+cd backend && pytest -q                      # 95 tests (+ opt-in UI e2e and Neo4j integration)
 python -m sdtf.cli demo                      # full vertical slice, prints the execution report
 python -m sdtf.cli serve                     # API http://localhost:8000/docs
 cd ../frontend && npm install && npm run dev # UI http://localhost:5173 (login architect/architect)

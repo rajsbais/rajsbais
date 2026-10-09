@@ -13,7 +13,7 @@ from ..catalog.tables import TABLES
 from ..db import get_db
 from ..demo import create_demo_project
 from ..discovery.service import discover_system, latest_snapshot
-from ..graph.service import TraversalPolicy, build_graph, load_graph, persist_graph, traverse
+from ..graph.service import TraversalPolicy, build_graph, persist_graph
 from ..models import (
     BusinessObjectInstance,
     MigrationRun,
@@ -268,11 +268,12 @@ class TraverseRequest(BaseModel):
 
 @router.post("/systems/{system_id}/graph/traverse", tags=["graph"])
 def graph_traverse(req: TraverseRequest, s: SapSystem = Depends(get_system), db: Session = Depends(get_db), p: Principal = Depends(require("project:read"))):
-    g = load_graph(db, s.id)
+    from ..graph.store import get_graph_store
+
     pol = TraversalPolicy(max_depth=req.max_depth)
     pol.edge_policies.update(req.edge_policies)
     pol.type_policies.update(req.type_policies)
-    res = traverse(g, req.seeds, pol)
+    res = get_graph_store(db).traverse(s.id, req.seeds, pol)
     return {"included": res.included, "traces": res.traces[:2000], "stopped": res.stopped[:500], "missing": res.missing}
 
 

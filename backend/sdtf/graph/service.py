@@ -116,6 +116,31 @@ class TraversalResult:
     missing: list[str] = field(default_factory=list)
 
 
+RANK = {"FULL": 3, "FLAGGED": 2, "REFERENCE": 1}
+INCLUSION = {"FOLLOW": "FULL", "REFERENCE": "REFERENCE", "FLAG": "FLAGGED"}
+
+
+def apply_edge_policy(res: TraversalResult, policy: TraversalPolicy, cur: str, tgt: str, tgt_type: str, tgt_missing: bool, edge_type: str, edge_name: str | None, depth: int) -> bool:
+    """Apply the traversal policy to one edge (cur -> tgt). Returns True when tgt must be expanded further.
+    Shared by the in-process traversal and the server-side frontier traversal so both have identical semantics."""
+    if tgt_missing:
+        if tgt not in res.missing:
+            res.missing.append(tgt)
+        return False
+    pol = policy.policy_for(edge_type, tgt_type)
+    reason = f"Reached via {edge_name or edge_type} from {cur} ({edge_type} policy={pol})"
+    if pol == "STOP":
+        res.stopped.append({"node": tgt, "from": cur, "edge": edge_type, "reason": reason})
+        return False
+    inclusion = INCLUSION[pol]
+    prev = res.included.get(tgt)
+    if prev is not None and RANK[prev] >= RANK[inclusion]:
+        return False
+    res.included[tgt] = inclusion
+    res.traces.append({"node": tgt, "from": cur, "edge": edge_type, "edge_name": edge_name, "policy": pol, "depth": depth + 1, "reason": reason})
+    return pol in ("FOLLOW", "FLAG")
+
+
 def traverse(g: Graph, seeds: list[str], policy: TraversalPolicy | None = None) -> TraversalResult:
     policy = policy or TraversalPolicy()
     res = TraversalResult()
@@ -137,23 +162,7 @@ def traverse(g: Graph, seeds: list[str], policy: TraversalPolicy | None = None) 
             tnode = g.nodes.get(tgt)
             if tnode is None:
                 continue
-            if tnode["attributes"].get("missing"):
-                if tgt not in res.missing:
-                    res.missing.append(tgt)
-                continue
-            pol = policy.policy_for(e["type"], tnode["type"])
-            reason = f"Reached via {e['attributes'].get('name', e['type'])} from {cur} ({e['type']} policy={pol})"
-            if pol == "STOP":
-                res.stopped.append({"node": tgt, "from": cur, "edge": e["type"], "reason": reason})
-                continue
-            inclusion = {"FOLLOW": "FULL", "REFERENCE": "REFERENCE", "FLAG": "FLAGGED"}[pol]
-            prev = res.included.get(tgt)
-            rank = {"FULL": 3, "FLAGGED": 2, "REFERENCE": 1}
-            if prev is not None and rank[prev] >= rank[inclusion]:
-                continue
-            res.included[tgt] = inclusion
-            res.traces.append({"node": tgt, "from": cur, "edge": e["type"], "edge_name": e["attributes"].get("name"), "policy": pol, "depth": depth + 1, "reason": reason})
-            if pol in ("FOLLOW", "FLAG"):
+            if apply_edge_policy(res, policy, cur, tgt, tnode["type"], bool(tnode["attributes"].get("missing")), e["type"], e["attributes"].get("name"), depth):
                 q.append((tgt, depth + 1))
     return res
 

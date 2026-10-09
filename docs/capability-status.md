@@ -6,7 +6,7 @@
 | Landscape discovery & Enterprise Analyzer | IMPLEMENTED | runs on record store; real DDIC/stat sources planned |
 | Org structure explorer | IMPLEMENTED | |
 | Business object catalog & S/4 compatibility registry | IMPLEMENTED | 26 object types, 9 compatibility items |
-| Dependency graph + explainable traversal | IMPLEMENTED | relational store by default; Neo4j property-graph adapter verified at Cypher level and via opt-in integration test |
+| Dependency graph + explainable traversal | IMPLEMENTED | relational store by default; Neo4j property-graph adapter with server-side frontier traversal, verified at Cypher level (policy parity) and via opt-in integration test |
 | Scope designer, impact preview, what-if compare | IMPLEMENTED | |
 | Versioned immutable manifest, dispositions, four-eyes approval | IMPLEMENTED | |
 | Carve-out classification, completeness, residual exposure, IC balances | IMPLEMENTED | cleanup never executed automatically |

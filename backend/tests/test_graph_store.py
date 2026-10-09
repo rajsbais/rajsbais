@@ -154,3 +154,90 @@ def test_neo4j_integration(small_graph):
         assert any(n["id"] == so for n in nb["nodes"])
     finally:
         store.close()
+
+
+class FakeCypherWithTraversal(FakeCypher):
+    """Adds the paged node listing and the frontier adjacency queries used by server-side traversal."""
+
+    def __call__(self, query: str, params: dict) -> list[dict]:
+        sid = params.get("sid")
+        if "WHERE n.node_id > $after" in query:
+            rows = sorted(((k[1], v) for k, v in self.nodes.items() if k[0] == sid), key=lambda kv: kv[0])
+            rows = [(k, v) for k, v in rows if k > params["after"]][: params["limit"]]
+            return [{"id": k, "type": v["node_type"], "label": v["label"], "attributes": v["attributes"]} for k, v in rows]
+        if "WHERE n.node_id IN $ids AND NOT coalesce(n.missing, false)" in query:
+            return [{"id": i} for i in params["ids"] if (sid, i) in self.nodes and not self.nodes[(sid, i)]["missing"]]
+        if "WHERE a.node_id IN $ids RETURN a.node_id AS `from`, b.node_id AS `to`, type(x) AS type, x.name AS name, b.node_type AS ttype" in query:
+            ids = set(params["ids"])
+            out = []
+            for e in self.edges:
+                if e["sid"] == sid and e["from"] in ids:
+                    b = self.nodes[(sid, e["to"])]
+                    out.append({"from": e["from"], "to": e["to"], "type": e["type"], "name": json.loads(e["attributes"]).get("name"), "ttype": b["node_type"], "missing": b["missing"]})
+            return sorted(out, key=lambda r: (r["from"], r["to"]))
+        if "<-[x {system_id: $sid}]-" in query:
+            ids = set(params["ids"])
+            out = []
+            for e in self.edges:
+                if e["sid"] == sid and e["to"] in ids:
+                    b = self.nodes[(sid, e["from"])]
+                    out.append({"from": e["to"], "to": e["from"], "type": e["type"], "name": json.loads(e["attributes"]).get("name"), "ftype": b["node_type"], "missing": b["missing"]})
+            return out
+        return super().__call__(query, params)
+
+
+@pytest.mark.parametrize("policy_kwargs", [
+    {},
+    {"edge_policies": {"MASTER_REF": "REFERENCE", "ORG_OWNERSHIP": "STOP"}},
+    {"edge_policies": {"DOC_FLOW": "FLAG"}, "type_policies": {"MD.Material": "STOP"}},
+    {"max_depth": 2},
+    {"direction": "BOTH", "max_depth": 3},
+])
+def test_server_side_traversal_matches_in_process(small_graph, policy_kwargs):
+    from sdtf.graph.service import TraversalPolicy
+
+    fake = FakeCypherWithTraversal()
+    store = CypherGraphStore(fake)
+    store.persist("sysT", small_graph)
+    seeds = [n for n in small_graph.nodes if n.startswith("SD.SalesOrder:")][:5] + [n for n in small_graph.nodes if n.startswith("MM.PurchaseOrder:")][:3] + ["SD.SalesOrder:does-not-exist"]
+    base = {"edge_policies": dict(TraversalPolicy().edge_policies)}
+    base["edge_policies"].update(policy_kwargs.get("edge_policies", {}))
+    mk = lambda: TraversalPolicy(edge_policies=dict(base["edge_policies"]), type_policies=dict(policy_kwargs.get("type_policies", {})), max_depth=policy_kwargs.get("max_depth", 12), direction=policy_kwargs.get("direction", "OUT"))  # noqa: E731
+    expected = traverse(small_graph, seeds, mk())
+    store.statements.clear()
+    got = store.traverse("sysT", seeds, mk())
+    assert got.included == expected.included, "same nodes with the same inclusion ranks"
+    assert sorted(got.missing) == sorted(expected.missing)
+    assert len(got.stopped) == len(expected.stopped) and {s["node"] for s in got.stopped} == {s["node"] for s in expected.stopped}
+    assert {t["node"] for t in got.traces} == {t["node"] for t in expected.traces}
+    assert all(t["policy"] in ("SEED", "FOLLOW", "REFERENCE", "FLAG") and t["reason"] for t in got.traces)
+    # bounded transfer: one adjacency query per depth level per frontier chunk, never a full-graph load
+    adjacency = [q for q, _ in store.statements if "WHERE a.node_id IN $ids" in q]
+    assert 1 <= len(adjacency) <= (2 if policy_kwargs.get("direction") == "BOTH" else 1) * policy_kwargs.get("max_depth", 12)
+    assert not any("RETURN a.node_id AS `from`, b.node_id AS `to`, type(x) AS type, x.attributes" in q for q, _ in store.statements), "load() was not used"
+
+
+def test_scope_evaluation_streams_nodes_and_delegates_traversal(session, slice_result, monkeypatch):
+    """evaluate_scope uses store.iter_nodes + store.traverse; with the relational store this is behaviour-identical."""
+    from sdtf.demo import demo_scope_definition
+    from sdtf.graph import store as store_mod
+    from sdtf.models import SapSystem
+    from sdtf.scope.service import evaluate_scope
+
+    calls = {"iter": 0, "traverse": 0, "load": 0}
+    real = RelationalGraphStore
+
+    class Spy(real):
+        def iter_nodes(self, sid):
+            calls["iter"] += 1
+            return super().iter_nodes(sid)
+
+        def traverse(self, sid, seeds, policy=None):
+            calls["traverse"] += 1
+            return super().traverse(sid, seeds, policy)
+
+    monkeypatch.setattr(store_mod, "RelationalGraphStore", Spy)
+    src, tgt = session.get(SapSystem, slice_result["source_id"]), session.get(SapSystem, slice_result["target_id"])
+    ev = evaluate_scope(session, demo_scope_definition(src, tgt, name="stream"))
+    assert calls == {"iter": 1, "traverse": 1, "load": 0}
+    assert ev["impact"]["objects_total"] > 0 and ev["impact"]["by_classification"]["FULLY_TRANSFERRED"] > 0

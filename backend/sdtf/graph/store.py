@@ -18,8 +18,9 @@ from sqlalchemy.orm import Session
 
 from .. import observability as obs
 from ..models import GraphEdge, GraphNode
-from .service import Graph
+from .service import Graph, TraversalPolicy, TraversalResult, apply_edge_policy
 from .service import neighbourhood as _inproc_neighbourhood
+from .service import traverse as _inproc_traverse
 
 NODE_LABEL = "SdtfNode"
 
@@ -33,6 +34,8 @@ class GraphStore(Protocol):
     def search_nodes(self, system_id: str, node_type: str | None, q: str | None, limit: int) -> list[dict]: ...
     def neighbourhood(self, system_id: str, center: str, depth: int, limit: int = 400) -> dict: ...
     def has_node(self, system_id: str, node_id: str) -> bool: ...
+    def iter_nodes(self, system_id: str): ...
+    def traverse(self, system_id: str, seeds: list[str], policy: TraversalPolicy | None = None) -> TraversalResult: ...
 
 
 # ---------------------------------------------------------------------------------------------- relational
@@ -81,6 +84,14 @@ class RelationalGraphStore:
 
     def has_node(self, system_id: str, node_id: str) -> bool:
         return self.session.execute(select(GraphNode.id).where(GraphNode.system_id == system_id, GraphNode.node_id == node_id)).first() is not None
+
+    def iter_nodes(self, system_id: str):
+        for n in self.session.execute(select(GraphNode.node_id, GraphNode.node_type, GraphNode.label, GraphNode.attributes).where(GraphNode.system_id == system_id).execution_options(yield_per=5000)):
+            yield {"id": n[0], "type": n[1], "label": n[2], "attributes": n[3]}
+
+    def traverse(self, system_id: str, seeds: list[str], policy: TraversalPolicy | None = None) -> TraversalResult:
+        with obs.timed("sdtf.graph.traverse", system_id=system_id, backend=self.name, seeds=len(seeds)):
+            return _inproc_traverse(self.load(system_id), seeds, policy)
 
 
 # ---------------------------------------------------------------------------------------------- cypher
@@ -176,6 +187,55 @@ class CypherGraphStore:
 
     def has_node(self, system_id: str, node_id: str) -> bool:
         return bool(self._run(f"MATCH (n:{NODE_LABEL} {{system_id: $sid, node_id: $nid}}) RETURN n.node_id AS id LIMIT 1", {"sid": system_id, "nid": node_id}))
+
+    PAGE = 10000
+
+    def iter_nodes(self, system_id: str):
+        """Node rows only (no relationships), paged by node_id so memory stays bounded."""
+        last = ""
+        while True:
+            rows = self._run(f"MATCH (n:{NODE_LABEL} {{system_id: $sid}}) WHERE n.node_id > $after RETURN n.node_id AS id, n.node_type AS type, n.label AS label, n.attributes AS attributes ORDER BY n.node_id LIMIT $limit", {"sid": system_id, "after": last, "limit": self.PAGE})
+            for r in rows:
+                yield {"id": r["id"], "type": r["type"], "label": r["label"], "attributes": json.loads(r["attributes"] or "{}")}
+            if len(rows) < self.PAGE:
+                break
+            last = rows[-1]["id"]
+
+    FRONTIER = 5000
+
+    def traverse(self, system_id: str, seeds: list[str], policy: TraversalPolicy | None = None) -> TraversalResult:
+        """Server-side frontier traversal: one adjacency query per depth level over the current frontier (chunked);
+        policy decisions use the same function as the in-process traversal, so results are identical while only
+        the frontier's edges are transferred and only included nodes are held in memory."""
+        policy = policy or TraversalPolicy()
+        res = TraversalResult()
+        existing = set()
+        for i in range(0, len(seeds), self.FRONTIER):
+            existing.update(r["id"] for r in self._run(f"MATCH (n:{NODE_LABEL} {{system_id: $sid}}) WHERE n.node_id IN $ids AND NOT coalesce(n.missing, false) RETURN n.node_id AS id", {"sid": system_id, "ids": seeds[i : i + self.FRONTIER]}))
+        frontier = [sd for sd in seeds if sd in existing]
+        for sd in frontier:
+            res.included[sd] = "FULL"
+            res.traces.append({"node": sd, "from": None, "edge": None, "policy": "SEED", "depth": 0, "reason": "Explicitly selected by scope definition"})
+        with obs.timed("sdtf.graph.traverse", system_id=system_id, backend=self.name, seeds=len(frontier)) as sp:
+            depth = 0
+            queries = 0
+            while frontier and depth < policy.max_depth:
+                nxt: list[str] = []
+                for i in range(0, len(frontier), self.FRONTIER):
+                    chunk = frontier[i : i + self.FRONTIER]
+                    rows = self._run(f"MATCH (a:{NODE_LABEL} {{system_id: $sid}})-[x {{system_id: $sid}}]->(b:{NODE_LABEL}) WHERE a.node_id IN $ids RETURN a.node_id AS `from`, b.node_id AS `to`, type(x) AS type, x.name AS name, b.node_type AS ttype, coalesce(b.missing, false) AS missing ORDER BY a.node_id, b.node_id", {"sid": system_id, "ids": chunk})
+                    queries += 1
+                    if policy.direction == "BOTH":
+                        rows += [{**r, "ttype": r["ftype"]} for r in self._run(f"MATCH (a:{NODE_LABEL} {{system_id: $sid}})<-[x {{system_id: $sid}}]-(b:{NODE_LABEL}) WHERE a.node_id IN $ids RETURN a.node_id AS `from`, b.node_id AS `to`, type(x) AS type, x.name AS name, b.node_type AS ftype, coalesce(b.missing, false) AS missing", {"sid": system_id, "ids": chunk})]
+                        queries += 1
+                    for r in rows:
+                        if apply_edge_policy(res, policy, r["from"], r["to"], r["ttype"], bool(r["missing"]), r["type"], r.get("name"), depth):
+                            nxt.append(r["to"])
+                frontier = list(dict.fromkeys(nxt))
+                depth += 1
+            sp.set_attribute("queries", queries)
+            sp.set_attribute("included", len(res.included))
+        return res
 
 
 class Neo4jGraphStore(CypherGraphStore):
