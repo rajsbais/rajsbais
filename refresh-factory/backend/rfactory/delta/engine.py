@@ -234,9 +234,13 @@ class DeltaService:
             raise Conflict("at least one scope is required")
         return pol
 
-    def _authorise(self, actor: Principal, source_id: str, target_id: str, scopes: list, include_downstream=(), ) -> None:
+    def _authorise(self, actor: Principal, source_id: str, target_id: str, scopes: list, include_downstream=()) -> None:
         from ..security import authz
         authz.require_systems(self.svc, actor, source_id, target_id)
+        for s in scopes:
+            sc0 = s["scope"] if isinstance(s["scope"], Scope) else Scope(**s["scope"])
+            if sc0.object_type in authz.HR_TYPES:
+                raise Conflict("HR data cannot be refreshed incrementally: delta needs stable pseudonyms across runs, HR requires per-run anonymization")
         if authz.restricted(actor):
             for s in scopes:
                 sc = s["scope"] if isinstance(s["scope"], Scope) else Scope(**s["scope"])

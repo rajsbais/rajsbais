@@ -254,6 +254,25 @@ def reconcile(run: Run, plan: Plan, source: SourceAdapter, target: TargetAdapter
         checks.append(_chk("business", "BUS-FLIGHT-REFS", "Flights have their airline, connection and customers in the target, and all their bookings", not ref_bad,
                            f"{len(ref_bad)} inconsistent", ref_bad))
 
+    # HR master data (evaluated against the TARGET)
+    employees = docs("EMPLOYEE")
+    if employees:
+        hr_bad = []
+        for inst in employees:
+            if not target.get("PA0003", (inst.key,)):
+                hr_bad.append(f"employee {inst.key}: core record missing in target")
+                continue
+            for t, link in (("PA0001", "PERNR"), ("PA0002", "PERNR"), ("PA0006", "PERNR"), ("PA0008", "PERNR"), ("PA0009", "PERNR")):
+                if len(target.lookup(t, "PERNR", inst.key)) != len(inst.rows.get(t, [])):
+                    hr_bad.append(f"employee {inst.key}: {t} has {len(target.lookup(t, 'PERNR', inst.key))} rows in the target, {len(inst.rows.get(t, []))} were loaded")
+            if not inst.rows.get("PA0001") or not inst.rows.get("PA0002"):
+                hr_bad.append(f"employee {inst.key}: organizational assignment or personal data missing in the source")
+        checks.append(_chk("business", "BUS-HR-REFS", "Every employee has the same infotype records in the target as were loaded", not hr_bad,
+                           f"{len(hr_bad)} inconsistent", hr_bad))
+        from ..security.authz import hr_masking_violations
+        hv = hr_masking_violations(plan, masking.policy)
+        checks.append(_chk("security", "SEC-HR-ANON", "HR fields were masked by per-run anonymization (never stable pseudonyms)", not hv, f"{len(hv)} violation(s)", hv))
+
     # ---------------- security ----------------
     cov = masking.coverage(required_sensitive)
     checks.append(_chk("security", "SEC-MASK-COVERAGE", "All discovered sensitive fields are covered by a masking rule",
@@ -263,7 +282,7 @@ def reconcile(run: Run, plan: Plan, source: SourceAdapter, target: TargetAdapter
         for k in [k for k in per_table.get(t, [])]:
             tr = target.get(*_split(k))
             sr = source.get(*_split(k))
-            if tr and sr and isinstance(sr.get(f), str) and sr[f] and tr.get(f) == sr[f]:
+            if tr and sr and sr.get(f) not in (None, "", 0) and tr.get(f) == sr[f]:
                 resid.append(f"{t}.{f} {k}")
     checks.append(_chk("security", "SEC-RESIDUAL", "No original sensitive value remains in masked fields", not resid,
                        f"{len(resid)} unmasked values", resid))

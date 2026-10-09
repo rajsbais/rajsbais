@@ -100,7 +100,21 @@ STRATEGIES = {
     "TAX_ID": lambda v, p: _fp(v, p, keep_prefix=2 if v[:2].isalpha() else 0),
     "REDACT": lambda v, p: "X" * min(max(len(v), 4), 12),
     "BIRTHDATE": lambda v, p: _shift_date(v, p),
+    "FIRST_NAME": lambda v, p: _FIRST[p.below(10)],
+    "LAST_NAME": lambda v, p: _LAST[p.below(10)],
+    "AMOUNT": lambda v, p: _perturb(v, p),
 }
+NUMERIC_STRATEGIES = {"AMOUNT"}  # applied to numbers, not only to text
+
+
+def _perturb(v: str, p: Prng) -> float:
+    """Scale an amount by a keyed factor in [0.60, 0.97] or [1.03, 1.40]: never the original, never exactly proportional across people."""
+    try:
+        x = float(v)
+    except ValueError:
+        return 0.0
+    f = 0.60 + p.below(3700) / 10000
+    return round(x * (f if f < 0.97 else f + 0.06), 2)
 
 # (table, field) -> (category, strategy). Seed catalog for the SAP subset; extend per customer/Z-fields.
 CATALOG: dict[tuple[str, str], tuple[str, str]] = {
@@ -116,10 +130,16 @@ CATALOG: dict[tuple[str, str], tuple[str, str]] = {
     ("SCUSTOM", "NAME"): ("name", "NAME"), ("SCUSTOM", "STREET"): ("street", "STREET"), ("SCUSTOM", "POSTBOX"): ("identifier", "REDACT"),
     ("SCUSTOM", "TELEPHONE"): ("phone", "PHONE"), ("SCUSTOM", "EMAIL"): ("email", "EMAIL"), ("SCUSTOM", "WEBUSER"): ("identifier", "REDACT"),
     ("SBOOK", "PASSNAME"): ("name", "NAME"), ("SBOOK", "PASSBIRTH"): ("birthdate", "BIRTHDATE"),
+    # HR infotypes: special-category data. Pay is perturbed, identifiers and bank details are replaced, dates of birth shifted.
+    ("PA0002", "NACHN"): ("name", "LAST_NAME"), ("PA0002", "VORNA"): ("name", "FIRST_NAME"), ("PA0002", "GBDAT"): ("birthdate", "BIRTHDATE"),
+    ("PA0002", "PERID"): ("national_id", "TAX_ID"), ("PA0006", "STRAS"): ("street", "STREET"), ("PA0006", "TELNR"): ("phone", "PHONE"),
+    ("PA0008", "BET01"): ("pay", "AMOUNT"), ("PA0008", "ANSAL"): ("pay", "AMOUNT"),
+    ("PA0009", "EMFTX"): ("name", "NAME"), ("PA0009", "BANKN"): ("bank_account", "BANK_ACCOUNT"), ("PA0009", "BANKL"): ("bank_account", "BANK_ACCOUNT"),
 }
+HR_TABLES = {"PA0001", "PA0002", "PA0003", "PA0006", "PA0008", "PA0009"}  # special-category personal data: per-run anonymization only
 CATEGORY_LABEL = {"name": "Names", "street": "Addresses", "phone": "Telephone numbers", "email": "Email addresses",
                   "iban": "Bank details", "bank_account": "Bank details", "tax_id": "Tax identifiers", "identifier": "Account and mailbox identifiers",
-                  "birthdate": "Dates of birth"}
+                  "birthdate": "Dates of birth", "national_id": "National identifiers", "pay": "Pay and salary"}
 
 _EMAIL = re.compile(r"^[\w.+-]+@[\w-]+(\.[\w-]+)+$")
 _IBAN = re.compile(r"^[A-Z]{2}\d{2}[A-Z0-9]{10,30}$")
@@ -250,7 +270,7 @@ class MaskingEngine:
         seed = hmac.new(self._key(rule.mode), f"{rule.category}|{value}".encode(), hashlib.sha256).digest()
         out = STRATEGIES[rule.strategy](value, Prng(seed))
         if rule.mode == MaskMode.TOKENIZE:
-            self.vault.put(out, value)
+            self.vault.put(str(out), value)
         return out
 
     def mask_row(self, table: str, row: dict) -> dict:
@@ -261,6 +281,10 @@ class MaskingEngine:
             st = self.stats.setdefault((t, f), {"rows": 0, "masked": 0, "empty": 0})
             st["rows"] += 1
             v = row[f]
+            if rule.strategy in NUMERIC_STRATEGIES and isinstance(v, (int, float)) and not isinstance(v, bool):
+                out[f] = self.mask_value(rule, repr(v))
+                st["masked"] += 1
+                continue
             if not isinstance(v, str) or v == "":
                 st["empty"] += 1
                 continue

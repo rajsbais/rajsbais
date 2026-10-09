@@ -11,6 +11,7 @@ PERMISSIONS: dict[str, set[str]] = {
     "admin": {"system:write", "project:write", "plan:write", "masking:write", "audit:read", "view"},
     "basis": {"system:write", "project:write", "plan:write", "run:execute", "tdm:request", "tdm:curate", "client:build", "view"},
     "data_steward": {"project:write", "plan:write", "masking:write", "plan:submit", "run:execute", "tdm:request", "tdm:curate", "client:build", "view"},
+    "hr_steward": {"project:write", "plan:write", "masking:write", "plan:submit", "run:execute", "hr:copy", "view"},  # the only role that may plan HR data
     "tester": {"tdm:request", "view"},  # self-service: request, reserve, release test data
     "approver": {"plan:approve", "exception:approve", "view", "audit:read"},
     "privacy_officer": {"masking:write", "masking:reidentify", "view", "audit:read"},
@@ -23,7 +24,7 @@ PERMISSIONS: dict[str, set[str]] = {
 }
 # Permissions that an AI agent principal may never hold, whatever roles it is given.
 AGENT_FORBIDDEN = {"plan:approve", "exception:approve", "run:execute", "masking:reidentify", "system:write",
-                   "postcopy:approve:basis_lead", "postcopy:approve:integration_owner", "postcopy:approve:security_officer", "target:approve"}
+                   "postcopy:approve:basis_lead", "postcopy:approve:integration_owner", "postcopy:approve:security_officer", "target:approve", "hr:copy"}
 
 
 @dataclass(frozen=True)
@@ -61,6 +62,7 @@ DEMO_USERS = {
     "ingrid.integration": Principal("ingrid.integration", "Ingrid (Integration owner)", ("integration_owner",)),
     "sven.security": Principal("sven.security", "Sven (Security officer)", ("security_officer",)),
     "svc.scheduler": Principal("svc.scheduler", "External scheduler (service)", ("scheduler",), kind="service"),
+    "hanna.hr": Principal("hanna.hr", "Hanna (HR data steward)", ("hr_steward",)),
     "tina.tester": Principal("tina.tester", "Tina (Tester)", ("tester",)),
     "tom.tester": Principal("tom.tester", "Tom (Tester)", ("tester",)),
     "svc.ci": Principal("svc.ci", "CI/CD pipeline (service)", ("tester",), kind="service"),

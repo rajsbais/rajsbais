@@ -184,6 +184,7 @@ def build_source_dataset(seed: int = 42, family: str = "ECC") -> dict[str, list[
 
     _add_manufacturing(d, mats, plants)
     _add_flight(d)
+    _add_hr(d)
 
     def mx(t, f):
         return max((int(r[f]) for r in d[t]), default=0)
@@ -328,6 +329,34 @@ def _add_flight(d: dict[str, list[Row]]) -> None:
                         pay += amt
                 flight["PAYMENTSUM"] = round(pay, 2)
                 d["SFLIGHT"].append(flight)
+
+
+def _add_hr(d: dict[str, list[Row]]) -> None:
+    """Employees with the infotypes the platform models. Own random stream. Pay is consistent by construction (annual = 12 x monthly)."""
+    rng = random.Random(6161)
+    first = ["Marta", "Oskar", "Priya", "Tomas", "Leila", "Dmitri", "Chloe", "Ravi", "Sofia", "Kenji", "Amara", "Jonas"]
+    last = ["Brandt", "Okoye", "Sharma", "Vidal", "Nasser", "Petrov", "Dubois", "Kapoor", "Rossi", "Mori", "Adeyemi", "Lindqvist"]
+    sites = [("1000", "1000"), ("1000", "1010"), ("2000", "2000")]
+    for n in range(1, 41):
+        pernr = f"{10000000 + n:08d}"
+        cc, plant = rng.choice(sites)
+        begda = (REF_DATE - timedelta(days=rng.randint(400, 4000))).isoformat()
+        end = "9999-12-31"
+        d["PA0003"].append({"PERNR": pernr, "ABKRS": "01" if cc == "1000" else "02", "ERDAT": begda})
+        d["PA0001"].append({"PERNR": pernr, "ENDDA": end, "BEGDA": begda, "BUKRS": cc, "WERKS": plant, "PERSG": "1", "ORGEH": f"{rng.randint(50000000, 50000009)}",
+                            "STELL": f"{rng.randint(30000000, 30000020)}", "KOSTL": f"{rng.randint(1, 9) * 1000 + int(plant[:2])}"})
+        fn, ln = rng.choice(first), rng.choice(last)
+        d["PA0002"].append({"PERNR": pernr, "ENDDA": end, "BEGDA": begda, "NACHN": ln, "VORNA": fn, "GBDAT": f"{rng.randint(1955, 2003)}-{rng.randint(1, 12):02d}-{rng.randint(1, 28):02d}",
+                            "GESCH": rng.choice(["1", "2"]), "NATIO": rng.choice(["DE", "US", "IN", "FR"]), "PERID": f"{rng.randint(10 ** 10, 10 ** 11 - 1)}"})
+        for sub in ("1", "2") if rng.random() < 0.3 else ("1",):
+            d["PA0006"].append({"PERNR": pernr, "SUBTY": sub, "ENDDA": end, "BEGDA": begda, "STRAS": f"{rng.randint(1, 150)} {rng.choice(['Birch', 'Cedar', 'Elm'])} Lane",
+                                "ORT01": rng.choice(["Munich", "Berlin", "Dallas", "Lyon"]), "PSTLZ": f"{rng.randint(10000, 99999)}", "LAND1": rng.choice(["DE", "US", "FR"]),
+                                "TELNR": f"+{rng.randint(10, 99)} {rng.randint(100, 999)} {rng.randint(100000, 999999)}"})
+        monthly = round(rng.uniform(2500, 9500), 2)
+        d["PA0008"].append({"PERNR": pernr, "ENDDA": end, "BEGDA": begda, "TRFGR": f"E{rng.randint(1, 9)}", "BET01": monthly, "WAERS": "EUR" if cc == "1000" else "USD",
+                            "ANSAL": round(monthly * 12, 2)})
+        d["PA0009"].append({"PERNR": pernr, "SUBTY": "0", "ENDDA": end, "BEGDA": begda, "EMFTX": f"{fn} {ln}", "BANKL": f"{rng.randint(10000000, 99999999)}",
+                            "BANKN": f"{rng.randint(10 ** 9, 10 ** 10 - 1)}"})
 
 
 def _add_s4(d: dict[str, list[Row]]) -> None:

@@ -441,6 +441,7 @@ class RefreshService:
             raise Conflict("project is running")
         prev = p.manifest
         authz.require_systems(self, actor, p.source_id, p.target_id)
+        authz.require_hr(actor, scope.object_type)
         if authz.restricted(actor):
             if actor.attrs.get("company_codes") is not None:
                 authz.require_companies(actor, scope.company_codes, "the manifest scope")
@@ -466,6 +467,7 @@ class RefreshService:
         t0 = time.perf_counter()
         plan = Planner(self.source_view(p.source_id), self.reg(p)).build(p.manifest)
         extract_s = time.perf_counter() - t0
+        authz.require_hr_plan(actor, plan)
         authz.require_plan(actor, plan, {r["WERKS"]: r["BUKRS"] for r in self.source_view(p.source_id).select("T001W")})
         p.plan, p.report, p.approval = plan, None, None
         p.status = "PLANNED"
@@ -607,6 +609,9 @@ class RefreshService:
         cov = MaskingEngine(p.masking_policy).coverage(self.required_sensitive.get(pid, []))
         if not cov["complete"]:
             raise Conflict(f"{len(cov['missing'])} discovered sensitive field(s) have no masking rule")
+        hr = authz.hr_masking_violations(p.plan, p.masking_policy)
+        if hr:
+            raise Conflict("HR data requires per-run anonymization (policy gdpr-strict): " + "; ".join(hr[:4]) + (f" (+{len(hr) - 4} more)" if len(hr) > 4 else ""))
         p.status, p.submitted_by = "PENDING_APPROVAL", actor.id
         self.audit.append(actor.id, "plan.submitted", pid, {"hash": p.plan.manifest_hash})
         return p
@@ -646,6 +651,8 @@ class RefreshService:
             raise ProductionWriteBlocked("production systems are never writable")
         if not target.system.can_be_write_target:
             raise Forbidden(f"{target.system.label} is locked against being overwritten (write access was revoked or never approved)")
+        if authz.hr_masking_violations(p.plan, p.masking_policy):
+            raise Conflict("HR data requires per-run anonymization: the masking policy no longer satisfies that")
         engine = MaskingEngine(p.masking_policy)
         self.engines[pid] = engine
         self.reg(p)

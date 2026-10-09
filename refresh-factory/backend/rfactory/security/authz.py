@@ -176,3 +176,37 @@ def filter_discovery(p: Principal, d: dict) -> dict:
     if cc is not None or pl is not None:
         d["custom_fields"] = d.get("custom_fields", [])
     return d
+
+
+HR_TYPES = {"EMPLOYEE"}
+
+
+def require_hr(p: Principal, object_type: str) -> None:
+    """HR data is special-category personal data: only a person holding hr:copy may even name it as a root object."""
+    if object_type in HR_TYPES and not p.can("hr:copy"):
+        raise Forbidden("hr:copy is required to select HR (employee) data")
+
+
+def require_hr_plan(p: Principal, plan) -> None:
+    from ..masking.engine import HR_TABLES
+    if any(t in HR_TABLES for inst in plan.instances.values() for t in inst.rows) and not p.can("hr:copy"):
+        raise Forbidden("hr:copy is required: this plan contains HR data")
+
+
+def hr_masking_violations(plan, policy) -> list[str]:
+    """HR fields must be masked by PER-RUN ANONYMIZATION. Stable pseudonyms (reversible by whoever holds the key and candidate values) are not enough."""
+    from ..masking.engine import HR_TABLES, MaskMode
+    tables = {t for inst in plan.instances.values() for t in inst.rows} & HR_TABLES
+    if not tables:
+        return []
+    from ..masking.engine import CATALOG
+    need = {(t, f) for (t, f) in CATALOG if t in tables}
+    rules = {(r.table, r.field): r for r in (policy.rules if policy else [])}
+    bad = []
+    for key in sorted(need):
+        r = rules.get(key)
+        if r is None:
+            bad.append(f"{key[0]}.{key[1]} has no masking rule")
+        elif r.mode != MaskMode.ANONYMIZE:
+            bad.append(f"{key[0]}.{key[1]} is {r.mode.value}, HR requires ANONYMIZE")
+    return bad
