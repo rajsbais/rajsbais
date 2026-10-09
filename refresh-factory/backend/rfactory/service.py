@@ -88,6 +88,8 @@ class RefreshService:
         self.agents = AgentService(self)
         from .fullrefresh.engine import FullRefreshService
         self.full = FullRefreshService(self)
+        from .orchestration.engine import OrchestrationService
+        self.orch = OrchestrationService(self)
 
     # ---------------- landscape ----------------
     def register_system(self, actor: Principal, system: SapSystem, adapter: SimulatedSap | None = None) -> SapSystem:

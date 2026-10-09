@@ -204,6 +204,7 @@ class FullRefreshService:
             raise Forbidden("the target is production or locked against modification")
         if actor.id in (a["by"] for a in p.approvals.values()):
             raise Forbidden("separation of duties: an approver cannot execute the program")
+        svc.orch.acquire(p.target_id, p.id, "full_refresh")  # Conflict if another orchestrated writer holds the target
         p.status, p.attempts, p.reasons, p.waiting_for, p.executed_by = "RUNNING", p.attempts + 1, [], [], actor.id
         svc.audit.append(actor.id, "fullrefresh.started", p.id, {"attempt": p.attempts, "from_phase": p.checkpoint + 1})
         while p.checkpoint < 13:
@@ -283,6 +284,9 @@ class FullRefreshService:
     # --- phase 7
     def _p7(self, actor, p):
         svc = self.svc
+        win = svc.orch.window_state(p.target_id)
+        if not win["open"]:
+            return {"wait": [f"maintenance window closed ({win['reason']}); next opens {win['next_open']}"]}
         src_a, tgt_a = svc.adapters[p.source_id], svc.adapters[p.target_id]
         view = ReadOnlyView(src_a)
         before = _digest({t: view.select(t) for t in TABLES})
@@ -440,6 +444,7 @@ class FullRefreshService:
         p.released = {"by": actor.id, "at": _now()}
         self._set(p, 13, "DONE", released_by=actor.id)
         p.status, p.checkpoint, p.waiting_for = "RELEASED", 13, []
+        self.svc.orch.release(p.id)
         p.backup = None  # the pre-refresh backup is no longer needed for rollback; a real backup follows its own retention
         self.svc.audit.append(actor.id, "fullrefresh.released", p.id, {"target": self.svc.system(p.target_id).label})
         return p
@@ -466,6 +471,7 @@ class FullRefreshService:
         if _digest(a.data) != p.backup["data_digest"] or a.tech.digest() != p.backup["tech_digest"]:
             raise RuntimeError("restore verification failed: the target does not match its backup")
         p.unmasked_target = False
+        self.svc.orch.release(p.id)
         p.status, p.checkpoint, p.reasons, p.waiting_for = "ROLLED_BACK", 2, [], []
         self.svc.audit.append(actor.id, "fullrefresh.rolled_back", p.id, {"restored_digest": p.backup["data_digest"][:16]})
         p.log("info", "target restored from the pre-copy backup and verified by digest")

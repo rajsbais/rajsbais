@@ -67,6 +67,46 @@ class ApprovalIn(BaseModel):
     label: str
 
 
+class JobIn(BaseModel):
+    kind: str
+    params: dict = Field(default_factory=dict)
+    priority: str = "normal"
+    after: list[str] = Field(default_factory=list)
+    idempotency_key: str | None = None
+    max_attempts: int = 3
+
+
+class PipelineIn(BaseModel):
+    name: str = "pipeline"
+    steps: list[dict]
+
+
+class ScheduleIn(BaseModel):
+    name: str = "schedule"
+    schedule: dict
+    template: dict
+
+
+class WindowsIn(BaseModel):
+    allow: list[dict] = Field(default_factory=list)
+    blackouts: list[dict] = Field(default_factory=list)
+
+
+class SubscriptionIn(BaseModel):
+    channel: str
+    destination: str
+    events: list[str] = Field(default_factory=list)
+    min_severity: str = "warn"
+
+
+class ClockIn(BaseModel):
+    hours: float
+
+
+class GateIn(BaseModel):
+    note: str = ""
+
+
 class AgentRunIn(BaseModel):
     params: dict = Field(default_factory=dict)
     narrate: bool = False
@@ -545,6 +585,101 @@ def create_app(data_dir: Path | None = None) -> FastAPI:
     @app.get("/api/full-refresh/programs/{pid}/evidence")
     def fr_evidence(pid: str, _: Principal = Depends(need("audit:read"))):
         return svc.full.evidence_report(pid)
+
+    # ---------------- orchestration (module 14) ----------------
+    def _orch(fn, *a, **k):
+        try:
+            return fn(*a, **k)
+        except KeyError as e:
+            raise HTTPException(422, f"missing or invalid field: {e}")
+
+    @app.get("/api/orchestration/summary")
+    def or_summary(_: Principal = Depends(need("view"))):
+        return {**svc.orch.summary(), "kinds": {k: d for k, (_p, d) in __import__("rfactory.orchestration.engine", fromlist=["KINDS"]).KINDS.items()}}
+
+    @app.post("/api/orchestration/jobs", status_code=201)
+    def or_submit(b: JobIn, p: Principal = Depends(me)):
+        return _orch(svc.orch.submit, p, b.kind, b.params, b.priority, b.after, None, b.idempotency_key, b.max_attempts).public()
+
+    @app.get("/api/orchestration/jobs")
+    def or_jobs(status: str | None = None, _: Principal = Depends(need("view"))):
+        return [j.public() for j in reversed(list(svc.orch.jobs.values())) if not status or j.status == status]
+
+    @app.get("/api/orchestration/jobs/{jid}")
+    def or_job(jid: str, _: Principal = Depends(need("view"))):
+        return svc.orch.get(jid).public()
+
+    @app.post("/api/orchestration/jobs/{jid}/cancel")
+    def or_cancel(jid: str, p: Principal = Depends(me)):
+        return svc.orch.cancel(p, jid).public()
+
+    @app.post("/api/orchestration/jobs/{jid}/complete")
+    def or_gate(jid: str, b: GateIn, p: Principal = Depends(me)):
+        return svc.orch.complete_gate(p, jid, b.note).public()
+
+    @app.post("/api/orchestration/pipelines", status_code=201)
+    def or_pipeline(b: PipelineIn, p: Principal = Depends(me)):
+        return _orch(svc.orch.submit_pipeline, p, b.model_dump())
+
+    @app.get("/api/orchestration/pipelines")
+    def or_pipelines(_: Principal = Depends(need("view"))):
+        return [svc.orch.pipeline(k) for k in reversed(list(svc.orch.pipelines))]
+
+    @app.post("/api/orchestration/schedules", status_code=201)
+    def or_sched(b: ScheduleIn, p: Principal = Depends(me)):
+        return svc.orch.create_schedule(p, b.model_dump()).public()
+
+    @app.get("/api/orchestration/schedules")
+    def or_scheds(_: Principal = Depends(need("view"))):
+        return [s.public() for s in svc.orch.schedules.values()]
+
+    @app.post("/api/orchestration/schedules/{sid}/approve")
+    def or_sched_ok(sid: str, p: Principal = Depends(me)):
+        return svc.orch.approve_schedule(p, sid).public()
+
+    @app.post("/api/orchestration/schedules/{sid}/pause")
+    def or_sched_pause(sid: str, p: Principal = Depends(me)):
+        return svc.orch.pause_schedule(p, sid, True).public()
+
+    @app.post("/api/orchestration/schedules/{sid}/resume")
+    def or_sched_resume(sid: str, p: Principal = Depends(me)):
+        return svc.orch.pause_schedule(p, sid, False).public()
+
+    @app.get("/api/orchestration/windows/{sysid}")
+    def or_win(sysid: str, _: Principal = Depends(need("view"))):
+        return svc.orch.window_state(sysid)
+
+    @app.put("/api/orchestration/windows/{sysid}")
+    def or_win_set(sysid: str, b: WindowsIn, p: Principal = Depends(me)):
+        return _orch(svc.orch.set_windows, p, sysid, b.model_dump())
+
+    @app.post("/api/orchestration/tick")
+    def or_tick(p: Principal = Depends(me)):
+        return svc.orch.tick(p)
+
+    @app.post("/api/orchestration/clock")
+    def or_clock(b: ClockIn, p: Principal = Depends(me)):
+        return svc.orch.advance_clock(p, b.hours)
+
+    @app.get("/api/orchestration/events")
+    def or_events(limit: int = 100, _: Principal = Depends(need("view"))):
+        return list(reversed(svc.orch.events[-limit:]))
+
+    @app.get("/api/orchestration/outbox")
+    def or_outbox(_: Principal = Depends(need("view"))):
+        return list(reversed(svc.orch.outbox[-100:]))
+
+    @app.get("/api/orchestration/subscriptions")
+    def or_subs(_: Principal = Depends(need("view"))):
+        return list(svc.orch.subs.values())
+
+    @app.post("/api/orchestration/subscriptions", status_code=201)
+    def or_sub(b: SubscriptionIn, p: Principal = Depends(me)):
+        return svc.orch.subscribe(p, b.model_dump())
+
+    @app.delete("/api/orchestration/subscriptions/{sid}")
+    def or_unsub(sid: str, p: Principal = Depends(me)):
+        return svc.orch.unsubscribe(p, sid)
 
     @app.get("/api/post-copy/tasks")
     def pc(_: Principal = Depends(need("view"))):

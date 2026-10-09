@@ -3188,6 +3188,1141 @@
     }
    }
   },
+  "/api/orchestration/summary": {
+   "get": {
+    "summary": "Or Summary",
+    "operationId": "or_summary_api_orchestration_summary_get",
+    "parameters": [
+     {
+      "name": "x-demo-user",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Demo-User"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      }
+     },
+     "422": {
+      "description": "Validation Error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/api/orchestration/jobs": {
+   "post": {
+    "summary": "Or Submit",
+    "operationId": "or_submit_api_orchestration_jobs_post",
+    "parameters": [
+     {
+      "name": "x-demo-user",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Demo-User"
+      }
+     }
+    ],
+    "requestBody": {
+     "required": true,
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/JobIn"
+       }
+      }
+     }
+    },
+    "responses": {
+     "201": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      }
+     },
+     "422": {
+      "description": "Validation Error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      }
+     }
+    }
+   },
+   "get": {
+    "summary": "Or Jobs",
+    "operationId": "or_jobs_api_orchestration_jobs_get",
+    "parameters": [
+     {
+      "name": "status",
+      "in": "query",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Status"
+      }
+     },
+     {
+      "name": "x-demo-user",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Demo-User"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      }
+     },
+     "422": {
+      "description": "Validation Error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/api/orchestration/jobs/{jid}": {
+   "get": {
+    "summary": "Or Job",
+    "operationId": "or_job_api_orchestration_jobs__jid__get",
+    "parameters": [
+     {
+      "name": "jid",
+      "in": "path",
+      "required": true,
+      "schema": {
+       "type": "string",
+       "title": "Jid"
+      }
+     },
+     {
+      "name": "x-demo-user",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Demo-User"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      }
+     },
+     "422": {
+      "description": "Validation Error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/api/orchestration/jobs/{jid}/cancel": {
+   "post": {
+    "summary": "Or Cancel",
+    "operationId": "or_cancel_api_orchestration_jobs__jid__cancel_post",
+    "parameters": [
+     {
+      "name": "jid",
+      "in": "path",
+      "required": true,
+      "schema": {
+       "type": "string",
+       "title": "Jid"
+      }
+     },
+     {
+      "name": "x-demo-user",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Demo-User"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      }
+     },
+     "422": {
+      "description": "Validation Error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/api/orchestration/jobs/{jid}/complete": {
+   "post": {
+    "summary": "Or Gate",
+    "operationId": "or_gate_api_orchestration_jobs__jid__complete_post",
+    "parameters": [
+     {
+      "name": "jid",
+      "in": "path",
+      "required": true,
+      "schema": {
+       "type": "string",
+       "title": "Jid"
+      }
+     },
+     {
+      "name": "x-demo-user",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Demo-User"
+      }
+     }
+    ],
+    "requestBody": {
+     "required": true,
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/GateIn"
+       }
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      }
+     },
+     "422": {
+      "description": "Validation Error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/api/orchestration/pipelines": {
+   "post": {
+    "summary": "Or Pipeline",
+    "operationId": "or_pipeline_api_orchestration_pipelines_post",
+    "parameters": [
+     {
+      "name": "x-demo-user",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Demo-User"
+      }
+     }
+    ],
+    "requestBody": {
+     "required": true,
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/PipelineIn"
+       }
+      }
+     }
+    },
+    "responses": {
+     "201": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      }
+     },
+     "422": {
+      "description": "Validation Error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      }
+     }
+    }
+   },
+   "get": {
+    "summary": "Or Pipelines",
+    "operationId": "or_pipelines_api_orchestration_pipelines_get",
+    "parameters": [
+     {
+      "name": "x-demo-user",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Demo-User"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      }
+     },
+     "422": {
+      "description": "Validation Error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/api/orchestration/schedules": {
+   "post": {
+    "summary": "Or Sched",
+    "operationId": "or_sched_api_orchestration_schedules_post",
+    "parameters": [
+     {
+      "name": "x-demo-user",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Demo-User"
+      }
+     }
+    ],
+    "requestBody": {
+     "required": true,
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/ScheduleIn"
+       }
+      }
+     }
+    },
+    "responses": {
+     "201": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      }
+     },
+     "422": {
+      "description": "Validation Error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      }
+     }
+    }
+   },
+   "get": {
+    "summary": "Or Scheds",
+    "operationId": "or_scheds_api_orchestration_schedules_get",
+    "parameters": [
+     {
+      "name": "x-demo-user",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Demo-User"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      }
+     },
+     "422": {
+      "description": "Validation Error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/api/orchestration/schedules/{sid}/approve": {
+   "post": {
+    "summary": "Or Sched Ok",
+    "operationId": "or_sched_ok_api_orchestration_schedules__sid__approve_post",
+    "parameters": [
+     {
+      "name": "sid",
+      "in": "path",
+      "required": true,
+      "schema": {
+       "type": "string",
+       "title": "Sid"
+      }
+     },
+     {
+      "name": "x-demo-user",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Demo-User"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      }
+     },
+     "422": {
+      "description": "Validation Error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/api/orchestration/schedules/{sid}/pause": {
+   "post": {
+    "summary": "Or Sched Pause",
+    "operationId": "or_sched_pause_api_orchestration_schedules__sid__pause_post",
+    "parameters": [
+     {
+      "name": "sid",
+      "in": "path",
+      "required": true,
+      "schema": {
+       "type": "string",
+       "title": "Sid"
+      }
+     },
+     {
+      "name": "x-demo-user",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Demo-User"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      }
+     },
+     "422": {
+      "description": "Validation Error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/api/orchestration/schedules/{sid}/resume": {
+   "post": {
+    "summary": "Or Sched Resume",
+    "operationId": "or_sched_resume_api_orchestration_schedules__sid__resume_post",
+    "parameters": [
+     {
+      "name": "sid",
+      "in": "path",
+      "required": true,
+      "schema": {
+       "type": "string",
+       "title": "Sid"
+      }
+     },
+     {
+      "name": "x-demo-user",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Demo-User"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      }
+     },
+     "422": {
+      "description": "Validation Error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/api/orchestration/windows/{sysid}": {
+   "get": {
+    "summary": "Or Win",
+    "operationId": "or_win_api_orchestration_windows__sysid__get",
+    "parameters": [
+     {
+      "name": "sysid",
+      "in": "path",
+      "required": true,
+      "schema": {
+       "type": "string",
+       "title": "Sysid"
+      }
+     },
+     {
+      "name": "x-demo-user",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Demo-User"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      }
+     },
+     "422": {
+      "description": "Validation Error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      }
+     }
+    }
+   },
+   "put": {
+    "summary": "Or Win Set",
+    "operationId": "or_win_set_api_orchestration_windows__sysid__put",
+    "parameters": [
+     {
+      "name": "sysid",
+      "in": "path",
+      "required": true,
+      "schema": {
+       "type": "string",
+       "title": "Sysid"
+      }
+     },
+     {
+      "name": "x-demo-user",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Demo-User"
+      }
+     }
+    ],
+    "requestBody": {
+     "required": true,
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/WindowsIn"
+       }
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      }
+     },
+     "422": {
+      "description": "Validation Error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/api/orchestration/tick": {
+   "post": {
+    "summary": "Or Tick",
+    "operationId": "or_tick_api_orchestration_tick_post",
+    "parameters": [
+     {
+      "name": "x-demo-user",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Demo-User"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      }
+     },
+     "422": {
+      "description": "Validation Error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/api/orchestration/clock": {
+   "post": {
+    "summary": "Or Clock",
+    "operationId": "or_clock_api_orchestration_clock_post",
+    "parameters": [
+     {
+      "name": "x-demo-user",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Demo-User"
+      }
+     }
+    ],
+    "requestBody": {
+     "required": true,
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/ClockIn"
+       }
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      }
+     },
+     "422": {
+      "description": "Validation Error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/api/orchestration/events": {
+   "get": {
+    "summary": "Or Events",
+    "operationId": "or_events_api_orchestration_events_get",
+    "parameters": [
+     {
+      "name": "limit",
+      "in": "query",
+      "required": false,
+      "schema": {
+       "type": "integer",
+       "default": 100,
+       "title": "Limit"
+      }
+     },
+     {
+      "name": "x-demo-user",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Demo-User"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      }
+     },
+     "422": {
+      "description": "Validation Error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/api/orchestration/outbox": {
+   "get": {
+    "summary": "Or Outbox",
+    "operationId": "or_outbox_api_orchestration_outbox_get",
+    "parameters": [
+     {
+      "name": "x-demo-user",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Demo-User"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      }
+     },
+     "422": {
+      "description": "Validation Error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/api/orchestration/subscriptions": {
+   "get": {
+    "summary": "Or Subs",
+    "operationId": "or_subs_api_orchestration_subscriptions_get",
+    "parameters": [
+     {
+      "name": "x-demo-user",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Demo-User"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      }
+     },
+     "422": {
+      "description": "Validation Error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      }
+     }
+    }
+   },
+   "post": {
+    "summary": "Or Sub",
+    "operationId": "or_sub_api_orchestration_subscriptions_post",
+    "parameters": [
+     {
+      "name": "x-demo-user",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Demo-User"
+      }
+     }
+    ],
+    "requestBody": {
+     "required": true,
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/SubscriptionIn"
+       }
+      }
+     }
+    },
+    "responses": {
+     "201": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      }
+     },
+     "422": {
+      "description": "Validation Error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/api/orchestration/subscriptions/{sid}": {
+   "delete": {
+    "summary": "Or Unsub",
+    "operationId": "or_unsub_api_orchestration_subscriptions__sid__delete",
+    "parameters": [
+     {
+      "name": "sid",
+      "in": "path",
+      "required": true,
+      "schema": {
+       "type": "string",
+       "title": "Sid"
+      }
+     },
+     {
+      "name": "x-demo-user",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Demo-User"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      }
+     },
+     "422": {
+      "description": "Validation Error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
   "/api/post-copy/tasks": {
    "get": {
     "summary": "Pc",
@@ -7523,6 +8658,19 @@
     ],
     "title": "CaptureIn"
    },
+   "ClockIn": {
+    "properties": {
+     "hours": {
+      "type": "number",
+      "title": "Hours"
+     }
+    },
+    "type": "object",
+    "required": [
+     "hours"
+    ],
+    "title": "ClockIn"
+   },
    "CommentIn": {
     "properties": {
      "comment": {
@@ -7868,6 +9016,17 @@
     ],
     "title": "FullRefreshIn"
    },
+   "GateIn": {
+    "properties": {
+     "note": {
+      "type": "string",
+      "title": "Note",
+      "default": ""
+     }
+    },
+    "type": "object",
+    "title": "GateIn"
+   },
    "HTTPValidationError": {
     "properties": {
      "detail": {
@@ -7880,6 +9039,52 @@
     },
     "type": "object",
     "title": "HTTPValidationError"
+   },
+   "JobIn": {
+    "properties": {
+     "kind": {
+      "type": "string",
+      "title": "Kind"
+     },
+     "params": {
+      "additionalProperties": true,
+      "type": "object",
+      "title": "Params"
+     },
+     "priority": {
+      "type": "string",
+      "title": "Priority",
+      "default": "normal"
+     },
+     "after": {
+      "items": {
+       "type": "string"
+      },
+      "type": "array",
+      "title": "After"
+     },
+     "idempotency_key": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Idempotency Key"
+     },
+     "max_attempts": {
+      "type": "integer",
+      "title": "Max Attempts",
+      "default": 3
+     }
+    },
+    "type": "object",
+    "required": [
+     "kind"
+    ],
+    "title": "JobIn"
    },
    "LabelIn": {
     "properties": {
@@ -7991,6 +9196,28 @@
      "profile_id"
     ],
     "title": "PcRunIn"
+   },
+   "PipelineIn": {
+    "properties": {
+     "name": {
+      "type": "string",
+      "title": "Name",
+      "default": "pipeline"
+     },
+     "steps": {
+      "items": {
+       "additionalProperties": true,
+       "type": "object"
+      },
+      "type": "array",
+      "title": "Steps"
+     }
+    },
+    "type": "object",
+    "required": [
+     "steps"
+    ],
+    "title": "PipelineIn"
    },
    "PolicyIn": {
     "properties": {
@@ -8133,6 +9360,31 @@
     "type": "object",
     "title": "RunIn"
    },
+   "ScheduleIn": {
+    "properties": {
+     "name": {
+      "type": "string",
+      "title": "Name",
+      "default": "schedule"
+     },
+     "schedule": {
+      "additionalProperties": true,
+      "type": "object",
+      "title": "Schedule"
+     },
+     "template": {
+      "additionalProperties": true,
+      "type": "object",
+      "title": "Template"
+     }
+    },
+    "type": "object",
+    "required": [
+     "schedule",
+     "template"
+    ],
+    "title": "ScheduleIn"
+   },
    "Scope": {
     "properties": {
      "object_type": {
@@ -8272,6 +9524,36 @@
     },
     "type": "object",
     "title": "StrategyIn"
+   },
+   "SubscriptionIn": {
+    "properties": {
+     "channel": {
+      "type": "string",
+      "title": "Channel"
+     },
+     "destination": {
+      "type": "string",
+      "title": "Destination"
+     },
+     "events": {
+      "items": {
+       "type": "string"
+      },
+      "type": "array",
+      "title": "Events"
+     },
+     "min_severity": {
+      "type": "string",
+      "title": "Min Severity",
+      "default": "warn"
+     }
+    },
+    "type": "object",
+    "required": [
+     "channel",
+     "destination"
+    ],
+    "title": "SubscriptionIn"
    },
    "TdmPolicyIn": {
     "properties": {
@@ -8500,6 +9782,28 @@
      "type"
     ],
     "title": "ValidationError"
+   },
+   "WindowsIn": {
+    "properties": {
+     "allow": {
+      "items": {
+       "additionalProperties": true,
+       "type": "object"
+      },
+      "type": "array",
+      "title": "Allow"
+     },
+     "blackouts": {
+      "items": {
+       "additionalProperties": true,
+       "type": "object"
+      },
+      "type": "array",
+      "title": "Blackouts"
+     }
+    },
+    "type": "object",
+    "title": "WindowsIn"
    }
   }
  }
