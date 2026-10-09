@@ -317,6 +317,7 @@ def create_app(data_dir: Path | None = None, persist: bool | None = None, auth: 
         persist = bool(env_dir)
     svc = RefreshService(data_dir, persist=persist)
     auth = auth or AuthConfig.from_env()
+    auth.check_login()
     verifier = OidcVerifier(auth, jwks) if auth.mode == "oidc" else None
     failures: list[float] = []
     app = FastAPI(title="SAP Intelligent Refresh Factory", version="0.1.0",

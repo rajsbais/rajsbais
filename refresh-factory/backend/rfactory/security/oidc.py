@@ -8,9 +8,13 @@ Claims -> principal: roles from the role claim (unknown roles are ignored: least
 refused), and the ABAC attributes `rf_systems` / `rf_company_codes` / `rf_plants` / `rf_sales_orgs` (lists of strings; see authz.py). An agent token never gets the permissions
 agents are denied, whatever roles it carries.
 
-NOT provided: the browser login flow (Authorization Code + PKCE) and token refresh; the UI takes a pasted bearer token. Token revocation lists and
-introspection are not implemented: tokens are trusted until they expire, so keep them short-lived. Fetching a JWKS from a URL is implemented
-but has not been exercised against a real identity provider.
+Browser login: the platform advertises an Authorization Code + PKCE (S256) login through /api/auth/config when the authorize URL, token URL and
+client id are configured. The flow itself runs in the browser as a PUBLIC client (no client secret exists anywhere in the platform); the API only
+ever sees the resulting bearer token. A pasted token still works.
+
+NOT provided: refresh tokens or silent renewal (a session ends when the access token expires), token revocation lists and introspection (tokens are
+trusted until they expire, so keep them short-lived). Fetching a JWKS from a URL and the browser flow itself have not been exercised against a
+real identity provider; the flow is tested against a fake one.
 """
 from __future__ import annotations
 
@@ -49,6 +53,15 @@ class AuthConfig:
     role_claim: str = "roles"
     leeway_s: int = 30
     jwks_ttl_s: int = 600
+    # browser login (Authorization Code + PKCE, public client): all three or none
+    authorize_url: str = ""
+    token_url: str = ""
+    client_id: str = ""
+    scope: str = "openid profile"
+    end_session_url: str = ""
+
+    def login_configured(self) -> bool:
+        return bool(self.authorize_url and self.token_url and self.client_id)
 
     @classmethod
     def from_env(cls) -> "AuthConfig":
@@ -58,13 +71,29 @@ class AuthConfig:
             raise ValueError("RFACTORY_AUTH must be 'demo' or 'oidc'")
         c = cls(mode, e("RFACTORY_OIDC_ISSUER", ""), e("RFACTORY_OIDC_AUDIENCE", ""), e("RFACTORY_OIDC_JWKS_FILE", ""), e("RFACTORY_OIDC_JWKS_URL", ""),
                 e("RFACTORY_OIDC_ROLE_CLAIM", "roles"))
+        c.authorize_url, c.token_url, c.client_id = e("RFACTORY_OIDC_AUTHORIZE_URL", ""), e("RFACTORY_OIDC_TOKEN_URL", ""), e("RFACTORY_OIDC_CLIENT_ID", "")
+        c.scope, c.end_session_url = e("RFACTORY_OIDC_SCOPE", "openid profile"), e("RFACTORY_OIDC_END_SESSION_URL", "")
         if mode == "oidc" and not (c.issuer and c.audience and (c.jwks_file or c.jwks_url)):
             raise ValueError("oidc mode needs RFACTORY_OIDC_ISSUER, RFACTORY_OIDC_AUDIENCE and RFACTORY_OIDC_JWKS_FILE or _URL")
+        c.check_login()
         return c
 
+    def check_login(self) -> None:
+        given = [bool(self.authorize_url), bool(self.token_url), bool(self.client_id)]
+        if any(given) and not all(given):
+            raise ValueError("browser login needs RFACTORY_OIDC_AUTHORIZE_URL, RFACTORY_OIDC_TOKEN_URL and RFACTORY_OIDC_CLIENT_ID together")
+        for name, u in (("authorize", self.authorize_url), ("token", self.token_url), ("end-session", self.end_session_url)):
+            if u and not (u.startswith("https://") or u.startswith(("http://localhost", "http://127.0.0.1"))):
+                raise ValueError(f"the {name} URL must be https (plain http only for localhost): the authorization code and tokens travel over it")
+        if self.scope and "openid" not in self.scope.split():
+            raise ValueError("the login scope must include 'openid'")
+
     def public(self) -> dict:
+        login = self.mode == "oidc" and self.login_configured()
         return {"mode": self.mode, "demo_header_accepted": self.mode == "demo", "issuer": self.issuer or None, "audience": self.audience or None,
-                "login_flow": "none: paste a bearer token" if self.mode == "oidc" else "demo user switcher (no real authentication)"}
+                "login_flow": ("authorization code + PKCE (S256), public client" if login else "none: paste a bearer token") if self.mode == "oidc" else "demo user switcher (no real authentication)",
+                "login": {"authorize_url": self.authorize_url, "token_url": self.token_url, "client_id": self.client_id, "scope": self.scope,
+                          "end_session_url": self.end_session_url or None} if login else None}
 
 
 class OidcVerifier:

@@ -319,3 +319,46 @@ def test_combinations_and_query_parameters_respect_the_scope(tmp_path):
     assert c.get("/api/full-refresh/plan", params=q, headers=H("cora.regional")).status_code == 403
     assert c.get("/api/full-refresh/plan", params=q, headers=H("alice.basis")).status_code == 200
     assert c.post("/api/demo/simulate-system-copy", params=q, headers=H("cora.regional")).status_code == 403
+
+
+# ---- browser login configuration (Authorization Code + PKCE is carried out by the browser; the API only advertises it)
+def _cfg(**kw):
+    return AuthConfig(mode="oidc", issuer=ISS, audience=AUD, jwks_file="x", **kw)
+
+
+def test_login_configuration_is_advertised_only_when_complete_and_in_oidc_mode(tmp_path):
+    full = _cfg(authorize_url="https://idp.example/authorize", token_url="https://idp.example/token", client_id="keystone-ui")
+    pub = full.public()
+    assert pub["login"] == {"authorize_url": "https://idp.example/authorize", "token_url": "https://idp.example/token", "client_id": "keystone-ui",
+                            "scope": "openid profile", "end_session_url": None} and "PKCE" in pub["login_flow"]
+    assert "secret" not in json.dumps(pub).lower()  # a public client: there is no secret to leak
+    assert _cfg().public()["login"] is None and "paste" in _cfg().public()["login_flow"]
+    demo = AuthConfig(mode="demo", authorize_url="https://idp.example/a", token_url="https://idp.example/t", client_id="c")
+    assert demo.public()["login"] is None  # the demo header mode never advertises a real login
+    c = TestClient(create_app(tmp_path, persist=False, auth=full, jwks={"keys": []}))
+    assert c.get("/api/auth/config").json()["login"]["client_id"] == "keystone-ui"
+
+
+@pytest.mark.parametrize("kw,why", [
+    (dict(authorize_url="https://i/a"), "together"),
+    (dict(authorize_url="https://i/a", token_url="https://i/t"), "together"),
+    (dict(authorize_url="http://idp.example/a", token_url="https://i/t", client_id="c"), "https"),
+    (dict(authorize_url="https://i/a", token_url="http://evil.example/t", client_id="c"), "https"),
+    (dict(authorize_url="https://i/a", token_url="https://i/t", client_id="c", end_session_url="http://x.example/out"), "https"),
+    (dict(authorize_url="https://i/a", token_url="https://i/t", client_id="c", scope="profile"), "openid"),
+])
+def test_unsafe_or_partial_login_configuration_is_refused(tmp_path, kw, why):
+    with pytest.raises(ValueError, match=why):
+        create_app(tmp_path, persist=False, auth=_cfg(**kw), jwks={"keys": []})
+
+
+def test_login_configuration_comes_from_the_environment(monkeypatch):
+    for k, v in {"RFACTORY_AUTH": "oidc", "RFACTORY_OIDC_ISSUER": ISS, "RFACTORY_OIDC_AUDIENCE": AUD, "RFACTORY_OIDC_JWKS_FILE": "x",
+                 "RFACTORY_OIDC_AUTHORIZE_URL": "http://localhost:9000/authorize", "RFACTORY_OIDC_TOKEN_URL": "http://localhost:9000/token",
+                 "RFACTORY_OIDC_CLIENT_ID": "ui", "RFACTORY_OIDC_SCOPE": "openid email"}.items():
+        monkeypatch.setenv(k, v)
+    c = AuthConfig.from_env()
+    assert c.login_configured() and c.scope == "openid email"
+    monkeypatch.setenv("RFACTORY_OIDC_CLIENT_ID", "")
+    with pytest.raises(ValueError, match="together"):
+        AuthConfig.from_env()

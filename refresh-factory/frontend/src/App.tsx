@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { api, getToken, getUser, setToken, setUser, store, J } from "./api";
 import { AppCtx } from "./ctx";
 import { ErrorNote, SimBanner } from "./components";
+import { beginLogin, browserEnv, completeLogin, loadSession, logoutUrl, SESSION_KEY } from "./pkce";
 import ControlTower from "./views/ControlTower";
 import { FullRefresh, Readiness } from "./views/Basis";
 import PostCopy from "./views/PostCopy";
@@ -51,6 +52,9 @@ export default function App() {
   const [tokenIn, setTokenIn] = useState("");
   useEffect(() => { fetch("/api/auth/config").then((r) => r.json()).then(setAuthCfg).catch(() => setAuthCfg({ mode: "demo" })); }, []);
   const oidc = authCfg?.mode === "oidc";
+  const login = oidc ? authCfg.login : null;
+  const [notice, setNotice] = useState<string | null>(null);
+  const [expiresAt, setExpiresAt] = useState<number | null>(null);
 
   setUser(userId);
   const reload = useCallback(async () => {
@@ -61,6 +65,37 @@ export default function App() {
     } catch (e) { setError((e as Error).message); }
   }, []);
   useEffect(() => { setUser(userId); store.set("rf.user", userId); void reload(); }, [userId, reload]);
+
+  // Authorization Code + PKCE: finish a login that the identity provider just redirected back to, or restore / expire the stored session
+  useEffect(() => {
+    if (!login) return;
+    const env = browserEnv();
+    void (async () => {
+      const out = await completeLogin(login, location.search, env);
+      if (out.clean) history.replaceState(null, "", location.pathname + location.hash); // the code and state never stay in the address bar
+      if (out.kind === "ok") { setToken(out.session.access_token); setExpiresAt(out.session.expires_at); setNotice(null); await reload(); }
+      else if (out.kind === "error") setNotice(out.message);
+      else {
+        const had = !!env.storage.getItem(SESSION_KEY);
+        const sess = loadSession(env);
+        if (sess) setExpiresAt(sess.expires_at);
+        else if (had) { setToken(null); setMe(null); setNotice("Your session expired. Sign in again."); }
+      }
+    })();
+  }, [login?.client_id]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    if (!expiresAt) return;
+    const t = setTimeout(() => { setToken(null); setMe(null); setExpiresAt(null); try { sessionStorage.removeItem(SESSION_KEY); } catch { /* ignore */ } setNotice("Your session expired. Sign in again."); },
+      Math.max(0, Math.min(expiresAt - Date.now(), 2 ** 31 - 1)));
+    return () => clearTimeout(t);
+  }, [expiresAt]);
+  const redirectUri = `${location.origin}${location.pathname}`;
+  const startLogin = async () => { setNotice(null); location.assign(await beginLogin(login, redirectUri, browserEnv())); };
+  const signOut = () => {
+    const out = login ? logoutUrl(login, browserEnv(), redirectUri) : null;
+    setToken(null); setMe(null); setTokenIn(""); setExpiresAt(null);
+    if (out) location.assign(out); else void reload();
+  };
 
   const go = (v: string) => { setView(v); store.set("rf.view", v); setNav(false); };
   const project = projects.find((p) => p.id === projectId) ?? null;
@@ -95,13 +130,15 @@ export default function App() {
                 <>
                   <div>Signed in as <strong>{me.name}</strong></div>
                   <div className="muted small">{me.roles?.join(", ") || "no roles"}{me.kind !== "human" ? ` · ${me.kind}` : ""}</div>
-                  <button onClick={() => { setToken(null); setMe(null); setTokenIn(""); void reload(); }}>Sign out</button>
+                  <button onClick={signOut}>Sign out</button>
                 </>) : (
                 <>
+                  {login && <button className="primary" onClick={() => void startLogin()}>Sign in with your identity provider</button>}
+                  {notice && <ErrorNote error={notice} />}
                   <label htmlFor="token">Bearer token (OIDC)</label>
                   <input id="token" type="password" autoComplete="off" value={tokenIn} onChange={(e) => setTokenIn(e.target.value)} />
                   <button disabled={!tokenIn} onClick={() => { setToken(tokenIn.trim()); setTokenIn(""); void reload(); }}>Sign in</button>
-                  <div className="muted small">No browser login flow yet: paste a short-lived token from your identity provider.</div>
+                  <div className="muted small">{login ? "Or paste a short-lived token from your identity provider." : "No browser login is configured: paste a short-lived token from your identity provider."}</div>
                 </>)
             ) : (
               <>
