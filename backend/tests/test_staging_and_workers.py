@@ -200,3 +200,39 @@ def test_idle_worker_repairs_missing_successor_and_lost_wakeup(session, slice_re
     run = session.get(MigrationRun, run.id)
     assert run.status == "COMPLETED" and run.report["reconciliation"]["overall"] == "PASS"
     assert job_summary(session, run.id)["by_status"] == {"DONE": 3 * run.metrics["partitions"] + run.metrics["stage_jobs"]["RECONCILE"]}
+
+
+def test_columnar_staging_on_object_store_url(engine, monkeypatch):
+    """The same backend contract over an fsspec object-store URL (in-memory filesystem stands in for S3/GCS)."""
+    from sdtf.db import session_scope
+
+    url = "memory://sdtf-staging/prefix"
+    monkeypatch.setattr(config, "settings", config.Settings(database_url=config.settings.database_url, evidence_dir=config.settings.evidence_dir, staging_backend="columnar", staging_dir=url))
+    stg = ColumnarStaging(url)
+    assert stg.object_store and stg.protocol == "memory"
+    rows = [StagedRow("P1", "BKPF", f"5000|{i}|2024", {"BELNR": str(i)}) for i in range(3)]
+    assert stg.write_partition("r-mem", "P1", rows) == 3 and stg.keys("r-mem", "BKPF") == {r.record_key for r in rows}
+    assert stg.write_partition("r-mem", "P2", rows) == 0, "duplicates across partitions are ignored on object stores too"
+    got = list(stg.iter_records("r-mem", partition="P1"))
+    got[0].load_status, got[0].target_key = "LOADED", "x"
+    stg.update_records("r-mem", got[:1])
+    assert sorted(c["status"] for c in stg.counts("r-mem")) == ["LOADED", "STAGED", "STAGED"] or {c["status"] for c in stg.counts("r-mem")} == {"LOADED", "STAGED"}
+    fp = stg.footprint("r-mem")
+    assert fp["files"] == 1 and fp["protocol"] == "memory" and fp["location"] == url
+    stg.drop_run("r-mem")
+    assert stg.counts("r-mem") == []
+    # full slice with staging on the object-store URL
+    with session_scope() as s:
+        out = run_vertical_slice(s, scale=1, seed=37)
+        run = out["run"]
+        assert run.status == "COMPLETED" and run.report["reconciliation"]["overall"] == "PASS"
+        assert ColumnarStaging(url).footprint(run.id)["files"] > 20
+
+
+def test_columnar_staging_file_url_and_missing_driver(tmp_path):
+    stg = ColumnarStaging(f"file://{tmp_path}/stg")
+    assert not stg.object_store and stg.protocol in ("file", "local")
+    assert stg.write_partition("r", "P", [StagedRow("P", "KNA1", "1", {"KUNNR": "1"})]) == 1
+    assert (tmp_path / "stg" / "r" / "KNA1" / "P.parquet").exists()
+    with pytest.raises(RuntimeError, match="s3fs"):
+        ColumnarStaging("s3://bucket/prefix")

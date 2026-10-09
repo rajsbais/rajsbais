@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 from dataclasses import dataclass, field
 
@@ -17,7 +18,8 @@ class Settings:
     evidence_dir: str = field(default_factory=lambda: os.getenv("SDTF_EVIDENCE_DIR", "./data/evidence"))
     environment: str = field(default_factory=lambda: os.getenv("SDTF_ENV", "development"))
     staging_backend: str = field(default_factory=lambda: os.getenv("SDTF_STAGING_BACKEND", "relational"))  # relational | columnar
-    staging_dir: str = field(default_factory=lambda: os.getenv("SDTF_STAGING_DIR", "./data/staging"))  # object-storage mount for columnar staging
+    staging_dir: str = field(default_factory=lambda: os.getenv("SDTF_STAGING_DIR", "./data/staging"))  # local path, file://, s3://bucket/prefix, gs://bucket/prefix, memory://
+    staging_fs_options: dict = field(default_factory=lambda: json.loads(os.getenv("SDTF_STAGING_FS_OPTIONS", "{}") or "{}"))  # fsspec options, e.g. {"endpoint_url": "http://minio:9000"}
     job_lease_seconds: int = field(default_factory=lambda: int(os.getenv("SDTF_JOB_LEASE_SECONDS", "300")))
     worker_poll_seconds: float = field(default_factory=lambda: float(os.getenv("SDTF_WORKER_POLL_SECONDS", "1.0")))
     cors_origins: tuple[str, ...] = field(

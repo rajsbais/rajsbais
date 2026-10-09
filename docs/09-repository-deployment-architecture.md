@@ -40,7 +40,8 @@ holds evidence and columnar staging.
 | SDTF_EVIDENCE_DIR | evidence package location (object storage mount in production) |
 | SDTF_EXTRACTION_WORKERS | parallel extraction workers |
 | SDTF_CORS_ORIGINS | allowed UI origins |
-| SDTF_STAGING_BACKEND, SDTF_STAGING_DIR | `relational` (default) or `columnar` Parquet staging under the given object-storage mount |
+| SDTF_STAGING_BACKEND, SDTF_STAGING_DIR | `relational` (default) or `columnar` Parquet staging at a local path, `s3://bucket/prefix`, `gs://bucket/prefix` or `memory://` |
+| SDTF_STAGING_FS_OPTIONS | JSON fsspec options for the staging filesystem, e.g. `{"endpoint_url": "http://minio:9000"}` |
 | SDTF_JOB_LEASE_SECONDS, SDTF_WORKER_POLL_SECONDS | distributed worker lease and poll interval |
 
 ## Observability (partial)

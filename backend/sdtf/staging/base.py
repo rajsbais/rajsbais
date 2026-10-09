@@ -5,8 +5,9 @@ statuses; reconciliation and the API read them back. Two implementations share t
 
 * RelationalStaging  - rows in the metadata database (`staged_records`); simple, transactional, fine for
                        development and small scopes.
-* ColumnarStaging    - one Parquet file per (run, table, partition) under an object-storage mount; columnar,
-                       compressible, scalable to multi-terabyte scopes and readable by external tooling.
+* ColumnarStaging    - one Parquet file per (run, table, partition) on any fsspec filesystem (local path, S3, GCS,
+                       Azure, memory); columnar, compressible, scalable to multi-terabyte scopes and readable by
+                       external tooling.
 
 Rows are de-duplicated on (table, record_key) within a run: when several objects (or several workers) stage the
 same record, the first copy wins.

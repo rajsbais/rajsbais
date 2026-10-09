@@ -10,7 +10,8 @@ Legend: P0 next increment · P1 following · P2 later. Sizes are relative (S/M/L
 | ✅ | Transform/load as distributed jobs per partition with stage barriers (ADR-0010) | M |
 | ✅ | Per-partition pipelining across stages (default for DISTRIBUTED runs; barrier mode optional) | M |
 | ✅ | Reconciliation as distributed jobs: technical per table, functional, financial | M |
-| P1 | S3/GCS staging via fsspec; per-file key-range manifests for random access | M |
+| ✅ | S3/GCS/Azure staging via fsspec (`sdtf[s3]`, `sdtf[gcs]`) | M |
+| P1 | Per-file key-range manifests for random access on object stores | M |
 | ✅ | OIDC SSO + group→role mapping (done: `security/oidc.py`); UI PKCE login flow pending | M |
 | ✅ | Multi-source MERGER orchestration, key-collision planner, master-data dedup (done: `runtime/merge.py`, `catalog/dedup.py`) | L |
 | P1 | Property-graph backend adapter (ADR-0004) with the same `Graph` interface | M |

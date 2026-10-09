@@ -13,7 +13,7 @@
 | Transformation rule DSL, validation, tests, dry run, rule factory | IMPLEMENTED | |
 | Extraction | SIMULATED | synthetic store adapter; RFC/OData/CDS/File planned |
 | Distributed stage workers: extraction, transformation and load as per-partition pipelined jobs, reconciliation as per-table/functional/financial jobs (claim/lease, crash re-queue, atomic stage closing, idle self-healing) | IMPLEMENTED | tested with in-process and separate worker processes; only report rendering runs in the closing worker |
-| Columnar staging (Parquet, object-storage mount) | IMPLEMENTED | parity-tested against relational staging |
+| Columnar staging (Parquet on local, S3, GCS, Azure or memory filesystems via fsspec) | IMPLEMENTED | parity-tested against relational staging; object-store path tested with the in-memory filesystem, not a live bucket |
 | Transformation stage with lineage & exceptions | IMPLEMENTED | |
 | Load | SIMULATED | idempotent upsert, config matching, load-method selection; released-API loaders planned |
 | Reconciliation (technical/functional/financial) | IMPLEMENTED | on simulated data |
