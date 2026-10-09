@@ -47,6 +47,11 @@ class SapSystem(BaseModel):
         return (not self.is_production) and self.writable_target_allowed
 
     @property
+    def family(self) -> str:
+        """Product family drives the object model: ECC (KNA1/BKPF) vs S4 (Business Partner + ACDOCA)."""
+        return "S4" if "S/4" in self.product.upper() else "ECC"
+
+    @property
     def label(self) -> str:
         return f"{self.sid}/{self.client} ({self.role.value})"
 

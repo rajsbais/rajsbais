@@ -38,7 +38,7 @@ def _cust(i: int) -> str:
     return f"{i:010d}"
 
 
-def build_source_dataset(seed: int = 42) -> dict[str, list[Row]]:
+def build_source_dataset(seed: int = 42, family: str = "ECC") -> dict[str, list[Row]]:
     rng = random.Random(seed)
     d: dict[str, list[Row]] = {t: [] for t in TABLES}
     d["T001"] += [
@@ -189,7 +189,26 @@ def build_source_dataset(seed: int = 42) -> dict[str, list[Row]]:
         {"OBJECT": "SD_BILL", "NRRANGENR": "01", "FROMNUMBER": 90000000, "TONUMBER": 99999999, "NRLEVEL": mx("VBRK", "VBELN")},
         {"OBJECT": "MM_PO", "NRRANGENR": "01", "FROMNUMBER": 4500000000, "TONUMBER": 4599999999, "NRLEVEL": mx("EKKO", "EBELN")},
     ]
+    if family == "S4":
+        _add_s4(d)
     return d
+
+
+def _add_s4(d: dict[str, list[Row]]) -> None:
+    """S/4HANA flavour: Business Partner records for every customer/vendor and ACDOCA lines for every FI posting."""
+    for r in d["KNA1"]:
+        d["BUT000"].append({"PARTNER": r["KUNNR"], "BU_GROUP": "CUST", "NAME_ORG1": r["NAME1"],
+                            "BU_SORT1": r["NAME1"].upper()[:20], "TYPE": "2"})
+    for r in d["LFA1"]:
+        d["BUT000"].append({"PARTNER": r["LIFNR"], "BU_GROUP": "VEND", "NAME_ORG1": r["NAME1"],
+                            "BU_SORT1": r["NAME1"].upper()[:20], "TYPE": "2"})
+    awkey = {(h["BUKRS"], h["BELNR"], h["GJAHR"]): h for h in d["BKPF"]}
+    for seg in d["BSEG"]:
+        h = awkey[(seg["BUKRS"], seg["BELNR"], seg["GJAHR"])]
+        d["ACDOCA"].append({"RLDNR": "0L", "RBUKRS": seg["BUKRS"], "GJAHR": seg["GJAHR"], "BELNR": seg["BELNR"],
+                            "DOCLN": f"{int(seg['BUZEI']):06d}", "RACCT": seg["HKONT"],
+                            "HSL": seg["DMBTR"] if seg["SHKZG"] == "S" else -seg["DMBTR"],
+                            "KUNNR": seg["KUNNR"], "AWTYP": h["AWTYP"], "AWREF": h["AWKEY"]})
 
 
 def build_target_dataset(source: dict[str, list[Row]], seed: int = 7) -> tuple[dict[str, list[Row]], dict[str, str]]:
@@ -203,12 +222,12 @@ def build_target_dataset(source: dict[str, list[Row]], seed: int = 7) -> tuple[d
 
     c1, c2 = _cust(100001), _cust(100002)
     pii = {"NAME1": "MASKED CORP", "STRAS": "1 Masked Street", "TELF1": "+00 000 0000", "STCD1": "XX000000000",
-           "ZZ_CONTACT_EMAIL": "user000000@example.test", "STREET": "1 Masked Street", "TEL_NUMBER": "+00 000 0000",
+           "ZZ_CONTACT_EMAIL": "user000000@example.test", "NAME_ORG1": "MASKED CORP", "BU_SORT1": "MASKED CORP", "STREET": "1 Masked Street", "TEL_NUMBER": "+00 000 0000",
            "SMTP_ADDR": "user000000@example.test", "BANKN": "0000000000", "IBAN": "DE00000000000000000000", "KOINH": "MASKED CORP"}
     adr_of = {r["KUNNR"]: r["ADRNR"] for r in source["KNA1"]}
-    for t in ("KNA1", "KNB1", "KNVV", "KNBK", "ADRC"):
+    for t in ("KNA1", "KNB1", "KNVV", "KNBK", "ADRC", "BUT000"):
         for r in source[t]:
-            owner_c = r.get("KUNNR") or next((k for k, a in adr_of.items() if a == r.get("ADDRNUMBER")), None)
+            owner_c = r.get("KUNNR") or r.get("PARTNER") or next((k for k, a in adr_of.items() if a == r.get("ADDRNUMBER")), None)
             if owner_c in (c1, c2):
                 row = {k: (pii[k] if k in pii else v) for k, v in r.items()}  # earlier refresh already masked PII
                 if t == "KNA1" and owner_c == c2:
@@ -291,6 +310,7 @@ class SimulatedSap:
             "table_counts": self.table_counts(),
             "installed_components": [{"name": "SAP_BASIS", "release": s.release}, {"name": "SAP_APPL", "release": "617"}],
             "custom_fields": ["KNA1-ZZ_CONTACT_EMAIL"],
+            "family": s.family,
             "refresh_mechanisms": ["selective-copy (simulated)"],
         }
 
@@ -343,12 +363,15 @@ class SimulatedSap:
         return self._outbound
 
 
-def make_demo_pair() -> tuple[SimulatedSap, SimulatedSap]:
-    src_data = build_source_dataset()
+def make_demo_pair(family: str = "ECC") -> tuple[SimulatedSap, SimulatedSap]:
+    s4 = family == "S4"
+    prod, rel = ("SAP S/4HANA 2023", "758") if s4 else ("SAP ECC 6.0 EHP8", "731")
+    sids = ("S4P", "S4Q") if s4 else ("EP1", "EQ1")
+    src_data = build_source_dataset(family=family)
     tgt_data, owners = build_target_dataset(src_data)
-    src = SimulatedSap(SapSystem(id="", sid="EP1", client="100", role="PRD", owner="finance-it",
+    src = SimulatedSap(SapSystem(id="", sid=sids[0], client="100", role="PRD", owner="finance-it", product=prod, release=rel,
                                  app_servers=["ep1app01", "ep1app02"], tags=["synthetic"]), src_data)
-    tgt = SimulatedSap(SapSystem(id="", sid="EQ1", client="200", role="QAS", owner="qa-lead",
+    tgt = SimulatedSap(SapSystem(id="", sid=sids[1], client="200", role="QAS", owner="qa-lead", product=prod, release=rel,
                                  app_servers=["eq1app01"], tags=["synthetic"]), tgt_data, owners,
                        outbound=[{"name": "EDI_PARTNER_OUT", "type": "IDoc", "active": False},
                                  {"name": "MAIL_RELAY", "type": "SMTP", "active": False}])

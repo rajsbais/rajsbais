@@ -63,8 +63,8 @@ class StrategyIn(BaseModel):
 
 
 def project_dict(svc: RefreshService, p: Project) -> dict:
-    return {"id": p.id, "name": p.name, "status": p.status, "source": svc.system(p.source_id).model_dump(mode="json"),
-            "target": svc.system(p.target_id).model_dump(mode="json"), "created_by": p.created_by,
+    return {"id": p.id, "name": p.name, "status": p.status, "source": {**svc.system(p.source_id).model_dump(mode="json"), "family": svc.system(p.source_id).family},
+            "target": {**svc.system(p.target_id).model_dump(mode="json"), "family": svc.system(p.target_id).family}, "created_by": p.created_by,
             "last_editor": p.last_editor, "submitted_by": p.submitted_by,
             "manifest": p.manifest.model_dump(mode="json") if p.manifest else None,
             "manifest_hash": p.manifest.content_hash() if p.manifest else None,
@@ -132,7 +132,7 @@ def create_app(data_dir: Path | None = None) -> FastAPI:
 
     @app.get("/api/systems")
     def systems(_: Principal = Depends(need("view"))):
-        return [{**s.model_dump(mode="json"), "label": s.label, "writable_target": s.can_be_write_target, "simulated": True}
+        return [{**s.model_dump(mode="json"), "family": s.family, "label": s.label, "writable_target": s.can_be_write_target, "simulated": True}
                 for s in svc.systems.values()]
 
     @app.get("/api/systems/{sid}/discovery")
@@ -148,13 +148,15 @@ def create_app(data_dir: Path | None = None) -> FastAPI:
         return svc.refresh_combinations()
 
     @app.get("/api/objects/registry")
-    def registry(_: Principal = Depends(need("view"))):
-        return svc.registry.graph()
+    def registry(family: str = "ECC", _: Principal = Depends(need("view"))):
+        if family not in svc.registries:
+            raise HTTPException(422, "family must be ECC or S4")
+        return {**svc.registries[family].graph(), "family": family}
 
     @app.get("/api/systems/{sid}/integrity")
     def integrity(sid: str, _: Principal = Depends(need("view"))):
         from ..dependency.planner import Planner
-        return Planner(svc.source_view(sid), svc.registry).validate_relationships()
+        return Planner(svc.source_view(sid), svc.registries[svc.system(sid).family]).validate_relationships()
 
     # ---------------- projects ----------------
     @app.get("/api/projects")

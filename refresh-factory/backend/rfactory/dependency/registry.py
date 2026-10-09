@@ -6,7 +6,7 @@ The registry is extensible at runtime for custom Z/Y objects (see `register_*`).
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from enum import Enum
 
 
@@ -166,9 +166,18 @@ def find_cycles(edges: dict[str, set[str]]) -> list[list[str]]:
 class Registry:
     """Mutable registry; the module-level default is copied per app instance."""
 
-    def __init__(self):
+    def __init__(self, family: str = "ECC"):
+        self.family = family
         self.types = dict(OBJECT_TYPES)
         self.relationships = list(RELATIONSHIPS)
+        if family == "S4":
+            # S/4HANA: customers/vendors are Business Partners (CVI keeps KNA1/LFA1 in sync) and FI documents
+            # also live in the universal journal ACDOCA.
+            def add(name, link):
+                self.types[name] = replace(self.types[name], tables=self.types[name].tables + (link,))
+            add("CUSTOMER", L("BUT000", "KNA1", [("PARTNER", "KUNNR")]))
+            add("VENDOR", L("BUT000", "LFA1", [("PARTNER", "LIFNR")]))
+            add("FI_DOCUMENT", L("ACDOCA", "BKPF", [("RBUKRS", "BUKRS"), ("BELNR", "BELNR"), ("GJAHR", "GJAHR")]))
 
     def register_object_type(self, ot: ObjectType) -> None:
         self.types[ot.name] = ot

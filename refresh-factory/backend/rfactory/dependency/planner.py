@@ -312,7 +312,7 @@ class Planner:
         orphans, dangling = [], []
         for ot in self.reg.types.values():
             for link in ot.tables[1:]:
-                if link.table in ("ADRC", "VBFA"):
+                if link.table in ("ADRC", "VBFA", "BUT000"):  # shared tables: checked separately below
                     continue
                 for row in self.r.select(link.table):
                     (cf, pf), rest = link.join[0], link.join[1:]
@@ -320,6 +320,10 @@ class Planner:
                                if all(p.get(b) == row.get(a) for a, b in rest)]
                     if not parents:
                         orphans.append({"table": link.table, "key": [row[k] for k in TABLES[link.table].keys]})
+        if "BUT000" in TABLES:  # business partner must belong to a customer or a vendor (CVI)
+            for bp in self.r.select("BUT000"):
+                if not self.r.lookup("KNA1", "KUNNR", bp["PARTNER"]) and not self.r.lookup("LFA1", "LIFNR", bp["PARTNER"]):
+                    orphans.append({"table": "BUT000", "key": [bp["PARTNER"]]})
         for rel in self.reg.relationships:
             if rel.kind != RelKind.REQUIRES or rel.dst not in self.reg.types:
                 continue

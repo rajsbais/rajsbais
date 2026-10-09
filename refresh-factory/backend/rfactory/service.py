@@ -67,7 +67,8 @@ class RefreshService:
         self.data_dir = data_dir or Path(tempfile.mkdtemp(prefix="rfactory-"))
         self.data_dir.mkdir(parents=True, exist_ok=True)
         self.audit = AuditLog(self.data_dir / "audit.jsonl")
-        self.registry = Registry()
+        self.registries = {"ECC": Registry("ECC"), "S4": Registry("S4")}
+        self.registry = self.registries["ECC"]  # default / ECC
         self.systems: dict[str, SapSystem] = {}
         self.adapters: dict[str, SimulatedSap] = {}
         self.projects: dict[str, Project] = {}
@@ -91,7 +92,16 @@ class RefreshService:
         src, tgt = make_demo_pair()
         s = self.register_system(actor, src.system, src)
         t = self.register_system(actor, tgt.system, tgt)
-        return {"source": s.model_dump(mode="json"), "target": t.model_dump(mode="json"), "simulated": True}
+        s4s, s4t = make_demo_pair("S4")
+        a = self.register_system(actor, s4s.system, s4s)
+        b = self.register_system(actor, s4t.system, s4t)
+        return {"source": s.model_dump(mode="json"), "target": t.model_dump(mode="json"),
+                "s4_source": a.model_dump(mode="json"), "s4_target": b.model_dump(mode="json"), "simulated": True}
+
+    def reg(self, p: Project) -> Registry:
+        r = self.registries[self.system(p.source_id).family]
+        self.executor.reg = r
+        return r
 
     def system(self, sid: str) -> SapSystem:
         if sid not in self.systems:
@@ -138,6 +148,7 @@ class RefreshService:
                 v = runbook.validate_pair(s, t)
                 out.append({"source": s.id, "target": t.id, "label": f"{s.label} → {t.label}",
                             "selective": v["ok"] or (not t.is_production and s.product == t.product),
+                            "note": "ECC↔S/4HANA is a migration/conversion, not a refresh" if s.family != t.family else "",
                             "full_system_refresh": v["ok"], "blockers": v["blockers"], "warnings": v["warnings"]})
         return out
 
@@ -156,7 +167,8 @@ class RefreshService:
         if s.id == t.id:
             raise Conflict("source and target must differ")
         if s.product != t.product:
-            raise Conflict(f"product mismatch: {s.product} vs {t.product}")
+            raise Conflict(f"product mismatch: {s.product} vs {t.product}"
+                           + (" (ECC↔S/4HANA is a migration, not a refresh)" if s.family != t.family else ""))
         p = Project(f"prj-{uuid.uuid4().hex[:8]}", name, source_id, target_id, actor.id)
         self.projects[p.id] = p
         self.audit.append(actor.id, "project.created", p.id, {"source": s.label, "target": t.label})
@@ -191,7 +203,7 @@ class RefreshService:
         p = self.project(pid)
         if not p.manifest:
             raise Conflict("no manifest")
-        plan = Planner(self.source_view(p.source_id), self.registry).build(p.manifest)
+        plan = Planner(self.source_view(p.source_id), self.reg(p)).build(p.manifest)
         p.plan, p.report, p.approval = plan, None, None
         p.status = "PLANNED"
         rows = {t: [r for i in plan.instances.values() for r in i.rows.get(t, [])] for t in
@@ -256,7 +268,7 @@ class RefreshService:
         if not p.plan:
             raise Conflict("plan not built")
         sens = self._sensitive(p)
-        p.report = analyze(p.plan, self.adapters[p.target_id], p.manifest, self.registry, sens)
+        p.report = analyze(p.plan, self.adapters[p.target_id], p.manifest, self.reg(p), sens)
         p.approval = None
         p.status = "CONFLICTS_ANALYZED"
         self.audit.append(actor.id, "conflicts.analyzed", pid, {"findings": len(p.report.findings), "blocking": len(p.report.blocking)})
@@ -285,7 +297,7 @@ class RefreshService:
                           ("skip-differences", {**p.manifest.conflict_policy, "DUPLICATE_DIFFERENT": "SKIP"}),
                           ("quarantine-differences", {**p.manifest.conflict_policy, "DUPLICATE_DIFFERENT": "QUARANTINE"})):
             m = p.manifest.model_copy(update={"conflict_policy": pol})
-            r = analyze(p.plan, self.adapters[p.target_id], m, self.registry, sens)
+            r = analyze(p.plan, self.adapters[p.target_id], m, self.reg(p), sens)
             alts.append({"policy": name, "settings": pol, "blocking": bool(r.blocking), "executable_objects": len(r.executable),
                          "quarantined": sum(1 for a in r.decisions.values() if a == Action.QUARANTINE)})
         return advisors.conflict_resolution(p.report.to_dict(), alts)
@@ -368,6 +380,7 @@ class RefreshService:
             raise ProductionWriteBlocked("production systems are never writable")
         engine = MaskingEngine(p.masking_policy)
         self.engines[pid] = engine
+        self.reg(p)
         run = self.executor.new_run(pid, p.plan, p.report)
         self.runs[run.id] = run
         p.runs.append(run.id)
@@ -388,6 +401,7 @@ class RefreshService:
         if run.status != "FAILED":
             raise Conflict("only FAILED runs can be resumed")
         target = self.adapters[p.target_id]
+        self.reg(p)
         target.fault_injector = fault_injector
         self.audit.append(actor.id, "run.resumed", run.id, {"checkpoint": run.checkpoint})
         try:
@@ -399,7 +413,7 @@ class RefreshService:
     def _after_run(self, p: Project, run: Run) -> Run:
         if run.status == "COMPLETED":
             run.reconciliation = reconcile(run, p.plan, self.source_view(p.source_id), self.adapters[p.target_id],
-                                           self.engines[p.id], self.registry, self.required_sensitive.get(p.id, []),
+                                           self.engines[p.id], self.reg(p), self.required_sensitive.get(p.id, []),
                                            p.report.row_exclusions)
             run.release = run.reconciliation["release"]
             p.status = "COMPLETED" if run.release == "RELEASED" else "HELD"
@@ -416,6 +430,7 @@ class RefreshService:
         p = self.project(run.project_id)
         if run.status not in ("FAILED", "COMPLETED"):
             raise Conflict("run cannot be rolled back in its current state")
+        self.reg(p)
         self.executor.rollback(run, self.adapters[p.target_id], actor.id)
         p.status = "ROLLED_BACK"
         return run

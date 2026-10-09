@@ -14,13 +14,14 @@ def svc(tmp_path):
     s = RefreshService(tmp_path)
     b = s.bootstrap_demo(ADMIN)
     s.src_id, s.tgt_id = b["source"]["id"], b["target"]["id"]
+    s.s4_src, s.s4_tgt = b["s4_source"]["id"], b["s4_target"]["id"]
     return s
 
 
-def make_project(svc, policy=None, downstream=("DELIVERY", "BILLING", "FI_DOCUMENT"), company="1000", days=90,
+def make_project(svc, policy=None, src=None, tgt=None, downstream=("DELIVERY", "BILLING", "FI_DOCUMENT"), company="1000", days=90,
                  masking="gdpr-standard", object_type="SALES_ORDER", **scope_kw):
-    p = svc.create_project(ALICE, "test", svc.src_id, svc.tgt_id)
-    ref = svc.adapters[svc.src_id].reference_date()
+    p = svc.create_project(ALICE, "test", src or svc.src_id, tgt or svc.tgt_id)
+    ref = svc.adapters[p.source_id].reference_date()
     scope = Scope(object_type=object_type, company_codes=[company] if company else [],
                   date_from=ref - timedelta(days=days) if days else None, date_to=ref if days else None, **scope_kw)
     svc.set_manifest(ALICE, p.id, scope, list(downstream), masking, policy or {})

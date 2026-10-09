@@ -143,6 +143,23 @@ def reconcile(run: Run, plan: Plan, source: SourceAdapter, target: TargetAdapter
     checks.append(_chk("business", "BUS-QUARANTINE", "No loaded object depends on a quarantined object", not leak,
                        f"{len(leak)} violations", leak))
 
+    # S/4HANA specifics: universal journal agrees with BKPF/BSEG, every customer/vendor has a Business Partner
+    if any("ACDOCA" in i.rows for i in loaded):
+        ac_bad = []
+        for inst in docs("FI_DOCUMENT"):
+            b, bel, yr = inst.key.split("/")
+            lines = [a for a in target.lookup("ACDOCA", "BELNR", bel) if a["RBUKRS"] == b and a["GJAHR"] == yr]
+            segs = [x for x in target.lookup("BSEG", "BELNR", bel) if x["BUKRS"] == b and x["GJAHR"] == yr]
+            if len(lines) != len(segs) or abs(sum(a["HSL"] for a in lines)) > 0.01:
+                ac_bad.append(inst.key)
+        checks.append(_chk("business", "BUS-ACDOCA", "Universal journal (ACDOCA) balances to zero and matches BSEG line count",
+                           not ac_bad, f"{len(ac_bad)} inconsistent", ac_bad))
+    if any("BUT000" in i.rows for i in loaded):
+        bp_bad = [i.id for i in loaded if i.type in ("CUSTOMER", "VENDOR") and
+                  target.get("BUT000", (i.key,)) is None]
+        checks.append(_chk("business", "BUS-BP", "Every customer/vendor has its Business Partner (CVI link)", not bp_bad,
+                           f"{len(bp_bad)} without BP", bp_bad))
+
     # ---------------- security ----------------
     cov = masking.coverage(required_sensitive)
     checks.append(_chk("security", "SEC-MASK-COVERAGE", "All discovered sensitive fields are covered by a masking rule",

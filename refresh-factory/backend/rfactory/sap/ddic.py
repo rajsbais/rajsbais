@@ -67,6 +67,10 @@ TABLES: dict[str, TableDef] = {
            ["EBELN", "BUKRS", "LIFNR", "BEDAT", "EKORG", "BSART"]),
         _t("EKPO", "Purchasing document item", ["EBELN", "EBELP"],
            ["EBELN", "EBELP", "MATNR", "WERKS", "MENGE", "NETPR"]),
+        # S/4HANA-only tables (absent in ECC)
+        _t("BUT000", "Business partner (general)", ["PARTNER"], ["PARTNER", "BU_GROUP", "NAME_ORG1", "BU_SORT1", "TYPE"]),
+        _t("ACDOCA", "Universal journal entry", ["RLDNR", "RBUKRS", "GJAHR", "BELNR", "DOCLN"],
+           ["RLDNR", "RBUKRS", "GJAHR", "BELNR", "DOCLN", "RACCT", "HSL", "KUNNR", "AWTYP", "AWREF"]),
         _t("NRIV", "Number range intervals", ["OBJECT", "NRRANGENR"],
            ["OBJECT", "NRRANGENR", "FROMNUMBER", "TONUMBER", "NRLEVEL"], True),
     ]

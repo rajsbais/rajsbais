@@ -97,6 +97,7 @@ CATALOG: dict[tuple[str, str], tuple[str, str]] = {
     ("LFA1", "NAME1"): ("name", "NAME"), ("LFA1", "TELF1"): ("phone", "PHONE"), ("LFA1", "STCD1"): ("tax_id", "TAX_ID"),
     ("ADRC", "NAME1"): ("name", "NAME"), ("ADRC", "STREET"): ("street", "STREET"),
     ("ADRC", "TEL_NUMBER"): ("phone", "PHONE"), ("ADRC", "SMTP_ADDR"): ("email", "EMAIL"),
+    ("BUT000", "NAME_ORG1"): ("name", "NAME"), ("BUT000", "BU_SORT1"): ("name", "NAME"),
     ("KNBK", "BANKN"): ("bank_account", "BANK_ACCOUNT"), ("KNBK", "IBAN"): ("iban", "IBAN"), ("KNBK", "KOINH"): ("name", "NAME"),
     ("LFBK", "BANKN"): ("bank_account", "BANK_ACCOUNT"), ("LFBK", "IBAN"): ("iban", "IBAN"), ("LFBK", "KOINH"): ("name", "NAME"),
 }

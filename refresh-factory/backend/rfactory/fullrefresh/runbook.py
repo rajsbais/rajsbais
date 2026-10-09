@@ -88,7 +88,8 @@ def validate_pair(source: SapSystem, target: SapSystem) -> dict:
     if source.sid == target.sid and source.client == target.client:
         blockers.append("Source and target share SID and client")
     if source.product != target.product:
-        blockers.append(f"Product mismatch ({source.product} vs {target.product})")
+        blockers.append(f"Product mismatch ({source.product} vs {target.product})"
+                        + ("; ECC↔S/4HANA is a conversion/migration, outside refresh scope" if source.family != target.family else ""))
     if source.db_type != target.db_type:
         blockers.append("Heterogeneous system copy (different DB type) is not supported by this orchestrator")
     if source.release != target.release:
