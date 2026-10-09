@@ -145,7 +145,7 @@ def test_test_data_catalog_over_http(client):
     b = client.post("/api/demo/bootstrap", headers=H("alice.basis")).json()
     sid, tid = b["source"]["id"], b["target"]["id"]
     t = client.get("/api/tdm/templates", headers=H("tina.tester")).json()
-    assert any(x["id"] == "o2c_complete" for x in t["available"]) and any(x["id"] == "make_to_stock" for x in t["planned"])
+    assert any(x["id"] == "o2c_complete" for x in t["available"]) and any(x["id"] == "mfg_order_completed" for x in t["available"]) and any(x["id"] == "make_to_order" for x in t["planned"])
     cands = client.get(f"/api/tdm/templates/o2c_complete/candidates?source_id={sid}&days=90", headers=H("tina.tester")).json()
     assert cands and cands[0]["attrs"]["company_code"] == "1000"
 

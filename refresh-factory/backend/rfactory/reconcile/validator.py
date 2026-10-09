@@ -160,6 +160,56 @@ def reconcile(run: Run, plan: Plan, source: SourceAdapter, target: TargetAdapter
         checks.append(_chk("business", "BUS-BP", "Every customer/vendor has its Business Partner (CVI link)", not bp_bad,
                            f"{len(bp_bad)} without BP", bp_bad))
 
+    # manufacturing and inventory (evaluated against the TARGET)
+    orders = docs("PRODUCTION_ORDER")
+    mdocs = docs("MATERIAL_DOCUMENT")
+    if orders or mdocs:
+        item_t = "MATDOC" if registry.types["MATERIAL_DOCUMENT"].header == "MATDOC" else "MSEG"
+        struct_bad, bom_bad, comp_bad, move_bad = [], [], [], []
+        for inst in orders:
+            n = inst.key
+            afko, afpo, resb = target.get("AFKO", (n,)), target.lookup("AFPO", "AUFNR", n), target.lookup("RESB", "AUFNR", n)
+            if not target.get("AUFK", (n,)) or not afko or not afpo:
+                struct_bad.append(f"order {n}: header/item rows missing in target")
+                continue
+            stl = afko.get("STLNR")
+            bom = target.get("STKO", (stl,)) if stl else None
+            if stl and not bom:
+                bom_bad.append(f"order {n}: BOM {stl} missing in target")
+            if bom:
+                for comp in target.lookup("STPO", "STLNR", stl):
+                    need = comp["MENGE"] * afko["GAMNG"] / (bom["BMENG"] or 1)
+                    got = sum(r["BDMNG"] for r in resb if r["MATNR"] == comp["IDNRK"])
+                    if abs(need - got) > 0.001:
+                        comp_bad.append(f"order {n}: component {comp['IDNRK']} reserves {got}, BOM needs {need}")
+            lines = target.lookup(item_t, "AUFNR", n)
+            for bwart in ("101", "261"):
+                sel = [l for l in lines if l["BWART"] == bwart]
+                if not sel:
+                    continue
+                if bwart == "101":
+                    got, want = sum(l["MENGE"] for l in sel), sum(a["WEMNG"] for a in afpo)
+                    if abs(got - want) > 0.001:
+                        move_bad.append(f"order {n}: goods receipts {got} != received quantity {want}")
+                else:
+                    for mat in {l["MATNR"] for l in sel}:
+                        got = sum(l["MENGE"] for l in sel if l["MATNR"] == mat)
+                        want = sum(r["ENMNG"] for r in resb if r["MATNR"] == mat)
+                        if abs(got - want) > 0.001:
+                            move_bad.append(f"order {n}: goods issues of {mat} {got} != withdrawn quantity {want}")
+        for inst in mdocs:
+            for ln in inst.rows.get(item_t, []):
+                if ln.get("AUFNR") and not target.get("AUFK", (ln["AUFNR"],)):
+                    move_bad.append(f"material document {inst.key}: order {ln['AUFNR']} missing in target")
+        checks.append(_chk("business", "BUS-PP-STRUCT", "Production orders are complete (header, item) in the target", not struct_bad,
+                           f"{len(struct_bad)} incomplete", struct_bad))
+        checks.append(_chk("business", "BUS-PP-BOM", "The BOM of every loaded production order exists in the target", not bom_bad,
+                           f"{len(bom_bad)} missing", bom_bad))
+        checks.append(_chk("business", "BUS-PP-COMPONENTS", "Component reservations equal the BOM explosion for the order quantity", not comp_bad,
+                           f"{len(comp_bad)} deviations", comp_bad))
+        checks.append(_chk("business", "BUS-PP-MOVEMENTS", "Goods movements agree with order progress and reference existing orders", not move_bad,
+                           f"{len(move_bad)} inconsistent", move_bad))
+
     # ---------------- security ----------------
     cov = masking.coverage(required_sensitive)
     checks.append(_chk("security", "SEC-MASK-COVERAGE", "All discovered sensitive fields are covered by a masking rule",

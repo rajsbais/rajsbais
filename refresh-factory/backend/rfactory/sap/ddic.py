@@ -67,7 +67,20 @@ TABLES: dict[str, TableDef] = {
            ["EBELN", "BUKRS", "LIFNR", "BEDAT", "EKORG", "BSART"]),
         _t("EKPO", "Purchasing document item", ["EBELN", "EBELP"],
            ["EBELN", "EBELP", "MATNR", "WERKS", "MENGE", "NETPR"]),
+        # Manufacturing (PP) and inventory management (MM-IM). Reduced views: no routings/operations, confirmations, costing or batches.
+        _t("STKO", "BOM header (simplified: material and plant on the header, as MAST+STKO)", ["STLNR"], ["STLNR", "MATNR", "WERKS", "STLAN", "BMENG", "DATUV"]),
+        _t("STPO", "BOM item", ["STLNR", "STLKN"], ["STLNR", "STLKN", "IDNRK", "MENGE", "MEINS"]),
+        _t("AUFK", "Order master data", ["AUFNR"], ["AUFNR", "AUART", "ERDAT", "BUKRS", "WERKS", "ERNAM"]),
+        _t("AFKO", "Production order header", ["AUFNR"], ["AUFNR", "GAMNG", "GMEIN", "GSTRP", "GLTRP", "STLNR"]),
+        _t("AFPO", "Production order item", ["AUFNR", "POSNR"], ["AUFNR", "POSNR", "MATNR", "PSMNG", "WEMNG", "WERKS"]),
+        _t("RESB", "Order component reservation (simplified key AUFNR/RSPOS)", ["AUFNR", "RSPOS"], ["AUFNR", "RSPOS", "MATNR", "WERKS", "BDMNG", "ENMNG"]),
+        # ECC material documents: header + item. In S/4HANA these are views on MATDOC, so MKPF/MSEG hold no rows there.
+        _t("MKPF", "Material document header", ["MBLNR", "MJAHR"], ["MBLNR", "MJAHR", "BLDAT", "BUDAT", "USNAM"]),
+        _t("MSEG", "Material document item", ["MBLNR", "MJAHR", "ZEILE"],
+           ["MBLNR", "MJAHR", "ZEILE", "BWART", "MATNR", "WERKS", "BUKRS", "MENGE", "MEINS", "DMBTR", "AUFNR"]),
         # S/4HANA-only tables (absent in ECC)
+        _t("MATDOC", "Material document (S/4HANA: header and item in one table)", ["MBLNR", "MJAHR", "ZEILE"],
+           ["MBLNR", "MJAHR", "ZEILE", "BLDAT", "BUDAT", "USNAM", "BWART", "MATNR", "WERKS", "BUKRS", "MENGE", "MEINS", "DMBTR", "AUFNR"]),
         _t("BUT000", "Business partner (general)", ["PARTNER"], ["PARTNER", "BU_GROUP", "NAME_ORG1", "BU_SORT1", "TYPE"]),
         _t("ACDOCA", "Universal journal entry", ["RLDNR", "RBUKRS", "GJAHR", "BELNR", "DOCLN"],
            ["RLDNR", "RBUKRS", "GJAHR", "BELNR", "DOCLN", "RACCT", "HSL", "KUNNR", "AWTYP", "AWREF"]),
@@ -82,6 +95,9 @@ NUMBER_RANGE_OBJECTS: dict[str, tuple[str, str]] = {
     "LIKP": ("SD_DELIV", "VBELN"),
     "VBRK": ("SD_BILL", "VBELN"),
     "EKKO": ("MM_PO", "EBELN"),
+    "AUFK": ("PP_ORDER", "AUFNR"),
+    "MKPF": ("MM_MBLNR", "MBLNR"),
+    "MATDOC": ("MM_MBLNR", "MBLNR"),
 }
 
 

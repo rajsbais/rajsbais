@@ -28,6 +28,10 @@ from .selective.executor import Executor, Run
 from .selective.manifest import Manifest, Scope
 
 
+def family_is_s4(system) -> bool:
+    return system.family == "S4"
+
+
 class NotFound(KeyError):
     pass
 
@@ -143,7 +147,9 @@ class RefreshService:
             "customers": len(cust), "vendors": self.adapters[sid].count("LFA1"), "materials": self.adapters[sid].count("MARA"),
             "sales_orders": self.adapters[sid].count("VBAK"), "deliveries": self.adapters[sid].count("LIKP"),
             "billing_documents": self.adapters[sid].count("VBRK"), "accounting_documents": self.adapters[sid].count("BKPF"),
-            "purchase_orders": self.adapters[sid].count("EKKO")}
+            "purchase_orders": self.adapters[sid].count("EKKO"), "boms": self.adapters[sid].count("STKO"),
+            "production_orders": self.adapters[sid].count("AUFK"),
+            "material_documents": len({(r["MBLNR"], r["MJAHR"]) for r in self.adapters[sid].data["MATDOC" if family_is_s4(self.system(sid)) else "MKPF"]})}
         return d
 
     def readiness(self, sid: str) -> dict:

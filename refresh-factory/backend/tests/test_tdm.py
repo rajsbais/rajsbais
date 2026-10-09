@@ -41,7 +41,7 @@ def test_templates_available_and_planned_are_honest(svc):
     t = svc.tdm.templates()
     assert {"o2c_complete", "p2p_purchase_order", "r2r_billing_posting"} <= {x["id"] for x in t["available"]}
     planned = {p["id"]: p for p in t["planned"]}
-    assert {"make_to_stock", "make_to_order", "asset_accounting", "inventory_wm"} <= set(planned)
+    assert {"make_to_order", "asset_accounting", "inventory_wm"} <= set(planned)
     assert all(p["reason"] for p in planned.values())
     assert "Goods receipt" in next(x for x in t["available"] if x["id"] == "p2p_purchase_order")["coverage"]
 
@@ -72,8 +72,8 @@ def test_no_policy_no_data_and_planned_templates_rejected(svc):
     r = ask(svc, TINA, "o2c_complete", count=1)
     assert r["status"] == "REJECTED" and "no approved TDM policy" in r["reasons"][0]
     policy(svc)
-    r = ask(svc, TINA, "make_to_stock")
-    assert r["status"] == "REJECTED" and "PP" in r["reasons"][0]
+    r = ask(svc, TINA, "make_to_order")
+    assert r["status"] == "REJECTED" and "sales-order-based planning" in r["reasons"][0]
     with pytest.raises(Forbidden):
         svc.tdm.request(U["erin.auditor"], {"target_id": svc.tgt_id, "template_id": "o2c_complete"})
 

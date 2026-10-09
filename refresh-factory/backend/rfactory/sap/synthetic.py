@@ -182,6 +182,8 @@ def build_source_dataset(seed: int = 42, family: str = "ECC") -> dict[str, list[
                               "WERKS": rng.choice(plants["1000"]), "MENGE": rng.randint(5, 100),
                               "NETPR": round(rng.uniform(5, 50), 2)})
 
+    _add_manufacturing(d, mats, plants)
+
     def mx(t, f):
         return max((int(r[f]) for r in d[t]), default=0)
 
@@ -190,10 +192,69 @@ def build_source_dataset(seed: int = 42, family: str = "ECC") -> dict[str, list[
         {"OBJECT": "SD_DELIV", "NRRANGENR": "01", "FROMNUMBER": 80000000, "TONUMBER": 89999999, "NRLEVEL": mx("LIKP", "VBELN")},
         {"OBJECT": "SD_BILL", "NRRANGENR": "01", "FROMNUMBER": 90000000, "TONUMBER": 99999999, "NRLEVEL": mx("VBRK", "VBELN")},
         {"OBJECT": "MM_PO", "NRRANGENR": "01", "FROMNUMBER": 4500000000, "TONUMBER": 4599999999, "NRLEVEL": mx("EKKO", "EBELN")},
+        {"OBJECT": "PP_ORDER", "NRRANGENR": "01", "FROMNUMBER": 1000000, "TONUMBER": 1999999, "NRLEVEL": mx("AUFK", "AUFNR")},
+        {"OBJECT": "MM_MBLNR", "NRRANGENR": "01", "FROMNUMBER": 4900000000, "TONUMBER": 4999999999, "NRLEVEL": mx("MKPF", "MBLNR")},
     ]
     if family == "S4":
         _add_s4(d)
     return d
+
+
+def _add_manufacturing(d: dict[str, list[Row]], mats: dict[str, list[str]], plants: dict[str, list[str]]) -> None:
+    """BOMs, production orders and the goods movements that belong to them. Uses its own random stream, so adding it did not change any
+    other synthetic data. Quantities are consistent by construction: reserved-and-issued components equal the 261 postings, and the
+    received quantity equals the 101 postings (the reconciliation checks rely on this)."""
+    rng = random.Random(4242)
+    roh = {"1000": [_mat(100003), _mat(100006)], "2000": [_mat(100009), _mat(100012)]}  # RAW materials per company (MTART ROH)
+    fert = {"1000": [_mat(100000 + i) for i in (1, 2, 4, 5, 7, 8)], "2000": [_mat(100010), _mat(100011)]}
+    bom_of: dict[tuple[str, str], tuple[str, list[dict]]] = {}
+    stlnr = 100
+    for cc, products in fert.items():
+        plant = plants[cc][0]
+        for prod in products:
+            stlnr += 1
+            sid = f"{stlnr:08d}"
+            d["STKO"].append({"STLNR": sid, "MATNR": prod, "WERKS": plant, "STLAN": "1", "BMENG": 1, "DATUV": (REF_DATE - timedelta(days=500)).isoformat()})
+            items = []
+            for n, comp in enumerate(rng.sample(roh[cc], rng.randint(1, 2)), start=1):
+                it = {"STLNR": sid, "STLKN": f"{n * 10:08d}", "IDNRK": comp, "MENGE": rng.randint(1, 4), "MEINS": "EA"}
+                d["STPO"].append(it)
+                items.append(it)
+            bom_of[(cc, prod)] = (sid, items)
+    aufnr, mblnr = 1000001, 4900000001
+    for cc, count in (("1000", 14), ("2000", 4)):
+        plant = plants[cc][0]
+        for _ in range(count):
+            order = f"{aufnr:012d}"
+            aufnr += 1
+            prod = rng.choice(fert[cc])
+            sid, items = bom_of[(cc, prod)]
+            erdat = REF_DATE - timedelta(days=rng.randint(5, 120))
+            qty = rng.randint(10, 100)
+            done = rng.random() < 0.6
+            d["AUFK"].append({"AUFNR": order, "AUART": "PP01", "ERDAT": erdat.isoformat(), "BUKRS": cc, "WERKS": plant, "ERNAM": "BATCHUSR"})
+            d["AFKO"].append({"AUFNR": order, "GAMNG": qty, "GMEIN": "EA", "GSTRP": (erdat + timedelta(days=2)).isoformat(),
+                              "GLTRP": (erdat + timedelta(days=9)).isoformat(), "STLNR": sid})
+            d["AFPO"].append({"AUFNR": order, "POSNR": "0001", "MATNR": prod, "PSMNG": qty, "WEMNG": qty if done else 0, "WERKS": plant})
+            for n, it in enumerate(items, start=1):
+                need = it["MENGE"] * qty
+                d["RESB"].append({"AUFNR": order, "RSPOS": f"{n:04d}", "MATNR": it["IDNRK"], "WERKS": plant, "BDMNG": need, "ENMNG": need if done else 0})
+            if done:
+                budat = min(erdat + timedelta(days=rng.randint(9, 20)), REF_DATE)
+                for lines, bwart in (([(it["IDNRK"], it["MENGE"] * qty) for it in items], "261"), ([(prod, qty)], "101")):
+                    mb = f"{mblnr:010d}"
+                    mblnr += 1
+                    d["MKPF"].append({"MBLNR": mb, "MJAHR": str(budat.year), "BLDAT": budat.isoformat(), "BUDAT": budat.isoformat(), "USNAM": "BATCHUSR"})
+                    for z, (m, q) in enumerate(lines, start=1):
+                        d["MSEG"].append({"MBLNR": mb, "MJAHR": str(budat.year), "ZEILE": f"{z:04d}", "BWART": bwart, "MATNR": m, "WERKS": plant,
+                                          "BUKRS": cc, "MENGE": q, "MEINS": "EA", "DMBTR": round(q * rng.uniform(2, 40), 2), "AUFNR": order})
+    for n in range(3):  # stock postings that belong to no order (initial stock): isolated material documents
+        mb = f"{mblnr:010d}"
+        mblnr += 1
+        budat = REF_DATE - timedelta(days=rng.randint(10, 100))
+        d["MKPF"].append({"MBLNR": mb, "MJAHR": str(budat.year), "BLDAT": budat.isoformat(), "BUDAT": budat.isoformat(), "USNAM": "BATCHUSR"})
+        d["MSEG"].append({"MBLNR": mb, "MJAHR": str(budat.year), "ZEILE": "0001", "BWART": "561", "MATNR": roh["1000"][n % 2], "WERKS": "1000", "BUKRS": "1000",
+                          "MENGE": rng.randint(50, 200), "MEINS": "EA", "DMBTR": round(rng.uniform(100, 900), 2), "AUFNR": ""})
 
 
 def _add_s4(d: dict[str, list[Row]]) -> None:
@@ -204,6 +265,12 @@ def _add_s4(d: dict[str, list[Row]]) -> None:
     for r in d["LFA1"]:
         d["BUT000"].append({"PARTNER": r["LIFNR"], "BU_GROUP": "VEND", "NAME_ORG1": r["NAME1"],
                             "BU_SORT1": r["NAME1"].upper()[:20], "TYPE": "2"})
+    hdr = {(h["MBLNR"], h["MJAHR"]): h for h in d["MKPF"]}
+    for it in d["MSEG"]:  # S/4HANA keeps material documents in MATDOC; MKPF/MSEG are only compatibility views (no rows)
+        h = hdr[(it["MBLNR"], it["MJAHR"])]
+        d["MATDOC"].append({**{k: it[k] for k in ("MBLNR", "MJAHR", "ZEILE", "BWART", "MATNR", "WERKS", "BUKRS", "MENGE", "MEINS", "DMBTR", "AUFNR")},
+                            "BLDAT": h["BLDAT"], "BUDAT": h["BUDAT"], "USNAM": h["USNAM"]})
+    d["MKPF"], d["MSEG"] = [], []
     awkey = {(h["BUKRS"], h["BELNR"], h["GJAHR"]): h for h in d["BKPF"]}
     for seg in d["BSEG"]:
         h = awkey[(seg["BUKRS"], seg["BELNR"], seg["GJAHR"])]
@@ -246,12 +313,21 @@ def build_target_dataset(source: dict[str, list[Row]], seed: int = 7) -> tuple[d
                           "ERNAM": "QA_ALICE"})
         d["VBAP"].append({"VBELN": n, "POSNR": "000010", "MATNR": _mat(100001), "WERKS": "1000", "KWMENG": 1, "NETWR": 111.0})
         owners[f"VBAK/{n}"] = "qa.alice"
+    # a tester-created production order that reuses a source order number inside the window (a conflict only manufacturing scopes meet)
+    pp_clash = sorted(r["AUFNR"] for r in source["AUFK"] if r["BUKRS"] == "1000" and r["ERDAT"] >= cutoff)[:1]
+    for n in pp_clash:
+        d["AUFK"].append({"AUFNR": n, "AUART": "PP01", "ERDAT": (REF_DATE - timedelta(days=2)).isoformat(), "BUKRS": "1000", "WERKS": "1000", "ERNAM": "QA_ALICE"})
+        d["AFKO"].append({"AUFNR": n, "GAMNG": 5, "GMEIN": "EA", "GSTRP": REF_DATE.isoformat(), "GLTRP": REF_DATE.isoformat(), "STLNR": ""})
+        d["AFPO"].append({"AUFNR": n, "POSNR": "0001", "MATNR": _mat(100001), "PSMNG": 5, "WEMNG": 0, "WERKS": "1000"})
+        owners[f"AUFK/{n}"] = "qa.alice"
     level = max((int(n) for n in clash), default=5000000)
     d["NRIV"] = [
         {"OBJECT": "SD_ORDER", "NRRANGENR": "01", "FROMNUMBER": 5000000, "TONUMBER": 5999999, "NRLEVEL": level},
         {"OBJECT": "SD_DELIV", "NRRANGENR": "01", "FROMNUMBER": 80000000, "TONUMBER": 89999999, "NRLEVEL": 80000000},
         {"OBJECT": "SD_BILL", "NRRANGENR": "01", "FROMNUMBER": 90000000, "TONUMBER": 99999999, "NRLEVEL": 90000000},
         {"OBJECT": "MM_PO", "NRRANGENR": "01", "FROMNUMBER": 4500000000, "TONUMBER": 4599999999, "NRLEVEL": 4500000000},
+        {"OBJECT": "PP_ORDER", "NRRANGENR": "01", "FROMNUMBER": 1000000, "TONUMBER": 1999999, "NRLEVEL": max((int(n) for n in pp_clash), default=1000000)},
+        {"OBJECT": "MM_MBLNR", "NRRANGENR": "01", "FROMNUMBER": 4900000000, "TONUMBER": 4999999999, "NRLEVEL": 4900000000},
     ]
     return d, owners
 

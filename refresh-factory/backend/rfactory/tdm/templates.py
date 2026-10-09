@@ -49,6 +49,16 @@ TEMPLATES: dict[str, Template] = {t.id: t for t in [
     Template("r2r_billing_posting", "Record-to-Report: billing-originated FI posting", "Record-to-Report",
              "Balanced accounting document posted from a billing document (with its upstream chain).",
              "FI_DOCUMENT", (), ("subset",), "Revenue postings from SD only. No manual postings, clearing or open items.", None),
+    Template("mfg_order_completed", "Make-to-Stock: completed production order", "Manufacturing",
+             "Production order exploded from its BOM, with the component goods issues (261) and the finished-product goods receipt (101).",
+             "PRODUCTION_ORDER", ("MATERIAL_DOCUMENT",), ("subset", "synthetic"),
+             "Order, BOM, reservations and goods movements with consistent quantities. No routings/operations, confirmations, costing or batches.", "mfg_completed"),
+    Template("mfg_order_open", "Make-to-Stock: open production order", "Manufacturing",
+             "Production order with its BOM and component reservations but no goods movement yet: input for goods-issue and goods-receipt tests.",
+             "PRODUCTION_ORDER", (), ("subset", "synthetic"), "Order, BOM and reservations only.", "mfg_open"),
+    Template("md_bom_with_components", "Master data: BOM with component materials", "Manufacturing",
+             "Bill of material with the product and every component material maintained in the plant.",
+             "BOM", (), ("subset",), "BOM header and items with their materials. No alternative BOMs or routings.", None),
     Template("md_customer_with_bank", "Master data: customer with bank details", "Master data",
              "Customer maintained for the company code, with address and bank details.",
              "CUSTOMER", (), ("subset", "synthetic"), "General, company code, sales area, bank, address.", "customer"),
@@ -61,14 +71,12 @@ TEMPLATES: dict[str, Template] = {t.id: t for t in [
 ]}
 
 PLANNED = [
-    {"id": "make_to_stock", "name": "Make-to-Stock", "process": "Manufacturing", "status": "planned",
-     "reason": "Production orders, BOMs and routings (PP) are not in the data model yet."},
     {"id": "make_to_order", "name": "Make-to-Order", "process": "Manufacturing", "status": "planned",
-     "reason": "Needs PP objects and sales-order-based planning."},
+     "reason": "Needs sales-order-based planning and order-to-production links; routings/operations and confirmations are not modelled."},
     {"id": "asset_accounting", "name": "Asset Accounting", "process": "Record-to-Report", "status": "planned",
      "reason": "Asset master data and depreciation postings (FI-AA) are not modelled."},
     {"id": "inventory_wm", "name": "Inventory and warehouse management", "process": "Logistics", "status": "planned",
-     "reason": "Material documents (MATDOC/MKPF), stock and WM/EWM objects are not modelled."},
+     "reason": "Stock, valuation and WM/EWM objects are not modelled (material documents for production orders are)."},
     {"id": "intercompany_billing", "name": "Intercompany processing (full)", "process": "Intercompany", "status": "planned",
      "reason": "Intercompany billing and stock transfers are not modelled; see the partial cross-company template."},
 ]
@@ -123,6 +131,25 @@ def find_candidates(tpl: Template, r: SourceAdapter, params: dict) -> list[dict]
             items = r.lookup("EKPO", "EBELN", o["EBELN"])
             if items and r.get("LFA1", (o["LIFNR"],)) and all(r.get("MARA", (i["MATNR"],)) for i in items):
                 out.append({"key": o["EBELN"], "date": o["BEDAT"], "attrs": {"company_code": cc, "vendor": o["LIFNR"], "items": len(items)}})
+    elif tpl.root_type == "PRODUCTION_ORDER":
+        item_t = "MATDOC" if "MATDOC" in {t for t in ("MATDOC",) if r.select("MATDOC")} else "MSEG"
+        for o in r.select("AUFK", lambda x: x["BUKRS"] == cc and lo <= x["ERDAT"] <= hi):
+            afpo, afko = r.lookup("AFPO", "AUFNR", o["AUFNR"]), r.get("AFKO", (o["AUFNR"],))
+            if not afpo or not afko or not afko["STLNR"] or not r.get("STKO", (afko["STLNR"],)):
+                continue
+            moves = r.lookup(item_t, "AUFNR", o["AUFNR"])
+            received = sum(a["WEMNG"] for a in afpo)
+            ok = {"mfg_order_completed": received > 0 and any(m["BWART"] == "101" for m in moves) and any(m["BWART"] == "261" for m in moves),
+                  "mfg_order_open": received == 0 and not moves}[tpl.id]
+            if ok:
+                out.append({"key": o["AUFNR"], "date": o["ERDAT"], "attrs": {
+                    "company_code": cc, "plant": o["WERKS"], "product": afpo[0]["MATNR"], "quantity": afko["GAMNG"], "goods_movements": len({m["MBLNR"] for m in moves})}})
+    elif tpl.root_type == "BOM":
+        plants = {p["WERKS"] for p in r.select("T001W") if p["BUKRS"] == cc}
+        for b in r.select("STKO", lambda x: x["WERKS"] in plants):
+            comps = r.lookup("STPO", "STLNR", b["STLNR"])
+            if comps and r.get("MARA", (b["MATNR"],)) and all(r.get("MARA", (c["IDNRK"],)) for c in comps):
+                out.append({"key": b["STLNR"], "date": "", "attrs": {"company_code": cc, "plant": b["WERKS"], "product": b["MATNR"], "components": len(comps)}})
     elif tpl.root_type == "FI_DOCUMENT":
         for h in r.select("BKPF", lambda x: x["BUKRS"] == cc and x["AWTYP"] == "VBRK" and lo <= x["BUDAT"] <= hi):
             segs = [s for s in r.lookup("BSEG", "BELNR", h["BELNR"]) if s["BUKRS"] == h["BUKRS"] and s["GJAHR"] == h["GJAHR"]]

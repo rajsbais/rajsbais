@@ -96,6 +96,18 @@ OBJECT_TYPES: dict[str, ObjectType] = {o.name: o for o in [
                ("EBELN",), ("EKKO", "BEDAT"),
                {"company_codes": ("EKKO", "BUKRS"), "vendors": ("EKKO", "LIFNR"),
                 "plants": ("EKPO", "WERKS"), "document_types": ("EKKO", "BSART")}, 34),
+    # --- manufacturing and inventory (reduced models: no routings/operations, confirmations, costing, batches) ---
+    ObjectType("BOM", "Bill of material", "PP", "master",
+               (L("STKO"), L("STPO", "STKO", [("STLNR", "STLNR")])),
+               ("STLNR",), None, {"plants": ("STKO", "WERKS"), "materials": ("STKO", "MATNR")}, 13),
+    ObjectType("PRODUCTION_ORDER", "Production order", "PP", "document",
+               (L("AUFK"), L("AFKO", "AUFK", [("AUFNR", "AUFNR")]), L("AFPO", "AUFK", [("AUFNR", "AUFNR")]), L("RESB", "AUFK", [("AUFNR", "AUFNR")])),
+               ("AUFNR",), ("AUFK", "ERDAT"),
+               {"company_codes": ("AUFK", "BUKRS"), "plants": ("AUFK", "WERKS"), "materials": ("AFPO", "MATNR"), "document_types": ("AUFK", "AUART")}, 35),
+    ObjectType("MATERIAL_DOCUMENT", "Material document (goods movement)", "MM", "document",
+               (L("MKPF"), L("MSEG", "MKPF", [("MBLNR", "MBLNR"), ("MJAHR", "MJAHR")])),
+               ("MBLNR", "MJAHR"), ("MKPF", "BUDAT"),
+               {"company_codes": ("MSEG", "BUKRS"), "plants": ("MSEG", "WERKS"), "materials": ("MSEG", "MATNR")}, 36),
 ]}
 
 CONFIG_TYPES = {"COMPANY_CODE": ("T001", "BUKRS"), "PLANT": ("T001W", "WERKS")}
@@ -125,6 +137,19 @@ RELATIONSHIPS: list[Relationship] = [
     Relationship("po→material", "PURCHASE_ORDER", "MATERIAL", R, "EKPO", "MATNR"),
     Relationship("po→plant", "PURCHASE_ORDER", "PLANT", C, "EKPO", "WERKS"),
     Relationship("po→company code", "PURCHASE_ORDER", "COMPANY_CODE", C, "EKKO", "BUKRS"),
+    Relationship("bom→product", "BOM", "MATERIAL", R, "STKO", "MATNR", description="The material the BOM produces"),
+    Relationship("bom→component", "BOM", "MATERIAL", R, "STPO", "IDNRK"),
+    Relationship("bom→plant", "BOM", "PLANT", C, "STKO", "WERKS"),
+    Relationship("production order→product", "PRODUCTION_ORDER", "MATERIAL", R, "AFPO", "MATNR"),
+    Relationship("production order→component", "PRODUCTION_ORDER", "MATERIAL", R, "RESB", "MATNR"),
+    Relationship("production order→bom", "PRODUCTION_ORDER", "BOM", R, "AFKO", "STLNR", description="BOM the order was exploded from"),
+    Relationship("production order→plant", "PRODUCTION_ORDER", "PLANT", C, "AUFK", "WERKS"),
+    Relationship("production order→company code", "PRODUCTION_ORDER", "COMPANY_CODE", C, "AUFK", "BUKRS"),
+    Relationship("goods movement→material", "MATERIAL_DOCUMENT", "MATERIAL", R, "MSEG", "MATNR"),
+    Relationship("goods movement→production order", "MATERIAL_DOCUMENT", "PRODUCTION_ORDER", R, "MSEG", "AUFNR", reverse=True,
+                 description="Goods issue (261) / receipt (101) posted against a production order"),
+    Relationship("goods movement→plant", "MATERIAL_DOCUMENT", "PLANT", C, "MSEG", "WERKS"),
+    Relationship("goods movement→company code", "MATERIAL_DOCUMENT", "COMPANY_CODE", C, "MSEG", "BUKRS"),
     Relationship("customer→company code", "CUSTOMER", "COMPANY_CODE", C, "KNB1", "BUKRS"),
     Relationship("vendor→company code", "VENDOR", "COMPANY_CODE", C, "LFB1", "BUKRS"),
     Relationship("material→plant", "MATERIAL", "PLANT", C, "MARC", "WERKS"),
@@ -178,6 +203,13 @@ class Registry:
             add("CUSTOMER", L("BUT000", "KNA1", [("PARTNER", "KUNNR")]))
             add("VENDOR", L("BUT000", "LFA1", [("PARTNER", "LIFNR")]))
             add("FI_DOCUMENT", L("ACDOCA", "BKPF", [("RBUKRS", "BUKRS"), ("BELNR", "BELNR"), ("GJAHR", "GJAHR")]))
+            # S/4HANA stores material documents in ONE table, MATDOC (MKPF/MSEG are compatibility views without rows). A document line is
+            # therefore the unit this model loads: lines of one document are separate instances (a simplification: scoping by material
+            # can leave a document partial).
+            self.types["MATERIAL_DOCUMENT"] = ObjectType(
+                "MATERIAL_DOCUMENT", "Material document line (S/4HANA MATDOC)", "MM", "document", (L("MATDOC"),), ("MBLNR", "MJAHR", "ZEILE"), ("MATDOC", "BUDAT"),
+                {"company_codes": ("MATDOC", "BUKRS"), "plants": ("MATDOC", "WERKS"), "materials": ("MATDOC", "MATNR")}, 36)
+            self.relationships = [replace(r, via_table="MATDOC") if r.via_table == "MSEG" else r for r in self.relationships]
 
     def register_object_type(self, ot: ObjectType) -> None:
         self.types[ot.name] = ot

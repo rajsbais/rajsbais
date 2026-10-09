@@ -48,7 +48,8 @@ SVC = "svc.tdm"
 LIVE = {"AVAILABLE", "RESERVED", "CONSUMED"}
 HANDLE_KEYS = {"SALES_ORDER": "sales_order", "DELIVERY": "deliveries", "BILLING": "billing_documents",
                "FI_DOCUMENT": "accounting_documents", "CUSTOMER": "customer", "PURCHASE_ORDER": "purchase_order",
-               "VENDOR": "vendor", "MATERIAL": "materials"}
+               "VENDOR": "vendor", "MATERIAL": "materials", "PRODUCTION_ORDER": "production_order", "BOM": "bom",
+               "MATERIAL_DOCUMENT": "material_documents"}
 
 
 def _now() -> datetime:
@@ -430,7 +431,7 @@ class TdmService:
             if inst is None or inst.type not in HANDLE_KEYS:
                 continue
             k = HANDLE_KEYS[inst.type]
-            if k in ("customer", "sales_order", "purchase_order", "vendor"):
+            if k in ("customer", "sales_order", "purchase_order", "vendor", "production_order", "bom"):
                 h.setdefault(k, inst.key)
             else:
                 h.setdefault(k, []).append(inst.key)

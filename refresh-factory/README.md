@@ -7,7 +7,7 @@ Selective, business-consistent SAP non-production refresh with masking, conflict
 
 ## Run
 ```bash
-cd backend && pip install -e '.[test]' && python -m pytest          # 310 tests
+cd backend && pip install -e '.[test]' && python -m pytest          # 336 tests
 cd ../frontend && npm install && npm run build                       # UI served by the API from frontend/dist
 cd ../backend && uvicorn rfactory.api.main:app --port 8000           # http://localhost:8000  (API docs at /docs)
 # durable state (survives restarts, encrypted at rest):  RFACTORY_DATA_DIR=./data RFACTORY_STATE_KEY=$(python -c 'from cryptography.fernet import Fernet;print(Fernet.generate_key().decode())') uvicorn ...
@@ -23,6 +23,8 @@ conflict detection (identical/modified target objects, tester-owned documents, m
 approval with separation of duties · checkpointed load, resume, rollback · 34+ technical/business/security checks with a release gate · report + evidence ZIP + hash-chained audit.
 
 **Delta refresh:** *Delta refresh* screen → create the weekend QA sync, add the recommended masking rule (Dave), submit (Alice), approve (Carol), run; then *Simulate source activity* and preview/run again to see only the difference move.
+
+**Manufacturing:** *Selective designer* → root business object `PRODUCTION_ORDER` (tick *MATERIAL_DOCUMENT* downstream) pulls the BOMs, component materials and goods issues/receipts; four production reconciliation checks run on the target. ECC uses MKPF/MSEG, S/4HANA uses MATDOC (one instance per document line). The test catalog adds make-to-stock templates (completed/open order, BOM) for subset and synthetic provisioning.
 
 **Test data catalog:** *Test catalog* screen → create the default policy (Alice), submit, approve (Carol), request materials as Alice (subset), then as Tina request an O2C chain (subset or synthetic), record usage, release; curators can scan the target, make datasets golden and restore them.
 

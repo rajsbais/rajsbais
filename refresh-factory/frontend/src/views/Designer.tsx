@@ -4,8 +4,8 @@ import { Bars, Badge, Card, ErrorNote, Stat, Stepper, StatusBadge, TabList, TabP
 import { useApp } from "../ctx";
 
 const STEPS = ["Systems", "Scope", "Plan preview", "Conflicts", "Masking", "Approval", "Execute"];
-const TYPES = ["SALES_ORDER", "DELIVERY", "BILLING", "FI_DOCUMENT", "PURCHASE_ORDER", "CUSTOMER", "VENDOR", "MATERIAL"];
-const DOWN = ["DELIVERY", "BILLING", "FI_DOCUMENT"];
+const TYPES = ["SALES_ORDER", "DELIVERY", "BILLING", "FI_DOCUMENT", "PURCHASE_ORDER", "PRODUCTION_ORDER", "MATERIAL_DOCUMENT", "BOM", "CUSTOMER", "VENDOR", "MATERIAL"];
+const DOWN = ["DELIVERY", "BILLING", "FI_DOCUMENT", "MATERIAL_DOCUMENT"];
 
 export default function Designer() {
   const app = useApp();
@@ -15,7 +15,7 @@ export default function Designer() {
   const [name, setName] = useState("CC1000 sales orders, last 90 days");
   const [src, setSrc] = useState(""); const [tgt, setTgt] = useState("");
   const [otype, setOtype] = useState("SALES_ORDER"); const [cc, setCc] = useState("1000"); const [days, setDays] = useState(90);
-  const [down, setDown] = useState<string[]>(DOWN); const [tmpl, setTmpl] = useState("gdpr-standard");
+  const [down, setDown] = useState<string[]>(["DELIVERY", "BILLING", "FI_DOCUMENT"]); const [tmpl, setTmpl] = useState("gdpr-standard");
   const [plan, setPlan] = useState<J>(null); const [conf, setConf] = useState<J>(null); const [mask, setMask] = useState<J>(null);
   const [dupPolicy, setDupPolicy] = useState("SKIP");
 

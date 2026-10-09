@@ -65,6 +65,8 @@ def generate(template_stage: str, target: SourceAdapter, family: str, n: int, pa
         raise GenError(f"target has no company code {cc}")
     plants = [p["WERKS"] for p in target.select("T001W") if p["BUKRS"] == cc]
     mats = sorted((m["MATNR"], m["WERKS"]) for m in target.select("MARC") if m["WERKS"] in plants and target.get("MARA", (m["MATNR"],)))
+    if template_stage in ("mfg_completed", "mfg_open") and len({m for m, _ in mats}) < 2:
+        raise GenError(f"target needs at least two materials maintained in a plant of company code {cc} (a product and a component); run a master data refresh first")
     if template_stage in ("complete", "delivered_unbilled", "order_only", "po") and not mats:
         raise GenError(f"target has no materials maintained in the plants of company code {cc}; run a master data refresh first")
     cur, today = comp["WAERS"], target.reference_date()
@@ -77,6 +79,10 @@ def generate(template_stage: str, target: SourceAdapter, family: str, n: int, pa
     b_next = (target.number_level("SD_BILL") or 90_000_000) + 1
     p_next = (target.number_level("MM_PO") or 4_500_000_000) + 1
     f_next = max(1_900_000_001, _mx(target, "BKPF", "BELNR", 1_900_000_001) + 1)
+    ao_next = (target.number_level("PP_ORDER") or 1_000_000) + 1
+    mb_next = (target.number_level("MM_MBLNR") or 4_900_000_000) + 1
+    st_next = max(90_000_001, _mx(target, "STKO", "STLNR", 90_000_001) + 1)  # synthetic BOM numbers live in their own space
+    matdoc = s4 or bool(target.select("MATDOC"))
     inst: dict[str, PlanInstance] = {}
     order: list[str] = []
     roots: list[str] = []
@@ -110,6 +116,46 @@ def generate(template_stage: str, target: SourceAdapter, family: str, n: int, pa
             add(_inst("PURCHASE_ORDER", eb, {"EKKO": [{"EBELN": eb, "BUKRS": cc, "LIFNR": vkey, "BEDAT": ref, "EKORG": cc, "BSART": "NB"}],
                                               "EKPO": items}, req, [f"COMPANY_CODE:{cc}"] + [f"PLANT:{i['WERKS']}" for i in items], "ROOT", f"VENDOR:{vkey}"))
             roots.append(f"PURCHASE_ORDER:{eb}")
+            continue
+        if template_stage in ("mfg_completed", "mfg_open"):
+            plant = rng.choice(sorted({w for _, w in mats}))
+            here = sorted({m for m, w in mats if w == plant})
+            if len(here) < 2:
+                raise GenError(f"plant {plant} has fewer than two materials (a product and a component)")
+            prod, comps = here[0], rng.sample(here[1:], min(len(here) - 1, rng.randint(1, 2)))
+            sid = f"{st_next:08d}"; st_next += 1
+            stpo = [{"STLNR": sid, "STLKN": f"{k * 10:08d}", "IDNRK": c, "MENGE": rng.randint(1, 4), "MEINS": "EA"} for k, c in enumerate(comps, start=1)]
+            add(_inst("BOM", sid, {"STKO": [{"STLNR": sid, "MATNR": prod, "WERKS": plant, "STLAN": "1", "BMENG": 1, "DATUV": ref}], "STPO": stpo},
+                      [f"MATERIAL:{prod}"] + [f"MATERIAL:{c}" for c in comps], [f"PLANT:{plant}"]))
+            while target.get("AUFK", (f"{ao_next:012d}",)):
+                ao_next += 1
+            order_no = f"{ao_next:012d}"; ao_next += 1
+            qty, done = rng.randint(10, 100), template_stage == "mfg_completed"
+            resb = [{"AUFNR": order_no, "RSPOS": f"{k:04d}", "MATNR": b["IDNRK"], "WERKS": plant, "BDMNG": b["MENGE"] * qty, "ENMNG": b["MENGE"] * qty if done else 0}
+                    for k, b in enumerate(stpo, start=1)]
+            req = [f"BOM:{sid}", f"MATERIAL:{prod}"] + [f"MATERIAL:{c}" for c in comps]
+            add(_inst("PRODUCTION_ORDER", order_no, {
+                "AUFK": [{"AUFNR": order_no, "AUART": "PP01", "ERDAT": ref, "BUKRS": cc, "WERKS": plant, "ERNAM": "TDM_SYNTH"}],
+                "AFKO": [{"AUFNR": order_no, "GAMNG": qty, "GMEIN": "EA", "GSTRP": ref, "GLTRP": ref, "STLNR": sid}],
+                "AFPO": [{"AUFNR": order_no, "POSNR": "0001", "MATNR": prod, "PSMNG": qty, "WEMNG": qty if done else 0, "WERKS": plant}],
+                "RESB": resb}, req, [f"COMPANY_CODE:{cc}", f"PLANT:{plant}"], "ROOT", f"BOM:{sid}"))
+            roots.append(f"PRODUCTION_ORDER:{order_no}")
+            if not done:
+                continue
+            for lines, bwart in (([(b["IDNRK"], b["MENGE"] * qty) for b in stpo], "261"), ([(prod, qty)], "101")):
+                while target.get("MKPF", (f"{mb_next:010d}", yr := str(today.year))) or target.lookup("MATDOC", "MBLNR", f"{mb_next:010d}"):
+                    mb_next += 1
+                mb = f"{mb_next:010d}"; mb_next += 1
+                items = [{"MBLNR": mb, "MJAHR": yr, "ZEILE": f"{z:04d}", "BWART": bwart, "MATNR": m, "WERKS": plant, "BUKRS": cc, "MENGE": q, "MEINS": "EA",
+                          "DMBTR": round(q * rng.uniform(2, 40), 2), "AUFNR": order_no} for z, (m, q) in enumerate(lines, start=1)]
+                mreq = [f"PRODUCTION_ORDER:{order_no}"] + [f"MATERIAL:{m}" for m, _ in lines]
+                if matdoc:  # S/4HANA: every line of MATDOC is its own instance (see registry)
+                    for it in items:
+                        add(_inst("MATERIAL_DOCUMENT", f"{mb}/{yr}/{it['ZEILE']}", {"MATDOC": [{**it, "BLDAT": ref, "BUDAT": ref, "USNAM": "TDM_SYNTH"}]}, mreq,
+                                  [f"PLANT:{plant}", f"COMPANY_CODE:{cc}"], "DOWNSTREAM", f"PRODUCTION_ORDER:{order_no}"))
+                else:
+                    add(_inst("MATERIAL_DOCUMENT", f"{mb}/{yr}", {"MKPF": [{"MBLNR": mb, "MJAHR": yr, "BLDAT": ref, "BUDAT": ref, "USNAM": "TDM_SYNTH"}], "MSEG": items},
+                              mreq, [f"PLANT:{plant}", f"COMPANY_CODE:{cc}"], "DOWNSTREAM", f"PRODUCTION_ORDER:{order_no}"))
             continue
         # order-to-cash family
         ckey, crows = _partner("C", c_next, rng, cc, s4, adr, n_i); c_next += 1; adr += 1

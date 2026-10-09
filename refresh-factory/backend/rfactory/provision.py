@@ -32,7 +32,7 @@ class ProvisionError(RuntimeError):
 def org_scope(svc, source, tpl, params: dict) -> dict:
     """Keep organisation-level rows to the requested company code (plants for materials)."""
     cc = params.get("company_code", "1000")
-    if tpl.root_type == "MATERIAL":
+    if tpl.root_type in ("MATERIAL", "BOM"):
         return {"plants": [p["WERKS"] for p in source.select("T001W") if p["BUKRS"] == cc]}
     return {"company_codes": [cc]}
 
@@ -78,6 +78,8 @@ def _attrs(inst: PlanInstance, params: dict) -> dict:
         a.update(customer=h["KUNNR"], net_value=h["NETWR"], currency=h["WAERK"], items=len(inst.rows["VBAP"]))
     elif inst.type == "PURCHASE_ORDER":
         a.update(vendor=inst.rows["EKKO"][0]["LIFNR"], items=len(inst.rows["EKPO"]))
+    elif inst.type == "PRODUCTION_ORDER":
+        a.update(plant=inst.rows["AUFK"][0]["WERKS"], product=inst.rows["AFPO"][0]["MATNR"], quantity=inst.rows["AFKO"][0]["GAMNG"])
     return a
 
 
