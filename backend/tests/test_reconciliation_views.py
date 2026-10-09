@@ -634,3 +634,69 @@ def test_target_aggregate_mode_uses_acdoca_on_s4hana(session, slice_result):
         delete_records(session, tgt.id, "ACDOCA", [views.record_key("ACDOCA", r) for r in acdoca])
         session.flush()
     session.expire_all()
+
+
+# --------------------------------------------------------------- asset acquisition values on S/4HANA (chain)
+def test_asset_values_chain_on_s4hana(store, session, slice_result):
+    """Acquisition values on S/4HANA: the compatibility view FAAV_ANLC first (classic ANLC semantics), else the
+    APC line items of ACDOCA / FAAT_DOC_IT by movement category, else the net postings (not comparable)."""
+    rows = {t: list(store.rows(t)) for t in ("BKPF", "BSEG", "ANLC", "T001K")}
+    rows["ACDOCA"] = views.acdoca_from_journal(rows["BKPF"], rows["BSEG"])
+    anlc = [r for r in rows["ANLC"] if r["BUKRS"] == "5000"]
+    assert anlc
+    expected = round(sum(float(r["KANSW"]) for r in anlc if r["AFABE"] == "01"), 2)
+    # 1. compatibility view present
+    s4 = RecordStore.from_tables("s4", {**rows, "FAAV_ANLC": [dict(r) for r in rows["ANLC"]]})
+    client = rfc.AbapAddonClient(rfc.SimulatedAbapAddon(s4, snapshot_ttl=60))
+    client.open_snapshot()
+    vals, measure, comparable = views.asset_values(client, ["5000"], "0L", views.asset_config(None))
+    assert comparable and "FAAV_ANLC" in measure and vals == [{"BUKRS": "5000", "SUM_KANSW": expected}] and expected > 0
+    # 2. no compatibility view: APC line items (area 01 in ACDOCA, area 02 in FAAT_DOC_IT) filtered by movement category
+    apc_acdoca, faat = [], []
+    for i, r in enumerate(anlc):
+        base = {"GJAHR": str(r["GJAHR"]), "BELNR": f"AA{i:08d}", "ANLN1": r["ANLN1"], "ANLN2": r["ANLN2"], "KOART": "A", "RACCT": "11000", "RLDNR": "0L", "RBUKRS": "5000", "DOCLN": "000001"}
+        apc_acdoca.append({**base, "AFABE": "01", "MOVCAT": "10", "DRCRK": "S", "HSL": float(r["KANSW"]), "ANBWA": "100"})
+        apc_acdoca.append({**base, "DOCLN": "000002", "AFABE": "01", "MOVCAT": "50", "DRCRK": "H", "HSL": -float(r["KNAFA"]), "ANBWA": "500"})
+        faat.append({"BUKRS": "5000", "ANLN1": r["ANLN1"], "ANLN2": r["ANLN2"], "AFABE": "02", "GJAHR": str(r["GJAHR"]), "BELNR": f"AA{i:08d}", "DOCLN": "000001", "LDGRP": "", "DRCRK": "S", "HSL": float(r["KANSW"]) * 1.1, "KSL": 0, "OSL": 0, "MOVCAT": "10", "BWASL": "100", "BZDAT": "", "BUDAT": "", "POPER": "", "AWITEM": "", "SUBTA": "", "SLALITTYPE": ""})
+    s4b = RecordStore.from_tables("s4b", {**rows, "ACDOCA": rows["ACDOCA"] + apc_acdoca, "FAAT_DOC_IT": faat})
+    client = rfc.AbapAddonClient(rfc.SimulatedAbapAddon(s4b, snapshot_ttl=60))
+    client.open_snapshot()
+    sysm = SapSystem(sid="S4H", client="100", role="TARGET", product="S4HANA", release="2023", connector="API", meta={"rfc": {"transport": "simulated", "assets": {"source": "apc_items", "apc_movement_categories": ["10"]}}})
+    vals, measure, comparable = views.asset_values(client, ["5000"], "0L", views.asset_config(sysm))
+    assert comparable and "ACDOCA, FAAT_DOC_IT" in measure and "movement categories 10" in measure and vals == [{"BUKRS": "5000", "SUM_KANSW": expected}]  # area 01 lives in ACDOCA only
+    sysm2 = SapSystem(sid="S4H", client="100", role="TARGET", product="S4HANA", release="2023", connector="API", meta={"rfc": {"transport": "simulated", "assets": {"area": "02", "apc_movement_categories": ["10"]}}})
+    vals2, measure2, _ = views.asset_values(client, ["5000"], "0L", views.asset_config(sysm2))
+    assert vals2[0]["SUM_KANSW"] == round(expected * 1.1, 2) and "area 02" in measure2
+    with pytest.raises(views.ReconciliationViewError, match="apc_movement_categories"):
+        views.asset_values(client, ["5000"], "0L", views.asset_config(SapSystem(sid="S4H", client="100", role="TARGET", product="S4HANA", release="2023", connector="API", meta={"rfc": {"assets": {"source": "apc_items"}}})))
+    # 3. nothing configured and no compatibility view: net postings, not comparable
+    vals3, measure3, comparable3 = views.asset_values(client, ["5000"], "0L", views.asset_config(None))
+    assert not comparable3 and "net asset postings" in measure3 and vals3[0]["SUM_KANSW"] == round(expected - sum(float(r["KNAFA"]) for r in anlc if r["AFABE"] == "01"), 2)
+    assert views.asset_config(None)["area"] == "01" and views.asset_config(sysm)["apc_tables"] == ["ACDOCA", "FAAT_DOC_IT"]
+    # on a simulated S/4HANA target holding the compatibility view, the asset check compares and passes
+    from sdtf.catalog.store import delete_records, import_tables
+
+    m = session.get(ScopeManifest, slice_result["manifest_id"])
+    run = session.get(MigrationRun, slice_result["run_id"])
+    tgt = session.get(SapSystem, slice_result["target_id"])
+    src = session.get(SapSystem, slice_result["source_id"])
+    backend = get_backend(session=session)
+    direct = RecordStore.load(session, tgt.id, tables=["BKPF", "BSEG", "ANLC"])
+    acdoca = views.acdoca_from_journal(direct.rows("BKPF"), direct.rows("BSEG"))
+    faav = [dict(r) for r in direct.rows("ANLC")]
+    import_tables(session, tgt.id, {"ACDOCA": acdoca, "FAAV_ANLC": faav})
+    session.flush()
+    try:
+        rfc_tgt = SapSystem(id=tgt.id, sid=tgt.sid, client=tgt.client, role="TARGET", product="S4HANA", release="2025", connector="API", meta={"api": {"transport": "simulated"}, "rfc": {"transport": "simulated"}})
+        sv = views.record_store_view(session, src.id)
+        v = views.build_target_view(session, rfc_tgt, m, views.loaded_keys_of(backend, run.id), sv, force_api=True, mode="aggregate")
+        assert v.metrics["target_aggregates"]["journal_table"] == "ACDOCA" and v.metrics["target_aggregates"]["assets_comparable"] is True and "FAAV_ANLC" in v.metrics["target_aggregates"]["assets_measure"]
+        session.query(ReconciliationResult).filter(ReconciliationResult.run_id == run.id).delete()
+        reconcile_run(session, run, m, sv, v)
+        asset = next(r for r in session.execute(select(ReconciliationResult).where(ReconciliationResult.run_id == run.id, ReconciliationResult.check_name == "asset_balances")).scalars().all())
+        assert asset.status == "PASS" and float(asset.target_value) > 0 and "FAAV_ANLC" in asset.explanation and asset.evidence["measure"]
+    finally:
+        delete_records(session, tgt.id, "ACDOCA", [views.record_key("ACDOCA", r) for r in acdoca])
+        delete_records(session, tgt.id, "FAAV_ANLC", [views.record_key("FAAV_ANLC", r) for r in faav])
+        session.flush()
+    session.expire_all()

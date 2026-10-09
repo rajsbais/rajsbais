@@ -61,7 +61,8 @@ Legend: P0 next increment · P1 following · P2 later. Sizes are relative (S/M/L
 | ✅ | RFC read-back on the target: an API target registered with `meta.rfc` too serves T001, T001K, asset values and loaded history tables through the read-only add-on (company-code / loaded-key pushdown, count evidence), reported in the connector test | S |
 | ✅ | Aggregate-only reconciliation on the target: with the add-on on the target the journal line items are not read back, totals are computed there (`Z_SDTF_AGGREGATE`), target trial balance as evidence, auto by the target's journal size, `mode` applies to both sides | S |
 | ✅ | ACDOCA-based aggregates for S/4HANA systems (leading ledger, signed amounts normalised, open items and intercompany from the journal lines, asset measure declared, detection by product and rows, meta override) | S |
-| P1 | Run the metadata check against A4H and correct the bindings it flags (needs the VM; cannot be done here) | S |
+| ✅ | Asset acquisition values on S/4HANA: compatibility view FAAV_ANLC, else APC line items of ACDOCA / FAAT_DOC_IT by movement category (configured per system), else net postings declared as such | S |
+| P1 | Run the metadata check against A4H and correct the bindings it flags; confirm on A4H which FAA_MOVCAT values carry APC and whether FAAV_ANLC is readable by the technical user (needs the VM; cannot be done here) | S |
 | P0 | Benchmark harness and benchmark report (docs/benchmarks.md) | M |
 | ✅ | Mock cutover management: cutover rehearsal checklist (automatic readiness items, manual items, waivers, task timings fed into the forecast, lessons, approver verdict, report); API, CLI, Cutover page | M |
 | P1 | Live cutover execution tracking (task status fed by the systems), incident escalation, resource assignment | M |

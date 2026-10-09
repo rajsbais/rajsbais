@@ -255,7 +255,67 @@ def _acdoca_rows(rows: list[dict], group_map: dict[str, str]) -> list[dict]:
     return out
 
 
-def journal_aggregates(client: AbapAddonClient, company_codes: list[str], journal_table: str, ledger: str, valuation_areas: list[str]) -> dict:
+ASSET_DEFAULTS = {"source": "auto", "area": "01", "apc_movement_categories": [], "apc_tables": ["ACDOCA", "FAAT_DOC_IT"]}
+
+
+def asset_config(system: SapSystem | None) -> dict:
+    """`meta.rfc.assets`: how acquisition values are read on an S/4HANA system. `source`: auto | faav_anlc |
+    apc_items | net; `area`: depreciation area (default 01); `apc_movement_categories`: FAA_MOVCAT values that
+    carry acquisition and production costs on this system (none known in this build: take them from the domain
+    on the system); `apc_tables`: where the APC line items are (posting areas: ACDOCA; others: FAAT_DOC_IT)."""
+    cfg = dict(ASSET_DEFAULTS)
+    rfc = (system.meta or {}).get("rfc") if system is not None and system.meta else None
+    cfg.update({k: v for k, v in ((rfc or {}).get("assets") or {}).items() if k in cfg})
+    cfg["apc_movement_categories"] = [str(x) for x in cfg["apc_movement_categories"] or []]
+    cfg["apc_tables"] = [str(t).upper() for t in cfg["apc_tables"] or []]
+    return cfg
+
+
+def asset_values(client: AbapAddonClient, company_codes: list[str], ledger: str, cfg: dict) -> tuple[list[dict], str, bool]:
+    """Acquisition values of an S/4HANA system's company codes, per company code: `([{BUKRS, SUM_KANSW}], measure,
+    comparable)`. Chain: the compatibility view FAAV_ANLC (classic ANLC semantics: comparable with ECC acquisition
+    values), else the APC line items of ACDOCA and FAAT_DOC_IT filtered by movement category (comparable, needs the
+    categories configured), else the net asset postings of the Universal Journal (a different measure: not
+    comparable, reported as such)."""
+    want = cfg["source"]
+    area = str(cfg["area"])
+    cc_preds = [predicate("BUKRS", "EQ", cc) for cc in company_codes]
+    if want in ("auto", "faav_anlc"):
+        try:
+            rows = client.aggregate("FAAV_ANLC", cc_preds + [predicate("AFABE", "EQ", area)], ["BUKRS"], ["KANSW"])
+            if rows or want == "faav_anlc":
+                return [{"BUKRS": cc, "SUM_KANSW": round(sum(float(r["SUM_KANSW"]) for r in rows if r["BUKRS"] == cc), 2)} for cc in company_codes], f"acquisition values from the compatibility view FAAV_ANLC, depreciation area {area}", True
+        except RfcError as e:
+            if want == "faav_anlc":
+                raise ReconciliationViewError(f"FAAV_ANLC not readable on the target: {e}") from e
+    if want in ("auto", "apc_items") and cfg["apc_movement_categories"]:
+        totals: dict[str, float] = {cc: 0.0 for cc in company_codes}
+        used = []
+        for table in cfg["apc_tables"]:
+            cc_field = "RBUKRS" if table == "ACDOCA" else "BUKRS"
+            preds = [predicate(cc_field, "EQ", cc) for cc in company_codes] + [predicate("AFABE", "EQ", area), predicate("ANLN1", "NE", "")] + [predicate("MOVCAT", "EQ", m) for m in cfg["apc_movement_categories"]]
+            if table == "ACDOCA":
+                preds.append(predicate("RLDNR", "EQ", ledger))
+            try:
+                rows = client.aggregate(table, preds, [cc_field, "DRCRK"], ["HSL"])
+            except RfcError as e:
+                if want == "apc_items":
+                    raise ReconciliationViewError(f"{table} not readable on the target: {e}") from e
+                continue
+            used.append(table)
+            for r in rows:
+                totals[str(r[cc_field])] = totals.get(str(r[cc_field]), 0.0) + float(r["SUM_HSL"])  # HSL is signed: acquisitions positive, retirements negative
+        if used:
+            return [{"BUKRS": cc, "SUM_KANSW": round(v, 2)} for cc, v in totals.items()], f"acquisition and production costs from the asset line items of {', '.join(used)} (depreciation area {area}, movement categories {', '.join(cfg['apc_movement_categories'])})", True
+    if want == "apc_items":
+        raise ReconciliationViewError("apc_items needs meta.rfc.assets.apc_movement_categories (the FAA_MOVCAT values that carry acquisition and production costs on this system)")
+    base = [predicate("RLDNR", "EQ", ledger)] + [predicate("RBUKRS", "EQ", cc) for cc in company_codes] + [predicate("KOART", "EQ", "A"), predicate("ANLN1", "NE", "")]
+    rows = client.aggregate("ACDOCA", base, ["RBUKRS", "DRCRK"], ["HSL"])
+    net = [{"BUKRS": cc, "SUM_KANSW": round(sum(float(r["SUM_HSL"]) for r in rows if r["RBUKRS"] == cc), 2)} for cc in company_codes]
+    return net, "net asset postings in the Universal Journal (account type A, asset assigned): APC less accumulated depreciation, not the acquisition value", False
+
+
+def journal_aggregates(client: AbapAddonClient, company_codes: list[str], journal_table: str, ledger: str, valuation_areas: list[str], system: SapSystem | None = None) -> dict:
     """The totals the financial layer needs, computed in the system: from ACDOCA (Universal Journal, one ledger,
     signed amounts normalised) or from BSEG with the open-item tables. Same keys either way."""
     A: dict = {"journal_table": journal_table, "ledger": ledger if journal_table == "ACDOCA" else None}
@@ -270,9 +330,7 @@ def journal_aggregates(client: AbapAddonClient, company_codes: list[str], journa
         A["open_ar"] = [a for a in open_items if a["KOART"] == "D"]
         A["open_ap"] = [a for a in open_items if a["KOART"] == "K"]
         A["intercompany"] = _acdoca_rows(client.aggregate("ACDOCA", base + open_pred + [predicate("RASSC", "NE", "")], ["RBUKRS", "RASSC", "KOART", "DRCRK"], ["HSL"]), g)
-        asset = _acdoca_rows(client.aggregate("ACDOCA", base + [predicate("KOART", "EQ", "A"), predicate("ANLN1", "NE", "")], ["RBUKRS", "DRCRK"], ["HSL"]), g)
-        A["assets"] = [{"BUKRS": cc, "SUM_KANSW": round(sum((float(a["SUM_DMBTR"]) if a["SHKZG"] == "S" else -float(a["SUM_DMBTR"])) for a in asset if a["BUKRS"] == cc), 2)} for cc in company_codes]
-        A["assets_measure"] = "net asset postings in the Universal Journal (account type A, asset assigned): APC less accumulated depreciation, not the acquisition value"
+        A["assets"], A["assets_measure"], A["assets_comparable"] = asset_values(client, company_codes, ledger, asset_config(system))
     else:
         cc_preds = [predicate("BUKRS", "EQ", cc) for cc in company_codes]
         open_pred = [predicate("AUGBL", "EQ", "")]
@@ -330,7 +388,7 @@ def _aggregate_source_view(session: Session, source: SapSystem, manifest, client
     areas = sorted({str(r["BWKEY"]) for r in view.rows("T001K")})
     area_preds = [predicate("BWKEY", "EQ", a) for a in areas]
     journal_table, ledger = journal_table_for(source, client)
-    view.aggregates = journal_aggregates(client, scope_ccs, journal_table, ledger, areas)
+    view.aggregates = journal_aggregates(client, scope_ccs, journal_table, ledger, areas, source)
     A = view.aggregates
     cls = manifest.selection.get("classification", {})
     not_transferred = [n.split(":", 1)[1] for n, c in cls.items() if c["type"] == "MD.Material" and c["classification"] not in ("FULLY_TRANSFERRED", "PARTIALLY_TRANSFERRED", "SHARED_DUPLICATED")]
@@ -552,7 +610,7 @@ class ApiTargetView(ViewStore):
         try:
             client.open_snapshot(["BKPF", "BSEG", "BSID", "BSIK", "ANLC", "MBEW", "ACDOCA"])
             journal_table, ledger = journal_table_for(self.system, client)
-            A = journal_aggregates(client, self.company_codes, journal_table, ledger, self.valuation_areas)
+            A = journal_aggregates(client, self.company_codes, journal_table, ledger, self.valuation_areas, self.system)
         except RfcError as e:
             self.metrics.setdefault("errors", {})["aggregate"] = str(e)
             raise ReconciliationViewError(f"aggregate-only reconciliation on the target failed: {e}") from e
@@ -568,7 +626,7 @@ class ApiTargetView(ViewStore):
             debit = round(sum(float(a["SUM_DMBTR"]) for a in A["totals"] if a["BUKRS"] == cc and a["SHKZG"] == "S"), 2)
             credit = round(sum(float(a["SUM_DMBTR"]) for a in A["totals"] if a["BUKRS"] == cc and a["SHKZG"] == "H"), 2)
             self._integrity.append(("target_trial_balance", cc, debit, credit, "debits and credits of the target company code computed in the target database"))
-        self.metrics["target_aggregates"] = {"rfc_calls": client.calls, "packages": client.packages, "rows_avoided": sum(A["counts"].values()), "counts": A["counts"], "snapshot": client.snapshot, "journal_table": A["journal_table"], "ledger": A.get("ledger"), **({"assets_measure": A["assets_measure"]} if A.get("assets_measure") else {})}
+        self.metrics["target_aggregates"] = {"rfc_calls": client.calls, "packages": client.packages, "rows_avoided": sum(A["counts"].values()), "counts": A["counts"], "snapshot": client.snapshot, "journal_table": A["journal_table"], "ledger": A.get("ledger"), **({"assets_measure": A["assets_measure"], "assets_comparable": A.get("assets_comparable", True)} if A.get("assets_measure") else {})}
 
     def _rfc_readback(self, by_table: dict[str, int]) -> None:
         """Tables the APIs could not serve, read through the add-on on the target: company-code tables with the
@@ -728,4 +786,4 @@ def loaded_keys_of(backend, run_id: str) -> dict[str, set[str]]:
     return dict(out)
 
 
-__all__ = ["SOURCE_TABLES", "MODES", "normalise", "ViewStore", "AggregateSourceView", "ApiTargetView", "ReconciliationViewError", "build_source_view", "build_target_view", "target_has_rfc", "journal_table_for", "journal_aggregates", "acdoca_from_journal", "record_store_view", "loaded_keys_of", "journal_rows", "eval_filter", "odata_filter", "record_key"]
+__all__ = ["SOURCE_TABLES", "MODES", "normalise", "ViewStore", "AggregateSourceView", "ApiTargetView", "ReconciliationViewError", "build_source_view", "build_target_view", "target_has_rfc", "journal_table_for", "journal_aggregates", "acdoca_from_journal", "asset_values", "asset_config", "record_store_view", "loaded_keys_of", "journal_rows", "eval_filter", "odata_filter", "record_key"]

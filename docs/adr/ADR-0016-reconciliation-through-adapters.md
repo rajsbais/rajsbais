@@ -71,7 +71,11 @@ NPL / A4H test, docs/connect-real-systems.md).
   (one ledger, `meta.rfc.ledger`, default 0L; `meta.rfc.journal_table` forces ACDOCA or BSEG): GL balances per
   account, debit/credit totals, open items (account type D/K without clearing document) and open intercompany
   balances are aggregated there with the signed amounts normalised to the debit/credit form the checks use;
-  document counts still come from BKPF and inventory from MBEW. Asset values from ACDOCA are net asset postings
-  (account type A), a different measure from the source's acquisition values, so that check is reported as WARN
-  with the measure named instead of a false FAIL. ECC-type systems, and S/4HANA systems whose ACDOCA the add-on
+  document counts still come from BKPF and inventory from MBEW. Asset acquisition values on S/4HANA come from a chain
+  (`meta.rfc.assets`): the compatibility view **FAAV_ANLC** (the classic ANLC figures reproduced from the line
+  items, SAP note 2270387: same semantics as ECC, compared PASS/FAIL), else the **APC line items** of ACDOCA
+  (depreciation areas that post to the general ledger) and FAAT_DOC_IT (statistical and non-posting areas)
+  filtered by depreciation area and the movement categories that carry acquisition and production costs
+  (`apc_movement_categories`, taken from the FAA_MOVCAT domain on the system: none are assumed), else the net
+  asset postings of the Universal Journal, a different measure reported as WARN with the measure named. ECC-type systems, and S/4HANA systems whose ACDOCA the add-on
   cannot read or that hold no rows, keep BSEG and the open-item tables.
