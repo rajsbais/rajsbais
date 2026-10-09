@@ -95,11 +95,15 @@ def test_merge_plan_detects_collisions_then_runs_clean(session, merger):
     assert all(r["reconciliation"] == "PASS" for r in out["runs"]), out["runs"]
     assert out["financial"]["overall"] == "PASS", out["financial"]
     assert out["financial"]["sources"] == 2 and out["overall"] == "PASS"
-    # the target holds one company code with documents from both sources in disjoint number ranges
-    belnrs = [r[0] for r in session.execute(select(SapRecord.record_key).where(SapRecord.system_id == merger["target_id"], SapRecord.table_name == "BKPF"))]
-    assert belnrs and all(k.startswith("M100|") for k in belnrs)
-    nums = {int(k.split("|")[1]) // 10_000_000_000 for k in belnrs}
-    assert nums == {0, 1}, nums
+    # the target holds one company code with the documents of both sources: the journal entry API numbers them
+    # (the planner's disjoint ranges keep the staging keys apart), every entry names its sending system
+    docs = [r for r in session.execute(select(SapRecord.record_key, SapRecord.payload).where(SapRecord.system_id == merger["target_id"], SapRecord.table_name == "BKPF"))]
+    assert docs and all(k.startswith("M100|") for k, _ in docs) and len({k for k, _ in docs}) == len(docs)
+    from sdtf.models import MigrationRun as _MR
+
+    loaded_bkpf = sum(next(st.metrics for st in session.get(_MR, r["id"]).stages if st.name == "LOAD")["by_table"].get("BKPF", 0) for r in out["runs"])
+    assert len(docs) == loaded_bkpf
+    assert {p.get("SDTF_SOURCE_REF", "").split(":")[0] for _, p in docs} == {"ALPCLNT100", "BETCLNT100"}
     # no duplicate customer masters: second source's customers reference the survivors
     kna1 = {r[0] for r in session.execute(select(SapRecord.record_key).where(SapRecord.system_id == merger["target_id"], SapRecord.table_name == "KNA1"))}
     for dup_key, survivor in dedup["customers"].items():

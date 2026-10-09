@@ -274,7 +274,7 @@ def financial_checks(rid: str, sources: list[dict], target: RecordStore) -> tupl
             ra, fa, ja = round(retained_b.get(k, 0.0), 2), round(filtered_b.get(k, 0.0), 2), round(rejected_b.get(k, 0.0), 2)
             unexplained = round(var - ra - fa - ja, 2)
             status = "WARN" if abs(unexplained) < 0.005 else "FAIL"
-            expl = f"Variance {var}: {ra} in documents retained/excluded by scope policy, {fa} in documents outside the fiscal-year/status filters (balance carry-forward required), {ja} in documents rejected by transformation rules, unexplained {unexplained}"
+            expl = f"Variance {var}: {ra} in documents retained/excluded by scope policy, {fa} in documents outside the fiscal-year/status filters (balance carry-forward required), {ja} in lines rejected by transformation rules or in documents the target refused because of them (unbalanced), unexplained {unexplained}"
             if abs(e - t) > 0.005:
                 status = "FAIL"
                 expl += f"; loaded content differs from staged expectation ({e} vs {t})"

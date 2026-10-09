@@ -19,6 +19,27 @@ from ..catalog.business_objects import BUSINESS_OBJECTS, load_methods_for
 from ..catalog.tables import TABLES, record_key
 from .target_api import ApiError, TargetApiClient
 
+_TABLE_BO: dict[str, str] = {}
+for _bo in BUSINESS_OBJECTS.values():
+    _TABLE_BO.setdefault(_bo.header_table, _bo.id)
+    for _t in _bo.item_tables:
+        _TABLE_BO.setdefault(_t, _bo.id)
+
+
+def object_of(table: str, record_key: str, payload: dict | None = None) -> tuple[str, str]:
+    """(business object type, instance key) of a row. Item tables whose primary key does not start with the
+    object's key (open items BSID/BSIK) need the row image; without one the positional prefix is used."""
+    bo_id = _TABLE_BO.get(table, "")
+    if not bo_id:
+        return "", record_key
+    bo = BUSINESS_OBJECTS[bo_id]
+    td = TABLES.get(table)
+    if td is not None and tuple(td.key_fields[: len(bo.key_fields)]) == tuple(bo.key_fields):
+        return bo_id, "|".join(record_key.split("|")[: len(bo.key_fields)])
+    if payload and all(k in payload for k in bo.key_fields):
+        return bo_id, "|".join(str(payload[k]) for k in bo.key_fields)
+    return bo_id, "|".join(record_key.split("|")[: len(bo.key_fields)])
+
 
 @dataclass
 class LoadResult:
@@ -50,10 +71,14 @@ class EventView:
 
 
 class DeltaLoader:
-    def __init__(self, client: TargetApiClient, target_product: str = "S4HANA", read_row=None):
+    def __init__(self, client: TargetApiClient, target_product: str = "S4HANA", read_row=None, source_ref_prefix: str = ""):
         self.client = client
         self.product = target_product
         self._read_row = read_row  # optional direct row reader (simulated gateway) for parity checks
+        self.source_ref_prefix = source_ref_prefix  # identifies the sending system in idempotency references (several sources may share keys)
+
+    def source_ref(self, record_key: str) -> str:
+        return f"{self.source_ref_prefix}:{record_key}" if self.source_ref_prefix else record_key
 
     # ------------------------------------------------------------------------------------- planning
     def method_for(self, object_type: str) -> tuple[str, str, str]:
@@ -68,8 +93,10 @@ class DeltaLoader:
         return m.method, m.api, m.note
 
     # ------------------------------------------------------------------------------------- execution
-    def load_change_set(self, events: list[EventView]) -> None:
-        """Apply the events of one change set for one business object instance. Sets `result` on each event."""
+    def load_change_set(self, events: list[EventView], initial: bool = False) -> None:
+        """Apply the events of one change set for one business object instance. Sets `result` on each event.
+        `initial`: the initial load may use the migration cockpit for cockpit objects, histories and tables the
+        document APIs do not expose; delta cycles report those as unsupported."""
         if not events:
             return
         object_type = events[0].object_type
@@ -77,26 +104,72 @@ class DeltaLoader:
         if method == "CONFIG_TRANSPORT":
             for e in events:
                 exists = self._exists(e.table, e.target_key) if e.target_key else False
-                e.result = LoadResult("MATCHED" if exists else "CONFIG_MISSING", "MATCHED" if exists else "", method, "", "configuration comes from the target shell; record matched, not loaded" if exists else "configuration object missing in the target shell: transport it, the delta cannot create it", e.target_key)
+                e.result = LoadResult("MATCHED" if exists else "CONFIG_MISSING", "MATCHED" if exists else "", method, "", "configuration comes from the target shell; record matched, not loaded" if exists else "configuration object missing in the target shell: transport it, the load cannot create it", e.target_key)
+            return
+        if method == "MIGRATION_COCKPIT":
+            if initial:
+                self._cockpit(object_type, events, api or "migration object")
+            else:
+                for e in events:
+                    e.result = LoadResult("UNSUPPORTED", "", method, "", f"{object_type} is loaded through the migration cockpit ({api or note or 'see registry'}); changes after the snapshot are not re-posted per event and must be re-migrated at the final delta", e.target_key)
             return
         if method != "API":
             for e in events:
-                e.result = LoadResult("UNSUPPORTED", "", method, "", f"{object_type} is loaded through {method.lower().replace('_', ' ')} ({api or note or 'see registry'}); changes after the snapshot are not re-posted per event and must be re-migrated at the final delta", e.target_key)
+                e.result = LoadResult("UNSUPPORTED", "", method, "", f"{object_type}: {note or 'no supported load method'} ({method.lower().replace('_', ' ')})", e.target_key)
             return
         b = binding_for(object_type)
         if b is None:
             for e in events:
                 e.result = LoadResult("UNSUPPORTED", "", method, api, f"{api or object_type} has no API binding yet; add one in catalog/api_bindings.py", e.target_key)
             return
+        if initial:
+            unbound = [e for e in events if b.entity_for(e.table) is None]
+            if unbound:
+                self._cockpit(object_type, unbound, f"{b.service} does not expose {', '.join(sorted({e.table for e in unbound}))}: history tables through the migration cockpit")
+                events = [e for e in events if e.result is None]
+            hdr = next((e for e in events if e.table == b.header.table), None)
+            if hdr is not None and self._is_history(b, hdr, [e for e in events if e.table != b.header.table]):
+                self._cockpit(object_type, events, f"historical {b.header.entity_set} ({b.history_rule})")
+                return
         try:
             if b.protocol == "SOAP":
-                self._load_journal(b, events)
+                self._load_journal(b, events, initial=initial)
             else:
                 self._load_odata(b, events)
         except ApiError as ex:
             for e in events:
                 if e.result is None:
                     e.result = LoadResult("REJECTED_BY_TARGET", "", "API", f"{b.service}", f"{ex.status} {ex.code}: {ex.message}", e.target_key)
+
+    @staticmethod
+    def _is_history(b: ApiBinding, hdr: EventView, items: list[EventView]) -> bool:
+        if b.history_when is None:
+            return False
+        return bool(b.history_when(hdr.target_payload or {}, [i.target_payload or {} for i in items]))
+
+    def _cockpit(self, object_type: str, events: list[EventView], label: str) -> None:
+        """Migration cockpit path (initial load only): rows posted as staging-table content. Rows the target already
+        holds are duplicates (identical) or conflicts (different) and are never posted again."""
+        new: list[EventView] = []
+        for e in events:
+            if e.op != "I" or not e.target_payload:
+                e.result = LoadResult("UNSUPPORTED", "", "MIGRATION_COCKPIT", label, "the migration cockpit loads records once; changes and deletions after the snapshot are not replayed", e.target_key)
+                continue
+            cur = self._read_row(e.table, e.target_key) if self._read_row else None
+            if cur is None:
+                new.append(e)
+            elif all(cur.get(k) == v for k, v in e.target_payload.items()):
+                e.result = LoadResult("SKIPPED_DUPLICATE", "", "MIGRATION_COCKPIT", f"MIGRATION_COCKPIT {object_type} (exists)", "target already holds this content", e.target_key, cur)
+            else:
+                e.result = LoadResult("CONFLICT", "", "MIGRATION_COCKPIT", f"MIGRATION_COCKPIT {object_type} (exists)", "target key already exists with different content (duplicate detection)", e.target_key, cur)
+        try:
+            if new:
+                self.client.cockpit_load(object_type, [(e.table, dict(e.target_payload)) for e in new])
+            for e in new:
+                e.result = LoadResult("APPLIED", "INSERTED", "MIGRATION_COCKPIT", f"MIGRATION_COCKPIT POST {object_type} ({label})", "", e.target_key, (self._read_row(e.table, e.target_key) if self._read_row else None) or e.target_payload)
+        except ApiError as ex:
+            for e in new:
+                e.result = LoadResult("REJECTED_BY_TARGET", "", "MIGRATION_COCKPIT", f"MIGRATION_COCKPIT POST {object_type}", f"{ex.status} {ex.code}: {ex.message}", e.target_key)
 
     def _exists(self, table: str, key: str) -> bool:
         if self._read_row is not None:
@@ -126,7 +199,7 @@ class DeltaLoader:
     def _create_document(self, b: ApiBinding, hdr: EventView, items: list[EventView]) -> None:
         eb = b.header
         payload = hdr.target_payload or {}
-        if b.history_rule and eb.table == "LIKP" and payload.get("WADAT_IST"):
+        if b.history_when is not None and b.history_when(payload, [i.target_payload or {} for i in items]):
             hdr.result = LoadResult("UNSUPPORTED", "", "API", b.service, b.history_rule, hdr.target_key)
             for it in items:
                 it.result = LoadResult("UNSUPPORTED", "", "API", b.service, b.history_rule, it.target_key)
@@ -139,7 +212,13 @@ class DeltaLoader:
                 continue
             nav_items[f"to_{ib.entity_set[2:] if ib.entity_set.startswith('A_') else ib.entity_set}"].append({k: v for k, v in ib.to_entity(it.target_payload or {}).items() if k not in ib.parent_props})
         entity.update(nav_items)
-        d = self.client.create(b.service, eb.entity_set, entity)
+        try:
+            d = self.client.create(b.service, eb.entity_set, entity)
+        except ApiError as ex:
+            if ex.status != 409:
+                raise
+            self._classify_existing(b, hdr, items)
+            return
         row = eb.to_row(d) | {f: d.get(p) for f, p in eb.fields.items() if f in eb.derived and d.get(p) is not None}
         stored = {**payload, **row}
         assigned = record_key(eb.table, stored)
@@ -158,6 +237,26 @@ class DeltaLoader:
             trow = self._read_row(it.table, tkey) if self._read_row else irow
             it.result = LoadResult("APPLIED", "INSERTED", "API", f"{b.service} POST {eb.entity_set} (deep insert)", "", tkey, trow or irow)
 
+    def _classify_existing(self, b: ApiBinding, hdr: EventView, items: list[EventView]) -> None:
+        """The document already exists in the target (a re-run or a second partition): identical content is a
+        duplicate, different content a conflict. Nothing is written."""
+        for e in [hdr, *items]:
+            cur = self._read_row(e.table, e.target_key) if self._read_row else None
+            eb = b.entity_for(e.table)
+            if cur is None and eb is not None and self._read_row is None:
+                got, _ = self.client.get(b.service, eb.entity_set, eb.key_props, (e.target_key or "").split("|"))
+                cur = eb.to_row(got) if got else None
+            if cur is None:
+                e.result = LoadResult("REJECTED_BY_TARGET", "", "API", f"{b.service} POST {b.header.entity_set}", "409 DUPLICATE: header exists but this row does not", e.target_key)
+                continue
+            ignore = set(eb.derived) | set(eb.priced) if eb else set()
+            expected = {k: v for k, v in (e.target_payload or {}).items() if k not in ignore}
+            same = all(cur.get(k) == v for k, v in expected.items())
+            if same:
+                e.result = LoadResult("SKIPPED_DUPLICATE", "", "API", f"{b.service} GET {eb.entity_set if eb else e.table}", "target already holds this content", e.target_key, cur)
+            else:
+                e.result = LoadResult("CONFLICT", "", "API", f"{b.service} GET {eb.entity_set if eb else e.table}", "target key already exists with different content (duplicate detection)", e.target_key, cur)
+
     def _item_op(self, b: ApiBinding, e: EventView) -> None:
         ib = b.entity_for(e.table)
         if ib is None:
@@ -165,7 +264,13 @@ class DeltaLoader:
             return
         if e.op == "I":
             entity = ib.to_entity(e.target_payload or {})
-            d = self.client.create(b.service, ib.entity_set, entity)
+            try:
+                d = self.client.create(b.service, ib.entity_set, entity)
+            except ApiError as ex:
+                if ex.status != 409:
+                    raise
+                self._classify_existing(b, e, [])
+                return
             row = {**(e.target_payload or {}), **ib.to_row(d)}
             tkey = record_key(e.table, row)
             e.result = LoadResult("APPLIED", "INSERTED", "API", f"{b.service} POST {ib.entity_set}", "", tkey, (self._read_row(e.table, tkey) if self._read_row else None) or row, sum(1 for k in entity if k.startswith("YY1_")))
@@ -226,11 +331,23 @@ class DeltaLoader:
                 it.result = LoadResult("UNSUPPORTED", "", "API", b.service, "header cannot be deleted", it.target_key)
 
     # -- journal entries
-    def _load_journal(self, b: ApiBinding, events: list[EventView]) -> None:
+    def _load_journal(self, b: ApiBinding, events: list[EventView], initial: bool = False) -> None:
         hdr_events = [e for e in events if e.table == "BKPF"]
         line_events = [e for e in events if e.table == "BSEG"]
         derived = [e for e in events if e.table in ("BSID", "BSIK")]
         hdr = hdr_events[0] if hdr_events else None
+        if hdr is not None and hdr.op == "I":
+            p = hdr.target_payload or {}
+            found = self.client.lookup_journal_entry(p.get("BUKRS"), p.get("GJAHR"), self.source_ref(hdr.record_key))
+            if found is not None:  # posted before (re-run / second partition): compare, never post twice
+                doc = str(found["AccountingDocument"])
+                for e in events:
+                    row = {**(e.target_payload or {}), "BELNR": doc}
+                    k = record_key(e.table, row)
+                    cur = self._read_row(e.table, k) if self._read_row else row
+                    same = cur is not None and all(cur.get(f) == v for f, v in row.items() if f not in ("BELNR", "MONAT"))
+                    e.result = LoadResult("SKIPPED_DUPLICATE" if same else "CONFLICT", "", "API", f"{b.service} JournalEntryLookup", "target already holds this journal entry" if same else "journal entry exists with different content", k, cur)
+                return
         if hdr is None:
             for e in events:
                 e.result = LoadResult("UNSUPPORTED", "", "API", b.service, "line-level changes without their document are clearing / correction postings, which this build does not generate (plan a clearing run)", e.target_key)
@@ -250,7 +367,19 @@ class DeltaLoader:
             action = "INSERTED"
         payload = b.header.to_entity(hdr.target_payload or {})
         payload["AccountingDocument"] = (hdr.target_payload or {}).get("BELNR") if b.numbering == "external" else None
-        payload["Items"] = [b.items["BSEG"].to_entity({**(e.target_payload or {}), "BELNR": None}) for e in sorted(line_events, key=lambda x: int((x.target_payload or {}).get("BUZEI") or 0))]
+        payload["SourceReference"] = self.source_ref(hdr.record_key)
+        hints: dict[int, tuple[str, dict]] = {}
+        for e in derived:
+            r = e.target_payload or {}
+            known = {"BUKRS", "KUNNR", "LIFNR", "UMSKS", "UMSKZ", "AUGDT", "AUGBL", "ZUONR", "GJAHR", "BELNR", "BUZEI", "DMBTR", "SHKZG"}
+            hints[int(r.get("BUZEI") or 0)] = ("CustomerOpenItem" if e.table == "BSID" else "SupplierOpenItem", {"Partner": r.get("KUNNR") or r.get("LIFNR"), "SpecialGLTransactionType": r.get("UMSKS", ""), "SpecialGLCode": r.get("UMSKZ", ""), "ClearingDate": r.get("AUGDT", ""), "ClearingDocument": r.get("AUGBL", ""), "AssignmentReference": r.get("ZUONR", ""), "Amount": r.get("DMBTR"), "DebitCreditCode": r.get("SHKZG"), "Extension": {f: v for f, v in r.items() if f not in known}})
+        payload["Items"] = []
+        for e in sorted(line_events, key=lambda x: int((x.target_payload or {}).get("BUZEI") or 0)):
+            item = b.items["BSEG"].to_entity({**(e.target_payload or {}), "BELNR": None})
+            h = hints.get(int((e.target_payload or {}).get("BUZEI") or 0))
+            if h:
+                item[h[0]] = h[1]
+            payload["Items"].append(item)
         d = self.client.post_journal_entry(payload)
         assigned_doc = str(d.get("AccountingDocument"))
         new_hdr = {**(hdr.target_payload or {}), "BELNR": assigned_doc, "GJAHR": d.get("FiscalYear", (hdr.target_payload or {}).get("GJAHR"))}

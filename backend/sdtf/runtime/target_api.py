@@ -24,6 +24,11 @@ from typing import Any
 from ..catalog.api_bindings import API_BINDINGS, EXT_PREFIX, ApiBinding, EntityBinding
 from ..catalog.store import RecordStore, delete_records, upsert_records
 from ..catalog.tables import record_key
+from ..models import SapRecord
+
+SapRecordTable = SapRecord.__table__
+SOURCE_REF = "SDTF_SOURCE_REF"  # idempotency reference kept on journal entries (extension property YY1_SDTF_SOURCE_REF)
+COCKPIT_SERVICE = "MIGRATION_COCKPIT"
 
 
 class ApiError(Exception):
@@ -117,8 +122,13 @@ class SimulatedS4Gateway:
     def _write(self, table: str, row: dict) -> None:
         self._ensure(table)
         key = record_key(table, row)
-        upsert_records(self.session, self.sid, table, [row])
         old = self._store._by_key[table].get(key)
+        if old is None:
+            from ..catalog.store import _record_columns
+
+            self.session.execute(SapRecordTable.insert(), [{"system_id": self.sid, "table_name": table, "record_key": key, **_record_columns(table, row)}])
+        else:
+            upsert_records(self.session, self.sid, table, [row])
         if old is not None:
             self._store._tables[table] = [r for r in self._store._tables[table] if r is not old]
         self._store._tables[table].append(row)
@@ -208,6 +218,8 @@ class SimulatedS4Gateway:
             return resp
 
     def _dispatch(self, method: str, service: str, path: str, payload: dict | None, headers: dict) -> ApiResponse:
+        if service == COCKPIT_SERVICE:
+            return self._cockpit(method, path, payload or {})
         if service not in _SERVICE_ENTITIES:
             return self._err(404, "SERVICE_NOT_FOUND", f"service {service} is not activated on this target")
         if method == "GET" and headers.get("x-csrf-token") == "fetch":
@@ -273,8 +285,8 @@ class SimulatedS4Gateway:
             self._write(item_eb.table, irow)
         if eb is not b.header:
             self._recompute_header(b, b.header.table, "|".join(str(row.get(f, "")) for f, p in eb.fields.items() if p in eb.parent_props))
-        elif created_items:
-            self._recompute_header(b, eb.table, key)
+        else:
+            self._recompute_header(b, eb.table, key)  # totals are derived even for a document without items
         row = self.row(eb.table, record_key(eb.table, row)) or row
         return ApiResponse(201, {"d": eb.to_entity(row) | {p: row.get(f) for f, p in eb.fields.items() if f in eb.derived}}, {"etag": _etag(row)})
 
@@ -346,11 +358,48 @@ class SimulatedS4Gateway:
             return self._post_journal(b, payload)
         if operation == "JournalEntryReverse":
             return self._reverse_journal(b, payload)
+        if operation == "JournalEntryLookup":
+            ref = payload.get("SourceReference")
+            self._ensure("BKPF")
+            hit = next((r for r in self._store.rows("BKPF") if r.get(SOURCE_REF) == ref and str(r.get("BUKRS")) == str(payload.get("CompanyCode")) and str(r.get("GJAHR")) == str(payload.get("FiscalYear"))), None)
+            if hit is None:
+                return self._err(404, "NOT_FOUND", f"no journal entry with source reference {ref}")
+            return ApiResponse(200, {"d": {"CompanyCode": hit["BUKRS"], "AccountingDocument": hit["BELNR"], "FiscalYear": hit["GJAHR"]}})
         return self._err(404, "OPERATION_NOT_FOUND", operation)
 
+    def _cockpit(self, method: str, object_type: str, payload: dict) -> ApiResponse:
+        """Migration cockpit, simulated: staging-table content for one migration object is posted as-is after the
+        organisational checks a migration object performs (company code / plant must exist in the target)."""
+        if method != "POST":
+            return self._err(405, "METHOD_NOT_ALLOWED", "migration objects are posted")
+        rows = payload.get("rows") or []
+        if not rows:
+            return self._err(400, "VALIDATION", "no staging rows")
+        self._ensure("T001", "T001W")
+        for entry in rows:
+            row = entry.get("row") or {}
+            cc = row.get("BUKRS")
+            if cc and self._store.by_key("T001", str(cc)) is None:
+                return self._err(400, "VALIDATION", f"company code {cc} is not defined in the target")
+            plant = row.get("WERKS")
+            if plant and entry.get("table") in ("MARC", "MARD", "LIPS", "EKPO", "AFPO", "AFKO") and self._store.by_key("T001W", str(plant)) is None:
+                return self._err(400, "VALIDATION", f"plant {plant} is not defined in the target")
+        for entry in rows:
+            self._write(entry["table"], dict(entry["row"]))
+        return ApiResponse(201, {"d": {"object": object_type, "rows": len(rows)}})
+
     def _post_journal(self, b: ApiBinding, payload: dict) -> ApiResponse:
-        hdr = b.header.to_row({k: v for k, v in payload.items() if k != "Items"})
-        items = [b.items["BSEG"].to_row(i) for i in payload.get("Items", [])]
+        hdr = b.header.to_row({k: v for k, v in payload.items() if k not in ("Items", "SourceReference")})
+        if payload.get("SourceReference"):
+            hdr[SOURCE_REF] = payload["SourceReference"]
+        hints = {}
+        items = []
+        for i in payload.get("Items", []):
+            oi = i.get("CustomerOpenItem") or i.get("SupplierOpenItem")
+            row = b.items["BSEG"].to_row({k: v for k, v in i.items() if k not in ("CustomerOpenItem", "SupplierOpenItem")})
+            items.append(row)
+            if oi:
+                hints[len(items)] = ("BSID" if "CustomerOpenItem" in i else "BSIK", oi)
         if not items:
             return self._err(400, "VALIDATION", "a journal entry needs at least one item")
         err = self._validate(b, b.header, hdr)
@@ -373,10 +422,13 @@ class SimulatedS4Gateway:
             it.update({"BUKRS": hdr["BUKRS"], "BELNR": hdr["BELNR"], "GJAHR": hdr["GJAHR"]})
             it.setdefault("BUZEI", n)
             self._write("BSEG", it)
-            if it.get("KOART") == "D" and it.get("KUNNR"):
-                self._write("BSID", {"BUKRS": hdr["BUKRS"], "KUNNR": it["KUNNR"], "UMSKS": "", "UMSKZ": "", "AUGDT": "", "AUGBL": "", "ZUONR": "", "GJAHR": hdr["GJAHR"], "BELNR": hdr["BELNR"], "BUZEI": it["BUZEI"], "DMBTR": it.get("DMBTR"), "SHKZG": it.get("SHKZG")})
-            if it.get("KOART") == "K" and it.get("LIFNR"):
-                self._write("BSIK", {"BUKRS": hdr["BUKRS"], "LIFNR": it["LIFNR"], "UMSKS": "", "UMSKZ": "", "AUGDT": "", "AUGBL": "", "ZUONR": "", "GJAHR": hdr["GJAHR"], "BELNR": hdr["BELNR"], "BUZEI": it["BUZEI"], "DMBTR": it.get("DMBTR"), "SHKZG": it.get("SHKZG")})
+            hint = hints.get(n)
+            partner = it.get("KUNNR") if it.get("KOART") == "D" else it.get("LIFNR") if it.get("KOART") == "K" else None
+            if hint or partner:  # open items follow from customer / supplier lines
+                oi_table = hint[0] if hint else ("BSID" if it.get("KOART") == "D" else "BSIK")
+                h = hint[1] if hint else {}
+                oi = {**(h.get("Extension") or {}), "BUKRS": hdr["BUKRS"], ("KUNNR" if oi_table == "BSID" else "LIFNR"): partner or h.get("Partner", ""), "UMSKS": h.get("SpecialGLTransactionType", ""), "UMSKZ": h.get("SpecialGLCode", ""), "AUGDT": h.get("ClearingDate", it.get("AUGDT") or ""), "AUGBL": h.get("ClearingDocument", it.get("AUGBL") or ""), "ZUONR": h.get("AssignmentReference", ""), "GJAHR": hdr["GJAHR"], "BELNR": hdr["BELNR"], "BUZEI": it["BUZEI"], "DMBTR": h.get("Amount", it.get("DMBTR")), "SHKZG": h.get("DebitCreditCode", it.get("SHKZG"))}
+                self._write(oi_table, oi)
         return ApiResponse(201, {"d": {"CompanyCode": hdr["BUKRS"], "AccountingDocument": hdr["BELNR"], "FiscalYear": hdr["GJAHR"], "Items": len(items), "numbering": numbering}})
 
     def _reverse_journal(self, b: ApiBinding, payload: dict) -> ApiResponse:
@@ -388,7 +440,7 @@ class SimulatedS4Gateway:
         lines = [l for l in self._store.lookup("BSEG", "BELNR", hdr["BELNR"]) if str(l["BUKRS"]) == str(hdr["BUKRS"]) and str(l["GJAHR"]) == str(hdr["GJAHR"])]
         if any(r.get("AWTYP") == "REVERSAL" and r.get("XBLNR") == f"REV {hdr['BELNR']}" for r in self._store.rows("BKPF")):
             return self._err(409, "ALREADY_REVERSED", f"document {key} was already reversed")
-        rev = {**hdr, "AWTYP": "REVERSAL", "AWKEY": f"{hdr['BELNR']}{hdr['GJAHR']}", "XBLNR": f"REV {hdr['BELNR']}", "BUDAT": payload.get("PostingDate") or hdr.get("BUDAT"), "BLDAT": payload.get("PostingDate") or hdr.get("BLDAT")}
+        rev = {**{k: v for k, v in hdr.items() if k != SOURCE_REF}, "AWTYP": "REVERSAL", "AWKEY": f"{hdr['BELNR']}{hdr['GJAHR']}", "XBLNR": f"REV {hdr['BELNR']}", "BUDAT": payload.get("PostingDate") or hdr.get("BUDAT"), "BLDAT": payload.get("PostingDate") or hdr.get("BLDAT")}
         resp = self._post_journal(b, {**b.header.to_entity(rev), "Items": [b.items["BSEG"].to_entity({**l, "SHKZG": "H" if l.get("SHKZG") == "S" else "S", "BELNR": None}) for l in lines]})
         if resp.status != 201:
             return resp
@@ -481,6 +533,10 @@ class S4ApiHttpTransport:
         method = method.upper()
         headers = dict(headers or {})
         with self._lock:
+            if service == COCKPIT_SERVICE:
+                raise ApiUnavailable("migration cockpit staging tables are filled through a direct database connection or the file-based 'Migrate Your Data' app; posting them over HTTPS is not possible. Export of staging files is planned")
+            if service == "API_JOURNALENTRY_SRV" and path == "JournalEntryLookup":
+                return self._journal_lookup(payload or {})
             if service == "API_JOURNALENTRY_SRV":
                 return self._soap(path, payload or {})
             if method != "GET" and not self._csrf:
@@ -500,6 +556,18 @@ class S4ApiHttpTransport:
             except ValueError:
                 body = {"raw": r.text[:500]}
             return ApiResponse(r.status_code, body, {k.lower(): v for k, v in r.headers.items()})
+
+    def _journal_lookup(self, payload: dict) -> ApiResponse:
+        """Idempotency lookup through the released read service API_JOURNALENTRYITEMBASIC_SRV: the source reference is
+        kept in DocumentReferenceID when posting (unverified against a live system)."""
+        q = f"A_JournalEntryItemBasic?$filter=CompanyCode eq '{payload.get('CompanyCode')}' and FiscalYear eq '{payload.get('FiscalYear')}' and DocumentReferenceID eq '{payload.get('SourceReference')}'&$top=1&$select=CompanyCode,AccountingDocument,FiscalYear"
+        r = self._client.get(f"{self.base}/sap/opu/odata/sap/API_JOURNALENTRYITEMBASIC_SRV/{q}", headers={**self._auth_headers(), "Accept": "application/json"})
+        if r.status_code >= 400:
+            return ApiResponse(r.status_code, {"error": {"code": "LOOKUP", "message": {"value": r.text[:200]}}})
+        results = (r.json().get("d", {}) or {}).get("results", [])
+        if not results:
+            return ApiResponse(404, {"error": {"code": "NOT_FOUND", "message": {"value": "no journal entry with that reference"}}})
+        return ApiResponse(200, {"d": results[0]})
 
     def _soap(self, operation: str, payload: dict) -> ApiResponse:
         env = journal_entry_envelope(operation, payload)
@@ -566,16 +634,22 @@ class TargetApiClient:
 
     def _call(self, method: str, service: str, path: str, payload: dict | None = None, headers: dict | None = None) -> ApiResponse:
         h = dict(headers or {})
-        if method != "GET" and service != "API_JOURNALENTRY_SRV":
+        if method != "GET" and service not in ("API_JOURNALENTRY_SRV", COCKPIT_SERVICE):  # SOAP and the cockpit have no CSRF handshake
             h["x-csrf-token"] = self._token(service)
-        r = self.t.request(method, service, path, payload, h)
+        try:
+            r = self.t.request(method, service, path, payload, h)
+        except ApiUnavailable as e:
+            self.calls[(service, method, path.split("(")[0])] += 1
+            self.failures[(service, method, path.split("(")[0])] += 1
+            raise ApiError(503, "API_UNAVAILABLE", e.message) from e
         if r.status == 403 and method != "GET":  # token expired: refresh once
             self._tokens.pop(service, None)
             h["x-csrf-token"] = self._token(service)
             r = self.t.request(method, service, path, payload, h)
         self.calls[(service, method, path.split("(")[0])] += 1
         if r.status >= 400:
-            self.failures[(service, method, path.split("(")[0])] += 1
+            if r.status not in (404, 409):  # not found / already exists are answers the loaders act on, not failures
+                self.failures[(service, method, path.split("(")[0])] += 1
             err = (r.body or {}).get("error", {})
             msg = err.get("message", {})
             raise ApiError(r.status, err.get("code", "HTTP"), msg.get("value") if isinstance(msg, dict) else (msg or str(r.body)[:200]))
@@ -586,7 +660,6 @@ class TargetApiClient:
             r = self._call("GET", service, entity_set + format_key(props, values))
         except ApiError as e:
             if e.status == 404:
-                self.failures[(service, "GET", entity_set)] -= 1
                 return None, None
             raise
         return r.body.get("d"), r.headers.get("etag")
@@ -602,6 +675,22 @@ class TargetApiClient:
 
     def post_journal_entry(self, entry: dict) -> dict:
         return self._call("POST", "API_JOURNALENTRY_SRV", "JournalEntryBulkCreateRequestConfirmation_In", entry).body.get("d", {})
+
+    def lookup_journal_entry(self, company_code: str, fiscal_year, source_reference: str) -> dict | None:
+        try:
+            return self._call("POST", "API_JOURNALENTRY_SRV", "JournalEntryLookup", {"CompanyCode": company_code, "FiscalYear": fiscal_year, "SourceReference": source_reference}).body.get("d")
+        except ApiError as e:
+            if e.status == 404:
+                return None
+            raise
+
+    def cockpit_load(self, object_type: str, rows: list[tuple[str, dict]]) -> dict:
+        try:
+            return self._call("POST", COCKPIT_SERVICE, object_type, {"rows": [{"table": t, "row": r} for t, r in rows]}).body.get("d", {})
+        except ApiUnavailable:
+            raise
+        except ApiError:
+            raise
 
     def reverse_journal_entry(self, company_code: str, document: str, fiscal_year, posting_date: str | None = None) -> dict:
         return self._call("POST", "API_JOURNALENTRY_SRV", "JournalEntryReverse", {"CompanyCode": company_code, "AccountingDocument": document, "FiscalYear": fiscal_year, "PostingDate": posting_date, "ReversalReason": "01"}).body.get("d", {})

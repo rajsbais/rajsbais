@@ -1,4 +1,4 @@
-# ADR-0015 — Delta loads through released S/4HANA APIs
+# ADR-0015 — Loads through released S/4HANA APIs (delta cycles and initial load)
 
 **Status:** accepted
 
@@ -41,10 +41,33 @@ by the target, derived prices and statuses.
    (CSRF token from `API_BUSINESS_PARTNER`, configuration probe, nothing written). The demo target on the RFC path
    uses the simulated gateway.
 
+6. **The initial load uses the same loaders** (`runtime/api_load.py`, default `SDTF_LOAD_MODE=api`, per run
+   `load_mode`). The LOAD stage groups transformed staging records by business object instance (open items are
+   grouped by their document through the row image) and runs one load per instance: deep inserts and item creates
+   for open documents, master creates with their company-code views, journal entry postings with the target's
+   numbers and open items derived from the customer/supplier lines (hints carry assignment, special G/L and
+   clearing data), configuration matching, and the **migration cockpit** for cockpit objects, for tables the
+   document APIs do not expose (PO history, production order components/confirmations) and for **histories**:
+   completed sales orders, fully delivered purchase orders and goods-issued deliveries are migrated as history, not
+   re-created (their statuses cannot be set through the APIs). Keys and images the target assigns are written back
+   to staging, so the three-layer reconciliation compares against what the target holds. Re-runs and concurrent
+   partitions are safe: existing documents are compared (duplicate / conflict), journal entries are looked up by a
+   source reference kept on the entry (`YY1_SDTF_SOURCE_REF`, read back through `API_JOURNALENTRYITEMBASIC_SRV` on a
+   real target) before posting. `load_mode=direct` keeps the former simulated direct loader for comparison.
+
 ## Consequences
-* Delta cycles now exercise the API semantics a real cutover faces, including the awkward ones (no deletes of
-  masters, no edits of posted documents, numbers you do not choose). The initial load still writes the simulated
-  target directly; routing it through the same loaders is the next step and is on the backlog.
+* Both the initial load and delta cycles now exercise the API semantics a real cutover faces, including the
+  awkward ones (no deletes of masters, no edits of posted documents, numbers you do not choose, histories that
+  do not go through transactional APIs). The vertical slice reconciles PASS on this path; the direct loader
+  remains available but is no longer the default.
+* With target-side numbering, the merge planner's disjoint number ranges keep *staging* keys apart; the target
+  numbers journal entries itself and every entry carries a source reference prefixed with the sending system's
+  logical system, so several sources that share company codes and document numbers cannot collide or be
+  mistaken for re-runs of each other.
+* Direct and API load modes must not be mixed on one target: their keys differ for target-numbered documents.
+* The migration cockpit is simulated as a posting of staging-table content with the organisational checks a
+  migration object performs. A real target fills staging tables through a database connection or the file-based
+  app, so the HTTPS transport refuses cockpit objects with that explanation; exporting staging files is planned.
 * Pricing, statuses and open items are *modelled*, not SAP's: a real target prices from condition records and
   derives statuses from subsequent documents. The simulator's business activity is restricted to changes the
   released APIs can convey (quantities, master attributes, new documents, item deletions).

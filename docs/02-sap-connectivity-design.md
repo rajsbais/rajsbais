@@ -48,8 +48,10 @@ SOAP envelope for the journal entry service), `SimulatedS4Gateway` is the execut
 flags). Bindings map table fields to API properties per business object and declare derived, priced and updatable
 properties, numbering and delete policy; unmapped fields travel as `YY1_` extension properties. Destination:
 `SDTF_S4_API_<SID>` (JSON: `base_url`, `user`/`passwd` or `token_url`/`client_id`/`client_secret`, secrets as
-`env:NAME`) or `meta.api.dest`; `SDTF_S4_API_TRANSPORT=auto|http|simulated`. The initial load still uses the
-simulated loader (next step: route it through the same loaders).
+`env:NAME`) or `meta.api.dest`; `SDTF_S4_API_TRANSPORT=auto|http|simulated`. The initial load uses the same
+loaders (`runtime/api_load.py`, `SDTF_LOAD_MODE=api`, per-run `load_mode`): open documents through the document
+APIs, journal entries with target numbering and a source reference for idempotency, histories and cockpit objects
+through the (simulated) migration cockpit; `load_mode=direct` keeps the simulated direct loader.
 
 Verify on a real target before relying on the bindings: `$metadata` of each service (property names, key order,
 navigation names for deep inserts), address/role navigations of API_BUSINESS_PARTNER (flattened here), the journal

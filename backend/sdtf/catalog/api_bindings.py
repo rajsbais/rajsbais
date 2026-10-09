@@ -12,6 +12,7 @@ These are first mappings written from the public API reference, not validated ag
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import Callable
 
 from .tables import TABLES
 
@@ -69,6 +70,7 @@ class ApiBinding:
     on_delete: str = "DELETE"  # DELETE | REVERSAL | BLOCK | FORBIDDEN
     deep_insert: bool = True  # header + items in one create
     history_rule: str = ""  # explanation when an instance is history and must not be re-posted
+    history_when: Callable[[dict, list[dict]], bool] | None = None  # (header row, item rows) -> is this instance history?
     notes: str = ""
 
     def entity_for(self, table: str) -> EntityBinding | None:
@@ -113,6 +115,8 @@ API_BINDINGS: dict[str, ApiBinding] = {
             _e("VBAK", "A_SalesOrder", {"VBELN": "SalesOrder", "AUART": "SalesOrderType", "VKORG": "SalesOrganization", "VTWEG": "DistributionChannel", "SPART": "OrganizationDivision", "KUNNR": "SoldToParty", "AUDAT": "SalesOrderDate", "WAERK": "TransactionCurrency", "NETWR": "TotalNetAmount", "GBSTK": "OverallSDProcessStatus", "BUKRS_VF": "BillingCompanyCode"}, ("SalesOrder",), derived=("NETWR", "GBSTK", "BUKRS_VF"), updatable=("AUDAT", "KUNNR")),
             {"VBAP": _e("VBAP", "A_SalesOrderItem", {"VBELN": "SalesOrder", "POSNR": "SalesOrderItem", "MATNR": "Material", "WERKS": "ProductionPlant", "KWMENG": "RequestedQuantity", "NETWR": "NetAmount", "PRCTR": "ProfitCenter"}, ("SalesOrder", "SalesOrderItem"), updatable=("KWMENG", "WERKS", "PRCTR"), parent_props=("SalesOrder",), priced=("NETWR",))},
             on_delete="DELETE",
+            history_rule="completed sales orders are history: they are not re-created through the API (their status cannot be set), they migrate as history",
+            history_when=lambda h, items: h.get("GBSTK") == "C",
             notes="TotalNetAmount/NetAmount are priced by the target (condition kept from the item's unit price); status and billing company code are derived",
         ),
         ApiBinding(
@@ -120,6 +124,8 @@ API_BINDINGS: dict[str, ApiBinding] = {
             _e("EKKO", "A_PurchaseOrder", {"EBELN": "PurchaseOrder", "BUKRS": "CompanyCode", "BSTYP": "PurchasingDocumentCategory", "BSART": "PurchaseOrderType", "LIFNR": "Supplier", "EKORG": "PurchasingOrganization", "BEDAT": "PurchaseOrderDate", "WAERS": "DocumentCurrency"}, ("PurchaseOrder",), updatable=("BEDAT",)),
             {"EKPO": _e("EKPO", "A_PurchaseOrderItem", {"EBELN": "PurchaseOrder", "EBELP": "PurchaseOrderItem", "MATNR": "Material", "WERKS": "Plant", "MENGE": "OrderQuantity", "NETPR": "NetPriceAmount", "NETWR": "NetAmount", "ELIKZ": "IsCompletelyDelivered"}, ("PurchaseOrder", "PurchaseOrderItem"), updatable=("MENGE", "NETPR", "WERKS"), parent_props=("PurchaseOrder",), priced=("NETWR",))},
             on_delete="DELETE",
+            history_rule="fully delivered purchase orders are history: not re-created, migrated as history",
+            history_when=lambda h, items: bool(items) and all(i.get("ELIKZ") == "X" for i in items),
             notes="EKBE (PO history) is never re-posted: it follows from goods receipts and invoices in the target",
         ),
         ApiBinding(
@@ -128,6 +134,7 @@ API_BINDINGS: dict[str, ApiBinding] = {
             {"LIPS": _e("LIPS", "A_OutbDeliveryItem", {"VBELN": "DeliveryDocument", "POSNR": "DeliveryDocumentItem", "MATNR": "Material", "WERKS": "Plant", "LFIMG": "ActualDeliveryQuantity", "VGBEL": "ReferenceSDDocument", "VGPOS": "ReferenceSDDocumentItem"}, ("DeliveryDocument", "DeliveryDocumentItem"), updatable=("LFIMG",), parent_props=("DeliveryDocument",))},
             on_delete="DELETE",
             history_rule="deliveries with an actual goods-movement date are history: they are not re-created, their stock and FI effects migrate as balances",
+            history_when=lambda h, items: bool(h.get("WADAT_IST")),
         ),
         ApiBinding(
             "FI.AccountingDocument", "API_JOURNALENTRY_SRV", "SOAP",

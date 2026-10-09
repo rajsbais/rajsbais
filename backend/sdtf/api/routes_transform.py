@@ -249,13 +249,14 @@ class RunRequest(BaseModel):
     execution: str = Field("INLINE", pattern="^(INLINE|DISTRIBUTED)$", description="INLINE: threads in the API process; DISTRIBUTED: partition jobs claimed by `sdtf worker` processes")
     staging_backend: str | None = Field(None, pattern="^(relational|columnar)$")
     pipelined: bool = Field(True, description="DISTRIBUTED only: partitions flow through stages independently (default) or wait at stage barriers")
+    load_mode: str | None = Field(None, pattern="^(api|direct)$", description="api: released-API loaders over the target transport (default); direct: simulated direct loader")
 
 
 @router.post("/projects/{project_id}/runs", tags=["runs"], status_code=201)
 def run_start(project_id: str, req: RunRequest, db: Session = Depends(get_db), p: Principal = Depends(require("run:start"))):
     assert_project_access(db, p, project_id)
     try:
-        run = start_run(db, project_id, req.manifest_id, req.ruleset_id, p.username, req.mode, req.workers, execution=req.execution, staging_backend=req.staging_backend, pipelined=req.pipelined)
+        run = start_run(db, project_id, req.manifest_id, req.ruleset_id, p.username, req.mode, req.workers, execution=req.execution, staging_backend=req.staging_backend, pipelined=req.pipelined, load_mode=req.load_mode)
     except RunPrecondition as e:
         raise HTTPException(409, str(e)) from None
     return run_out(run)
@@ -453,7 +454,7 @@ CAPABILITIES = [
     {"area": "Distributed extraction workers", "status": "IMPLEMENTED", "note": "Claim-based partition jobs with leases, crash re-queue, last-worker finalisation; `sdtf worker` processes / pods"},
     {"area": "Columnar staging (Parquet on local / S3 / GCS / Azure via fsspec, key-range sidecar index)", "status": "IMPLEMENTED", "note": "Per run/table/partition files, zstd; object-store path tested with the in-memory filesystem"},
     {"area": "Observability (OpenTelemetry traces, metrics, trace-correlated JSON logs)", "status": "IMPLEMENTED", "note": "OTLP/HTTP export when OTEL_EXPORTER_OTLP_ENDPOINT is set; no-op otherwise"},
-    {"area": "Target load", "status": "SIMULATED", "note": "Initial load: simulated loader with idempotent upsert tagged with the registry's load method. Delta loads: released S/4HANA APIs (business partner, product, sales/purchase order, delivery, journal entry) through the API connector, verified on the simulated gateway only (ADR-0015)"},
+    {"area": "Target load", "status": "SIMULATED", "note": "Initial load and delta cycles go through the released S/4HANA APIs (business partner, product, sales/purchase order, delivery, journal entry with target numbering) and the migration cockpit for histories and cockpit objects, on the simulated gateway or an HTTPS target; verified on the simulated gateway only (ADR-0015). load_mode=direct keeps the simulated direct loader"},
     {"area": "Reconciliation (technical/functional/financial)", "status": "IMPLEMENTED", "note": "Runs on simulated data"},
     {"area": "Audit trail & evidence packages", "status": "IMPLEMENTED", "note": "Hash-chained events, evidence index"},
     {"area": "AI agents", "status": "IMPLEMENTED", "note": "12 bounded heuristic agents; LLM reasoner planned"},

@@ -45,7 +45,8 @@ Legend: P0 next increment · P1 following · P2 later. Sizes are relative (S/M/L
 | ✅ | CDC adapter against the add-on contract (`Z_SDTF_CDC_POLL`, simulated + ABAP reference) and delta replay engine with scope filter, atomic change sets, dependency ordering, idempotency ledger, conflicts, freeze, final delta + full reconciliation, backlog monitor (ADR-0014) | XL |
 | ✅ | Delta loaders through released APIs: API connector, bindings, loader, simulated S/4 gateway, HTTPS/SOAP transport, connector test (ADR-0015) | L |
 | P0 | Activate `Z_SDTF_CDC_POLL` on a real release; validate the API bindings against a real target's `$metadata`, OAuth client, journal entry SOAP namespaces | XL (needs SAP systems) |
-| P1 | Route the initial load through the same API loaders (today: simulated direct load tagged with the load method) | M |
+| ✅ | Initial load through the same API loaders (deep inserts, journal postings with target numbering and idempotent source reference, cockpit path for histories and cockpit objects; `load_mode=direct` kept) | M |
+| P1 | Migration cockpit staging-file export (CSV/XML per migration object) for real targets, since staging tables cannot be posted over HTTPS | M |
 | P0 | Benchmark harness and benchmark report (docs/benchmarks.md) | M |
 | P1 | Cutover execution tracking, incident escalation, resource assignment, mock cutover management | M |
 

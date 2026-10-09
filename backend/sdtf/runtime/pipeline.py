@@ -28,8 +28,8 @@ from ..reconciliation.service import reconcile_run
 from ..rules.engine import parse_ruleset
 from ..scope.service import verify_manifest_integrity
 from ..staging import get_backend
+from .api_load import build_loader
 from .extraction import build_extractor, run_extraction
-from .load import SimulatedTargetLoader
 from .transform import run_transformation
 
 STAGES = ["PRECHECK", "EXTRACT", "TRANSFORM", "LOAD", "RECONCILE", "REPORT"]
@@ -44,7 +44,7 @@ def _now():
     return datetime.now(timezone.utc)
 
 
-def start_run(session: Session, project_id: str, manifest_id: str, ruleset_id: str, actor: str, mode: str = "SIMULATED", workers: int | None = None, merge_group: str | None = None, execution: str = "INLINE", staging_backend: str | None = None, pipelined: bool = True) -> MigrationRun:
+def start_run(session: Session, project_id: str, manifest_id: str, ruleset_id: str, actor: str, mode: str = "SIMULATED", workers: int | None = None, merge_group: str | None = None, execution: str = "INLINE", staging_backend: str | None = None, pipelined: bool = True, load_mode: str | None = None) -> MigrationRun:
     if mode not in SUPPORTED_MODES:
         raise RunPrecondition(f"mode {mode} is not supported by this build; only SIMULATED runs exist (no production SAP connectivity)")
     m = session.get(ScopeManifest, manifest_id)
@@ -66,7 +66,7 @@ def start_run(session: Session, project_id: str, manifest_id: str, ruleset_id: s
     if execution not in ("INLINE", "DISTRIBUTED"):
         raise RunPrecondition(f"unknown execution mode {execution}")
     backend_name = staging_backend or config.settings.staging_backend
-    run = MigrationRun(project_id=project_id, manifest_id=m.id, ruleset_id=rs.id, source_system_id=src.id, target_system_id=tgt.id, mode=mode, status="RUNNING", started_by=actor, started_at=_now(), metrics={"workers": workers or config.settings.extraction_workers, "execution": execution, "staging_backend": backend_name, **({"pipelined": pipelined} if execution == "DISTRIBUTED" else {}), **({"merge_group": merge_group} if merge_group else {})})
+    run = MigrationRun(project_id=project_id, manifest_id=m.id, ruleset_id=rs.id, source_system_id=src.id, target_system_id=tgt.id, mode=mode, status="RUNNING", started_by=actor, started_at=_now(), metrics={"workers": workers or config.settings.extraction_workers, "execution": execution, "staging_backend": backend_name, "load_mode": (load_mode or config.settings.load_mode), **({"pipelined": pipelined} if execution == "DISTRIBUTED" else {}), **({"merge_group": merge_group} if merge_group else {})})
     session.add(run)
     session.flush()
     for i, name in enumerate(STAGES):
@@ -146,7 +146,7 @@ def execute_run(session: Session, run: MigrationRun, actor: str) -> MigrationRun
             elif name == "TRANSFORM":
                 st.metrics = run_transformation(session, run.id, rs, backend=backend)
             elif name == "LOAD":
-                st.metrics = SimulatedTargetLoader(session, tgt, run.id, backend=backend).load()
+                st.metrics = build_loader(session, tgt, run.id, backend=backend, load_mode=run.metrics.get("load_mode")).load()
             elif name == "RECONCILE":
                 source_store = source_store or RecordStore.load(session, src.id)
                 session.query(ReconciliationResult).filter(ReconciliationResult.run_id == run.id).delete()

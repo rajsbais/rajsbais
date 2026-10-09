@@ -3,7 +3,15 @@ from sqlalchemy import select
 
 from sdtf.catalog.store import RecordStore
 from sdtf.demo import approve_ruleset
-from sdtf.models import MigrationRun, ReconciliationResult, RuleSet, SapRecord, SapSystem, ScopeManifest
+from sdtf.models import (
+    MigrationRun,
+    ReconciliationResult,
+    RuleSet,
+    SapRecord,
+    SapSystem,
+    ScopeManifest,
+    TransformationException,
+)
 from sdtf.reconciliation.service import reconcile_run
 from sdtf.runtime.pipeline import start_run
 
@@ -61,12 +69,16 @@ def test_rejecting_rule_produces_exceptions_and_explained_variance(session, slic
     run = start_run(session, m.project_id, m2.id, row.id, "operator")
     assert run.status == "COMPLETED"
     rep = run.report
-    assert rep["exceptions"]["count"] > 0 and rep["exceptions"]["by_stage"] == {"TRANSFORM": rep["exceptions"]["count"]}
-    assert all(e["rule"] == "reject-payroll" for e in rep["exceptions"]["samples"])
-    # rejected lines unbalance the documents in the target: trial balance must FAIL, and the payroll account
-    # variance must be explained by the rejected amount
+    assert rep["exceptions"]["count"] > 0 and rep["exceptions"]["by_stage"]["TRANSFORM"] > 0
+    assert all(e["rule"] == "reject-payroll" for e in rep["exceptions"]["samples"] if e["stage"] == "TRANSFORM")
+    # rejected lines leave their documents unbalanced: the journal entry API refuses them whole (LOAD exceptions),
+    # so the target's trial balance stays consistent and the payroll account variance is explained by the refused amounts
+    assert rep["exceptions"]["by_stage"].get("LOAD", 0) > 0
+    load_ex = session.execute(select(TransformationException).where(TransformationException.run_id == run.id, TransformationException.stage == "LOAD")).scalars().all()
+    assert load_ex and all("does not balance" in e.message for e in load_ex if e.table_name == "BKPF")
     checks = {(r.check_name, r.subject): r for r in session.execute(select(ReconciliationResult).where(ReconciliationResult.run_id == run.id)).scalars()}
-    assert checks[("trial_balance", "SP01")].status == "FAIL"
+    assert checks[("trial_balance", "SP01")].status == "PASS"
     payroll = checks[("gl_balance", "5000->SP01/420000")]
     assert payroll.status == "WARN" and "rejected by transformation rules" in payroll.explanation and "unexplained 0.0" in payroll.explanation
+    assert checks[("record_count", "BKPF")].status == "WARN"
     assert session.get(SapSystem, tgt.id) is not None

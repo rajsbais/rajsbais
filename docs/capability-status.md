@@ -19,7 +19,7 @@
 | Reconciliation (technical/functional/financial) | IMPLEMENTED | on simulated data |
 | Audit trail (hash chain), approvals, evidence packages | IMPLEMENTED | |
 | Run restart / checkpoint recovery | IMPLEMENTED | partition-level for extraction, stage-level otherwise |
-| Delta loads through released APIs: API connector, bindings for business partner, product, sales/purchase order, delivery, journal entry (SOAP), simulated S/4 gateway with CSRF/ETag/validation/target numbering/reversals, HTTP transport | SIMULATED | loaders verified on the simulated gateway; bindings unverified against a real `$metadata`; initial load still direct (ADR-0015) |
+| Loads through released APIs (initial load and delta cycles): API connector, bindings for business partner, product, sales/purchase order, delivery, journal entry (SOAP), cost/profit center; simulated S/4 gateway with CSRF/ETag/validation/target numbering/reversals; migration cockpit path for histories and cockpit objects; HTTP transport | SIMULATED | default load mode; verified on the simulated gateway only; bindings unverified against a real `$metadata`; cockpit staging export planned (ADR-0015) |
 | Delta capture / continuous sync / NDT | SIMULATED | CDC through the add-on contract (`Z_SDTF_CDC_POLL`) over RFC, ordered idempotent replay with conflict detection, business freeze, final delta + full reconciliation, backlog/lag monitor; verified on the simulated add-on only; ABAP reference not compiled; no downtime figure claimed (ADR-0014) |
 | Cutover command center | PARTIAL | runbook, critical path, forecast, rollback gates, go/no-go; execution tracking planned |
 | AI agents (12) | IMPLEMENTED | heuristic reasoner; LLM reasoner planned |

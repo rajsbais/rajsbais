@@ -40,7 +40,7 @@ from ..rules.engine import RuleError, SkipRecord, parse_ruleset, target_key, tra
 from ..staging import StagedRow, get_backend
 from .activity import load_change_log
 from .extraction import TRANSFER_CLASSES
-from .loaders import DeltaLoader, EventView, LoadResult
+from .loaders import DeltaLoader, EventView, LoadResult, object_of
 from .pipeline import RunPrecondition
 from .rfc import AbapAddonClient, make_transport, predicate
 from .target_api import TargetApiClient, make_target_transport
@@ -158,12 +158,8 @@ class DeltaEngine:
 
     # -- scope
     @staticmethod
-    def object_key(table: str, record_key: str) -> tuple[str, str]:
-        bo_id = _TABLE_BO.get(table, "")
-        if not bo_id:
-            return "", record_key
-        bo = BUSINESS_OBJECTS[bo_id]
-        return bo_id, "|".join(record_key.split("|")[: len(bo.key_fields)])
+    def object_key(table: str, record_key: str, payload: dict | None = None) -> tuple[str, str]:
+        return object_of(table, record_key, payload)
 
     def _row_in_scope(self, table: str, row: dict | None) -> bool | None:
         """Organisational test on a header image: True/False, or None when the table is not company-code-owned."""
@@ -208,7 +204,7 @@ class DeltaEngine:
             if seq in existing:
                 m["duplicates_ignored"] += 1  # a cycle re-run after a crash: the ledger already knows this event
                 continue
-            bo_id, okey = self.object_key(e["TABNAME"], e["KEY"])
+            bo_id, okey = self.object_key(e["TABNAME"], e["KEY"], e.get("row"))
             ok, reason = (self._header_in_scope(bo_id, okey, batch_headers) if bo_id else (False, "table_not_in_catalog"))
             de = DeltaEvent(run_id=self.run.id, baseline_run_id=self.base.id, seq=seq, changenr=e.get("CHANGENR", ""), object_type=bo_id, object_key=okey, table_name=e["TABNAME"], record_key=e["KEY"], op=e["OP"], changed_at=e.get("CHANGED_AT", ""), changed_by=e.get("CHANGED_BY", ""), source_payload=e.get("row"), status="CAPTURED" if ok else "FILTERED", message="" if ok else reason)
             rows.append(de)
@@ -299,7 +295,7 @@ class DeltaEngine:
         transport = make_target_transport(self.session, self.tgt)
         client = TargetApiClient(transport)
         read_row = transport.row if hasattr(transport, "row") else None
-        loader = DeltaLoader(client, self.tgt.product, read_row=read_row)
+        loader = DeltaLoader(client, self.tgt.product, read_row=read_row, source_ref_prefix=self.src.logical_system or self.src.id)
         last_applied: dict[tuple[str, str], int] = {}
         for (t, k, s) in self.session.execute(select(DeltaEvent.table_name, DeltaEvent.target_key, func.max(DeltaEvent.seq)).where(DeltaEvent.baseline_run_id == self.base.id, DeltaEvent.status == "APPLIED").group_by(DeltaEvent.table_name, DeltaEvent.target_key)):
             last_applied[(t, k)] = s
@@ -564,7 +560,7 @@ def delta_state(session: Session, base: MigrationRun, with_backlog: bool = True)
             in_scope = 0
             oldest = None
             for e in events:
-                bo_id, okey = eng.object_key(e["TABNAME"], e["KEY"])
+                bo_id, okey = eng.object_key(e["TABNAME"], e["KEY"], e.get("row"))
                 if bo_id and eng._header_in_scope(bo_id, okey, batch_headers)[0]:
                     in_scope += 1
                     oldest = min(oldest, e.get("CHANGED_AT") or "") if oldest else (e.get("CHANGED_AT") or None)

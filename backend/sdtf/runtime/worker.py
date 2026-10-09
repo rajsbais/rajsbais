@@ -32,8 +32,8 @@ from ..models import ExtractionJob, MigrationRun, RuleSet, SapSystem, ScopeManif
 from ..reconciliation.service import reconcile_partition, reconcile_partitions, run_summary
 from ..rules.engine import parse_ruleset
 from ..staging import get_backend
+from .api_load import build_loader
 from .extraction import ManifestExtractor, build_extractor, extract_partition
-from .load import SimulatedTargetLoader
 from .transform import run_transformation
 
 JOB_STAGES = ["EXTRACT", "TRANSFORM", "LOAD", "RECONCILE"]
@@ -209,7 +209,7 @@ def _process_job(session: Session, job: ExtractionJob, cache: dict | None = None
             n = metrics["records"]
         elif job.stage == "LOAD":
             tgt = session.get(SapSystem, run.target_system_id)
-            metrics = SimulatedTargetLoader(session, tgt, run.id, backend=backend).load(partition=job.partition_id)
+            metrics = build_loader(session, tgt, run.id, backend=backend, load_mode=run.metrics.get("load_mode")).load(partition=job.partition_id)
             n = metrics["loaded"] + metrics["skipped_duplicate"] + metrics["matched_config"]
         elif job.stage == "RECONCILE":
             key = ("tgt", run.target_system_id, run.id)

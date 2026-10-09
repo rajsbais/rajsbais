@@ -72,7 +72,7 @@ def test_gateway_deep_insert_pricing_etags_and_delete(target):
     # masters cannot be deleted through the API
     with pytest.raises(tapi.ApiError, match="DELETE_NOT_ALLOWED"):
         c.delete("API_BUSINESS_PARTNER", "A_BusinessPartner", ("BusinessPartner",), ["100001"], None)
-    assert c.stats()["failures"] == 5 and c.stats()["by_service"]["API_SALES_ORDER_SRV"] > 5
+    assert c.stats()["failures"] == 5 and c.stats()["by_service"]["API_SALES_ORDER_SRV"] > 5  # 412, READ_ONLY, NOT_UPDATABLE, KEY_IMMUTABLE, DELETE_NOT_ALLOWED
     # the gateway persisted everything: a fresh store sees the API's view
     fresh = RecordStore.load(session_of(gw), tgt.id, tables=["VBAK", "VBAP"])
     assert fresh.by_key("VBAK", "7000002") is None and fresh.by_key("VBAP", "7000001|10") is not None
