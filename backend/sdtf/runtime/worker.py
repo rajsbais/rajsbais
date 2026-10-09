@@ -2,10 +2,15 @@
 
 A DISTRIBUTED run is executed as stage jobs, one per partition and stage: EXTRACT -> TRANSFORM -> LOAD. Any number
 of `sdtf worker` processes (pods) claim queued jobs with a lease, process them against the shared staging backend
-and mark them DONE. When every job of the current stage is DONE, the worker that notices advances the run under an
-atomic status transition (RUNNING -> ADVANCING), aggregates the job metrics into the stage, and enqueues the next
-stage's jobs; after LOAD it runs reconciliation and the report. Expired leases are re-queued (crash recovery) and
-attempts are counted. Stage barriers keep dedup and reconciliation semantics identical to INLINE runs.
+and mark them DONE.
+
+Pipelined mode (default): a partition's TRANSFORM job is enqueued as soon as its EXTRACT job is DONE, and its LOAD
+job as soon as its TRANSFORM is DONE, so partitions flow through the stages independently; workers prefer later
+stages to drain the pipeline. Barrier mode: a stage's jobs are enqueued only when the previous stage is complete.
+In both modes a stage closes (aggregated metrics) when all partitions are through it, under an atomic status
+transition (RUNNING -> ADVANCING) so exactly one worker closes it; reconciliation and the report run once LOAD is
+closed. Expired leases are re-queued (crash recovery), attempts are counted, and idle workers repair missing
+successor jobs so a crash between finishing a job and enqueueing its successor cannot stall a run.
 """
 from __future__ import annotations
 
@@ -16,7 +21,7 @@ import uuid
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import select, update
+from sqlalchemy import case, func, select, update
 from sqlalchemy.orm import Session
 
 from .. import config
@@ -72,7 +77,65 @@ def enqueue_stage_jobs(session: Session, run: MigrationRun, stage: str) -> int:
         n += 1
     if stage == "EXTRACT":
         run.snapshot_id = plan.snapshot_id
+        run.metrics = {**run.metrics, "partitions": n}
     session.flush()
+    return n
+
+
+def _next_stage(stage: str) -> str | None:
+    i = JOB_STAGES.index(stage)
+    return JOB_STAGES[i + 1] if i + 1 < len(JOB_STAGES) else None
+
+
+def enqueue_successor(session: Session, job: ExtractionJob) -> bool:
+    """Pipelined mode: queue the next stage's job for this partition (idempotent under the unique constraint)."""
+    nxt = _next_stage(job.stage)
+    if nxt is None:
+        return False
+    exists = session.execute(select(ExtractionJob.id).where(ExtractionJob.run_id == job.run_id, ExtractionJob.stage == nxt, ExtractionJob.partition_id == job.partition_id)).first()
+    if exists:
+        return False
+    run = session.get(MigrationRun, job.run_id)
+    st = _stage(run, nxt)
+    if st.status == "PENDING":
+        st.status, st.started_at = "RUNNING", _now()
+        st.metrics = {"execution": "DISTRIBUTED", "pipelined": True}
+    session.add(ExtractionJob(run_id=job.run_id, stage=nxt, partition_id=job.partition_id, object_type=job.object_type, est_rows=job.est_rows))
+    try:
+        session.commit()
+        return True
+    except Exception:  # noqa: BLE001 - another worker queued it first
+        session.rollback()
+        return False
+
+
+def repair_pipeline(session: Session, run_id: str) -> int:
+    """Enqueue successor jobs that are missing for DONE partitions of a pipelined run (crash between finishing a
+    job and enqueueing its successor). Idempotent; returns the number of jobs added."""
+    run = session.get(MigrationRun, run_id)
+    if run is None or run.status != "RUNNING" or not run.metrics.get("pipelined", True):
+        return 0
+    jobs = session.execute(select(ExtractionJob).where(ExtractionJob.run_id == run_id)).scalars().all()
+    have = {(j.stage, j.partition_id) for j in jobs}
+    n = 0
+    for j in jobs:
+        nxt = _next_stage(j.stage)
+        if j.status == "DONE" and nxt and (nxt, j.partition_id) not in have:
+            if enqueue_successor(session, j):
+                n += 1
+                have.add((nxt, j.partition_id))
+    return n
+
+
+def repair_stalled_runs(session: Session, actor: str = "worker") -> int:
+    """Idle-time self-healing: enqueue missing successors and close stages whose last job finished while another
+    worker held the advancement lock. Returns the number of repairs / advancements performed."""
+    runs = session.execute(select(MigrationRun.id).where(MigrationRun.status == "RUNNING")).scalars().all()
+    n = 0
+    for rid in runs:
+        n += repair_pipeline(session, rid)
+        if advance_run_if_stage_complete(session, rid, actor) is not None:
+            n += 1
     return n
 
 
@@ -101,7 +164,8 @@ def claim_job(session: Session, worker_id: str, lease_seconds: int | None = None
     """Atomically claim one QUEUED job: the conditional UPDATE succeeds for exactly one worker per job."""
     lease = lease_seconds or config.settings.job_lease_seconds
     for _ in range(5):
-        cand = session.execute(select(ExtractionJob).where(ExtractionJob.status == "QUEUED").order_by(ExtractionJob.created_at, ExtractionJob.est_rows.desc()).limit(1)).scalars().first()
+        priority = case((ExtractionJob.stage == "LOAD", 0), (ExtractionJob.stage == "TRANSFORM", 1), else_=2)
+        cand = session.execute(select(ExtractionJob).where(ExtractionJob.status == "QUEUED").order_by(priority, ExtractionJob.created_at, ExtractionJob.est_rows.desc()).limit(1)).scalars().first()
         if cand is None:
             return None
         now = _now()
@@ -161,50 +225,71 @@ def _aggregate(jobs: list[ExtractionJob]) -> dict:
 
 
 def advance_run_if_stage_complete(session: Session, run_id: str, actor: str) -> MigrationRun | None:
-    """If every job of the run's current job stage is DONE, advance under an atomic transition: close the stage with
-    aggregated metrics, enqueue the next stage's jobs, or finalise (reconcile + report) after LOAD."""
+    """Close every job stage whose jobs are all DONE (one job per partition), under an atomic RUNNING -> ADVANCING
+    transition. Barrier mode enqueues the next stage on close; pipelined mode enqueues successors per job instead.
+    When LOAD closes, reconciliation and the report run (once)."""
     run = session.get(MigrationRun, run_id)
     if run is None or run.status != "RUNNING":
         return None
-    current = next((s for s in JOB_STAGES if _stage(run, s).status == "RUNNING"), None)
-    if current is None:
-        return None
-    jobs = session.execute(select(ExtractionJob).where(ExtractionJob.run_id == run_id, ExtractionJob.stage == current)).scalars().all()
-    if not jobs or any(j.status != "DONE" for j in jobs):
+    partitions = run.metrics.get("partitions") or 0
+    pipelined = run.metrics.get("pipelined", True)
+    counts = {st: n for st, n in session.execute(select(ExtractionJob.stage, func.count()).where(ExtractionJob.run_id == run_id, ExtractionJob.status == "DONE").group_by(ExtractionJob.stage))}
+    closable = [st for st in JOB_STAGES if _stage(run, st).status == "RUNNING" and partitions and counts.get(st, 0) >= partitions]
+    if not closable:
         return None
     res = session.execute(update(MigrationRun).where(MigrationRun.id == run_id, MigrationRun.status == "RUNNING").values(status="ADVANCING"))
     session.commit()
     if res.rowcount != 1:
         return None  # another worker is advancing
     run = session.get(MigrationRun, run_id)
-    st = _stage(run, current)
-    metrics = _aggregate(jobs)
-    first = min(_aware(j.claimed_at) for j in jobs)
-    last = max(_aware(j.finished_at) for j in jobs)
-    metrics.update({"partitions_total": len(jobs), "workers": sorted({j.worker_id for j in jobs if j.worker_id}), "duration_s": round((last - first).total_seconds(), 3), "execution": "DISTRIBUTED", "attempts": sum(j.attempts for j in jobs)})
-    if current == "EXTRACT":
-        backend = get_backend(run.metrics.get("staging_backend"), session=session)
-        counts = backend.counts(run_id)
-        metrics.update({"records": sum(c["count"] for c in counts), "by_table": {c["table"]: c["count"] for c in counts}, "snapshot_id": run.snapshot_id, "staging_backend": backend.name})
-        metrics["records_per_second"] = round(metrics["records"] / metrics["duration_s"], 1) if metrics["duration_s"] else None
-    st.metrics, st.status, st.finished_at = metrics, "DONE", _now()
-    st.duration_ms = round(metrics["duration_s"] * 1000, 1)
-    st.checkpoint = {"partitions_done": sorted(j.partition_id for j in jobs)}
-    nxt = JOB_STAGES[JOB_STAGES.index(current) + 1] if current != "LOAD" else None
-    if nxt:
-        ns = _stage(run, nxt)
-        ns.status, ns.started_at = "RUNNING", _now()
-        ns.metrics = {"jobs": enqueue_stage_jobs(session, run, nxt), "execution": "DISTRIBUTED"}
-        run.status = "RUNNING"
+    load_closed = False
+    for current in closable:
+        st = _stage(run, current)
+        if st.status != "RUNNING":
+            continue
+        jobs = session.execute(select(ExtractionJob).where(ExtractionJob.run_id == run_id, ExtractionJob.stage == current)).scalars().all()
+        if any(j.status != "DONE" for j in jobs):
+            continue
+        metrics = _aggregate(jobs)
+        first = min(_aware(j.claimed_at) for j in jobs)
+        last = max(_aware(j.finished_at) for j in jobs)
+        metrics.update({"partitions_total": len(jobs), "workers": sorted({j.worker_id for j in jobs if j.worker_id}), "duration_s": round((last - first).total_seconds(), 3), "execution": "DISTRIBUTED", "pipelined": pipelined, "attempts": sum(j.attempts for j in jobs)})
+        if current == "EXTRACT":
+            backend = get_backend(run.metrics.get("staging_backend"), session=session)
+            cnt = backend.counts(run_id)
+            metrics.update({"records": sum(c["count"] for c in cnt), "by_table": {c["table"]: c["count"] for c in cnt}, "snapshot_id": run.snapshot_id, "staging_backend": backend.name})
+            metrics["records_per_second"] = round(metrics["records"] / metrics["duration_s"], 1) if metrics["duration_s"] else None
+        st.metrics, st.status, st.finished_at = metrics, "DONE", _now()
+        st.duration_ms = round(metrics["duration_s"] * 1000, 1)
+        st.checkpoint = {"partitions_done": sorted(j.partition_id for j in jobs)}
+        nxt = _next_stage(current)
+        if nxt is None:
+            load_closed = True
+        elif not pipelined:
+            ns = _stage(run, nxt)
+            ns.status, ns.started_at = "RUNNING", _now()
+            ns.metrics = {"jobs": enqueue_stage_jobs(session, run, nxt), "execution": "DISTRIBUTED", "pipelined": False}
         session.commit()
-        record_event(session, actor, "STAGE_ADVANCED", "RUN", run_id, {"completed": current, "next": nxt, "jobs": ns.metrics["jobs"]})
+        record_event(session, actor, "STAGE_CLOSED", "RUN", run_id, {"stage": current, "next": nxt, "pipelined": pipelined})
         session.commit()
-        return run
     run.status = "RUNNING"
     session.commit()
-    from .pipeline import execute_run
+    if load_closed:
+        run.metrics = {**run.metrics, "pipeline_overlap_s": _overlap(run)}
+        session.commit()
+        from .pipeline import execute_run
 
-    return execute_run(session, run, actor)
+        return execute_run(session, run, actor)
+    # jobs may have completed while this worker held the ADVANCING lock: re-evaluate before returning
+    return advance_run_if_stage_complete(session, run_id, actor) or run
+
+
+def _overlap(run: MigrationRun) -> float:
+    """Seconds by which TRANSFORM started before EXTRACT finished (pipelining effect; 0 in barrier mode)."""
+    ex, tr = _stage(run, "EXTRACT"), _stage(run, "TRANSFORM")
+    if not (ex.finished_at and tr.started_at):
+        return 0.0
+    return round(max(0.0, (_aware(ex.finished_at) - _aware(tr.started_at)).total_seconds()), 3)
 
 
 def finalize_if_complete(session: Session, run_id: str, actor: str) -> MigrationRun | None:  # backwards-compatible name
@@ -229,6 +314,9 @@ class Worker:
             session.commit()
             job = claim_job(session, self.worker_id, self.lease)
             if job is None:
+                if repair_stalled_runs(session, f"worker:{self.worker_id}"):
+                    session.commit()
+                    return True
                 return False
             run_id, partition, stage = job.run_id, job.partition_id, job.stage
             try:
@@ -238,6 +326,9 @@ class Worker:
             self.processed += 1
             record_event(session, f"worker:{self.worker_id}", "JOB_DONE", "RUN", run_id, {"stage": stage, "partition": partition, "records": n})
             session.commit()
+            run = session.get(MigrationRun, run_id)
+            if run.metrics.get("pipelined", True):
+                enqueue_successor(session, job)
             advance_run_if_stage_complete(session, run_id, f"worker:{self.worker_id}")
             session.commit()
             return True

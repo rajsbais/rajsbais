@@ -248,13 +248,14 @@ class RunRequest(BaseModel):
     workers: int | None = Field(None, ge=1, le=32)
     execution: str = Field("INLINE", pattern="^(INLINE|DISTRIBUTED)$", description="INLINE: threads in the API process; DISTRIBUTED: partition jobs claimed by `sdtf worker` processes")
     staging_backend: str | None = Field(None, pattern="^(relational|columnar)$")
+    pipelined: bool = Field(True, description="DISTRIBUTED only: partitions flow through stages independently (default) or wait at stage barriers")
 
 
 @router.post("/projects/{project_id}/runs", tags=["runs"], status_code=201)
 def run_start(project_id: str, req: RunRequest, db: Session = Depends(get_db), p: Principal = Depends(require("run:start"))):
     assert_project_access(db, p, project_id)
     try:
-        run = start_run(db, project_id, req.manifest_id, req.ruleset_id, p.username, req.mode, req.workers, execution=req.execution, staging_backend=req.staging_backend)
+        run = start_run(db, project_id, req.manifest_id, req.ruleset_id, p.username, req.mode, req.workers, execution=req.execution, staging_backend=req.staging_backend, pipelined=req.pipelined)
     except RunPrecondition as e:
         raise HTTPException(409, str(e)) from None
     return run_out(run)

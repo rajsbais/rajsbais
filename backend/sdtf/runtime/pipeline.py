@@ -43,7 +43,7 @@ def _now():
     return datetime.now(timezone.utc)
 
 
-def start_run(session: Session, project_id: str, manifest_id: str, ruleset_id: str, actor: str, mode: str = "SIMULATED", workers: int | None = None, merge_group: str | None = None, execution: str = "INLINE", staging_backend: str | None = None) -> MigrationRun:
+def start_run(session: Session, project_id: str, manifest_id: str, ruleset_id: str, actor: str, mode: str = "SIMULATED", workers: int | None = None, merge_group: str | None = None, execution: str = "INLINE", staging_backend: str | None = None, pipelined: bool = True) -> MigrationRun:
     if mode not in SUPPORTED_MODES:
         raise RunPrecondition(f"mode {mode} is not supported by this build; only SIMULATED runs exist (no production SAP connectivity)")
     m = session.get(ScopeManifest, manifest_id)
@@ -65,7 +65,7 @@ def start_run(session: Session, project_id: str, manifest_id: str, ruleset_id: s
     if execution not in ("INLINE", "DISTRIBUTED"):
         raise RunPrecondition(f"unknown execution mode {execution}")
     backend_name = staging_backend or config.settings.staging_backend
-    run = MigrationRun(project_id=project_id, manifest_id=m.id, ruleset_id=rs.id, source_system_id=src.id, target_system_id=tgt.id, mode=mode, status="RUNNING", started_by=actor, started_at=_now(), metrics={"workers": workers or config.settings.extraction_workers, "execution": execution, "staging_backend": backend_name, **({"merge_group": merge_group} if merge_group else {})})
+    run = MigrationRun(project_id=project_id, manifest_id=m.id, ruleset_id=rs.id, source_system_id=src.id, target_system_id=tgt.id, mode=mode, status="RUNNING", started_by=actor, started_at=_now(), metrics={"workers": workers or config.settings.extraction_workers, "execution": execution, "staging_backend": backend_name, **({"pipelined": pipelined} if execution == "DISTRIBUTED" else {}), **({"merge_group": merge_group} if merge_group else {})})
     session.add(run)
     session.flush()
     for i, name in enumerate(STAGES):
@@ -79,7 +79,7 @@ def start_run(session: Session, project_id: str, manifest_id: str, ruleset_id: s
         _stage(run, "PRECHECK").metrics = {"manifest_hash": m.content_hash, "ruleset_hash": rs.content_hash, "objects_in_scope": m.impact.get("objects_total", 0)}
         st = _stage(run, "EXTRACT")
         st.status, st.started_at = "RUNNING", _now()
-        st.metrics = {"jobs": enqueue_extraction_jobs(session, run), "execution": "DISTRIBUTED"}
+        st.metrics = {"jobs": enqueue_extraction_jobs(session, run), "execution": "DISTRIBUTED", "pipelined": pipelined}
         session.flush()
         return run
     return execute_run(session, run, actor)
@@ -94,13 +94,15 @@ def resume_run(session: Session, run_id: str, actor: str) -> MigrationRun:
     record_event(session, actor, "RUN_RESUMED", "RUN", run.id, {})
     run.status = "RUNNING"
     if run.metrics.get("execution") == "DISTRIBUTED":
-        from .worker import JOB_STAGES, requeue_jobs
+        from .worker import JOB_STAGES, repair_pipeline, requeue_jobs
 
         current = next((s for s in JOB_STAGES if _stage(run, s).status != "DONE"), None)
-        if current is not None:  # a job stage is still open: re-queue its failed / orphaned jobs for the workers
+        if current is not None:  # a job stage is still open: re-queue failed / orphaned jobs and missing successors
             st = _stage(run, current)
             st.status = "RUNNING"
             st.metrics = {**(st.metrics or {}), "requeued": requeue_jobs(session, run.id, statuses=("FAILED", "CLAIMED"))}
+            session.flush()
+            st.metrics = {**st.metrics, "repaired": repair_pipeline(session, run.id)}
             session.flush()
             return run
     return execute_run(session, run, actor)

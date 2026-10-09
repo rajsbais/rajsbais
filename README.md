@@ -26,8 +26,8 @@ migrations, deployment) for the Phase 1 foundation and the first vertical slice.
 * 12 bounded AI agents (heuristic reasoner) that propose, with confidence and evidence; humans decide.
 * Multi-source merger: merge groups, cross-system key-collision planning, master-data deduplication with survivor
   redirection, per-source number ranges, group-level financial reconciliation.
-* Distributed stage workers: extraction, transformation and load as per-partition jobs with leases, crash re-queue
-  and atomic stage advancement; columnar Parquet staging on an object-storage mount. INLINE threads and relational
+* Distributed stage workers: extraction, transformation and load as per-partition jobs, pipelined per partition,
+  with leases, crash re-queue, atomic stage closing and idle self-healing; columnar Parquet staging on an object-storage mount. INLINE threads and relational
   staging remain for small scopes.
 * RBAC/ABAC, tenant segregation, masking, four-eyes approvals, tamper detection, OIDC single sign-on.
 * 19 frontend applications wired to the API; Docker/compose/Kubernetes/CI.
@@ -35,7 +35,7 @@ migrations, deployment) for the Phase 1 foundation and the first vertical slice.
 ## Quick start
 ```bash
 python3 -m venv .venv && . .venv/bin/activate && pip install -e "backend[dev]"
-cd backend && pytest -q                      # 74 tests (+1 opt-in UI e2e)
+cd backend && pytest -q                      # 76 tests (+1 opt-in UI e2e)
 python -m sdtf.cli demo                      # full vertical slice, prints the execution report
 python -m sdtf.cli serve                     # API http://localhost:8000/docs
 cd ../frontend && npm install && npm run dev # UI http://localhost:5173 (login architect/architect)

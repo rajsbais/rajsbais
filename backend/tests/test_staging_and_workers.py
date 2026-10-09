@@ -142,3 +142,55 @@ def test_separate_worker_processes_share_the_queue(session, slice_result, db_url
     # concurrent load jobs from two processes produced no duplicate or conflicting target records
     load = next(st for st in run.stages if st.name == "LOAD").metrics
     assert load["conflicts"] == 0 and run.report["exceptions"]["count"] == 0
+
+
+def _drain(workers):
+    while True:
+        if not any(w.run_once() for w in workers):
+            break
+
+
+def test_pipelined_run_overlaps_stages_and_barrier_mode_does_not(session, slice_result):
+    from sdtf.db import get_session_factory
+
+    results = {}
+    for pipelined in (True, False):
+        run = start_run(session, slice_result["project_id"], slice_result["manifest_id"], slice_result["ruleset_id"], "operator", execution="DISTRIBUTED", pipelined=pipelined)
+        session.commit()
+        _drain([Worker(get_session_factory(), f"p{int(pipelined)}-a"), Worker(get_session_factory(), f"p{int(pipelined)}-b")])
+        session.expire_all()
+        run = session.get(MigrationRun, run.id)
+        assert run.status == "COMPLETED" and run.report["reconciliation"]["overall"] == "PASS"
+        stages = {st.name: st for st in run.stages}
+        summary = job_summary(session, run.id)
+        assert summary["by_status"] == {"DONE": 3 * run.metrics["partitions"]}
+        results[pipelined] = (run, stages)
+    pr, ps = results[True]
+    assert pr.metrics["pipelined"] is True and ps["TRANSFORM"].metrics["pipelined"] is True
+    # pipelined: transformation (and load) started before extraction had closed
+    assert ps["TRANSFORM"].started_at < ps["EXTRACT"].finished_at and ps["LOAD"].started_at < ps["EXTRACT"].finished_at
+    assert pr.metrics["pipeline_overlap_s"] > 0
+    br, bs = results[False]
+    assert br.metrics["pipelined"] is False and br.metrics["pipeline_overlap_s"] == 0
+    assert bs["TRANSFORM"].started_at >= bs["EXTRACT"].finished_at and bs["LOAD"].started_at >= bs["TRANSFORM"].finished_at
+
+
+def test_idle_worker_repairs_missing_successor_and_lost_wakeup(session, slice_result):
+    """A worker that dies between finishing a job and enqueueing its successor must not stall the run."""
+    from sdtf.db import get_session_factory
+    from sdtf.runtime.worker import process_job, repair_pipeline
+
+    run = start_run(session, slice_result["project_id"], slice_result["manifest_id"], slice_result["ruleset_id"], "operator", execution="DISTRIBUTED")
+    session.commit()
+    job = claim_job(session, "dying-worker")
+    process_job(session, job)  # DONE, but no TRANSFORM successor enqueued (simulated crash right after)
+    assert job_summary(session, run.id)["by_stage"].get("TRANSFORM") is None
+    assert repair_pipeline(session, run.id) == 1
+    assert job_summary(session, run.id)["by_stage"]["TRANSFORM"] == {"QUEUED": 1}
+    assert repair_pipeline(session, run.id) == 0, "idempotent"
+    w = Worker(get_session_factory(), "healer")
+    w.run(until_idle=True)
+    session.expire_all()
+    run = session.get(MigrationRun, run.id)
+    assert run.status == "COMPLETED" and run.report["reconciliation"]["overall"] == "PASS"
+    assert job_summary(session, run.id)["by_status"] == {"DONE": 3 * run.metrics["partitions"]}

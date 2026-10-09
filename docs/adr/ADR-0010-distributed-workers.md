@@ -9,10 +9,14 @@ dependency not every SAP landscape team wants on day one.
 Jobs live in the metadata database (`extraction_jobs`: one per partition *and stage* EXTRACT / TRANSFORM / LOAD).
 `sdtf worker` processes claim a job with a conditional UPDATE (exactly one winner), hold a lease, process the
 partition against the shared staging backend and mark the job DONE. Expired leases are re-queued; attempts are
-counted. When every job of the current stage is DONE, the worker that notices flips the run to ADVANCING with
-another conditional UPDATE, aggregates the job metrics into the stage, enqueues the next stage's jobs (or runs
-reconciliation and the report after LOAD), so each stage transition happens exactly once. Stage barriers keep
-de-duplication and reconciliation semantics identical to INLINE runs. Load jobs are concurrency-safe: they check
+counted. **Pipelined mode (default):** when a job finishes, its successor for the same partition is enqueued at
+once, so partitions flow through extraction, transformation and load independently; workers prefer later-stage
+jobs to drain the pipeline. **Barrier mode:** the next stage's jobs are enqueued only when the previous stage is
+complete. In both modes a stage closes with aggregated metrics once every partition is through it, under an
+ATOMIC RUNNING -> ADVANCING transition so exactly one worker closes it; after LOAD the same worker runs
+reconciliation and the report. Lost wake-ups (a job finishing while another worker holds the lock) are covered by
+re-evaluation after the lock is released and by idle workers, which also enqueue missing successors
+(`repair_pipeline`) so a crash between finishing a job and enqueueing its successor cannot stall a run. Load jobs are concurrency-safe: they check
 only their partition's keys and insert with conflict-ignore semantics, re-reading rows that lost an insert race.
 INLINE execution (threads in the API process) remains for small scopes.
 
@@ -20,5 +24,6 @@ INLINE execution (threads in the API process) remains for small scopes.
 + No broker; works on SQLite in development and PostgreSQL in production; crash recovery is tested.
 + Workers are stateless pods behind an HPA; the queue is observable (`/runs/{id}/jobs`, `/platform/workers`).
 − Polling adds latency (`SDTF_WORKER_POLL_SECONDS`); a broker-backed queue can replace `claim_job` later behind the
-  same functions. Reconciliation and the report still run inside the advancing worker; per-partition pipelining
-  (transforming a partition as soon as it is extracted) is a possible later optimisation.
+  same functions. Reconciliation and the report still run inside the advancing worker (distributed per-table reconciliation
+  is the next step). Pipelining relaxes stage ordering only per partition; cross-partition de-duplication still
+  happens at staging-write time, and reconciliation tolerates identical copies staged by two partitions.

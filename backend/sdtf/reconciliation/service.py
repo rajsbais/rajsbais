@@ -58,7 +58,7 @@ def reconcile_run(session: Session, run: MigrationRun, manifest: ScopeManifest, 
         rejected = sum(1 for s in recs if s.load_status in ("REJECTED", "CONFLICT", "UNSUPPORTED"))
         status = "PASS" if missing == 0 and rejected == 0 else ("FAIL" if missing else "WARN")
         results.append(_r(rid, "TECHNICAL", "record_count", status, table, len(recs), len(present), len(recs) - len(present), f"{rejected} record(s) rejected/unsupported before load" if rejected else "", {"missing_in_target": missing, "rejected": rejected}))
-        tkeys = Counter(s.target_key for s in loaded)
+        tkeys = Counter(s.target_key for s in {x.record_key: x for x in loaded}.values())  # identical copies staged by two partitions are one record
         dups = sum(1 for k, n in tkeys.items() if n > 1)
         key_collisions += dups
         results.append(_r(rid, "TECHNICAL", "key_uniqueness", "PASS" if dups == 0 else "FAIL", table, len(tkeys), len(loaded), dups, "Several source records map to the same target key" if dups else ""))
