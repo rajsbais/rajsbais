@@ -449,3 +449,36 @@ class CockpitFeedback(IdMixin, Base):
     reason: Mapped[str] = mapped_column(String(300), default="")
     source_file: Mapped[str] = mapped_column(String(200), default="")
     imported_by: Mapped[str] = mapped_column(String(64), default="")
+    attempt_id: Mapped[str] = mapped_column(String(32), default="")  # the round (CockpitAttempt) the log answers
+    attempt_sequence: Mapped[int] = mapped_column(Integer, default=0)
+
+
+class CockpitAttempt(IdMixin, Base):
+    """One migration cockpit package round of a run: the full export or a retry package, with the manual upload
+    and migration steps recorded by hand and the simulation outcome per instance once the feedback is imported."""
+
+    __tablename__ = "cockpit_attempts"
+    run_id: Mapped[str] = mapped_column(ForeignKey("migration_runs.id"), nullable=False, index=True)
+    sequence: Mapped[int] = mapped_column(Integer, nullable=False)
+    scope: Mapped[str] = mapped_column(String(12), default="all")  # all | rejected
+    status: Mapped[str] = mapped_column(String(12), default="EXPORTED")  # EXPORTED | UPLOADED | SIMULATED | MIGRATED | SUPERSEDED
+    package_dir: Mapped[str] = mapped_column(String(400), default="")
+    zip_path: Mapped[str] = mapped_column(String(400), default="")
+    manifest_sha256: Mapped[str] = mapped_column(String(64), default="")
+    instances: Mapped[int] = mapped_column(Integer, default=0)
+    rows: Mapped[int] = mapped_column(Integer, default=0)
+    files: Mapped[int] = mapped_column(Integer, default=0)
+    instance_keys: Mapped[list] = mapped_column(JSON, default=list)  # [[object_type, instance_key], ...]
+    outcomes: Mapped[dict] = mapped_column(JSON, default=dict)  # {"object_type|key": accepted|rejected|not_in_log}
+    result: Mapped[dict] = mapped_column(JSON, default=dict)
+    exported_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    exported_by: Mapped[str] = mapped_column(String(64), default="")
+    uploaded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    uploaded_by: Mapped[str] = mapped_column(String(64), default="")
+    upload_note: Mapped[str] = mapped_column(String(400), default="")
+    simulated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    simulated_by: Mapped[str] = mapped_column(String(64), default="")
+    migrated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    migrated_by: Mapped[str] = mapped_column(String(64), default="")
+    migration_note: Mapped[str] = mapped_column(String(400), default="")
+    __table_args__ = (UniqueConstraint("run_id", "sequence", name="uq_cockpit_attempt"),)

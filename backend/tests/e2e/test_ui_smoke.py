@@ -56,14 +56,15 @@ def test_all_screens_render_against_live_api():
         txt = pg.inner_text("main")
         assert "Migration object" in txt and "Migration objects of the target release" in txt and "SD.BillingDocument" in txt and "Download zip" in txt
         pg.select_option("main select >> nth=-1", "FI.GLAccount")
-        pg.click("button:has-text('Use illustrative sample')")
+        pg.click("button:has-text('Use illustrative sample') >> nth=1")  # the templates section's sample (the feedback section's button comes first)
         pg.wait_for_timeout(2500)
         txt = pg.inner_text("main")
         assert "Chart of Accounts Data" in txt and "ACCT_GROUP" in txt  # registered template with its mapping report
-        pg.click("button:has-text('Use illustrative sample') >> nth=1") if pg.locator("button:has-text('Use illustrative sample')").count() > 1 else pg.click("button:has-text('Use illustrative sample')")
+        pg.click("button:has-text('Use illustrative sample') >> nth=0")  # the simulation feedback sample
         pg.wait_for_timeout(5000)
         txt = pg.inner_text("main")
         assert "Export retry package" in txt and "REJECTED" in txt  # simulation feedback imported and classified
+        assert "Package rounds and re-uploads" in txt and "SIMULATED" in txt  # the round the log answered
         pg.goto(base + "/cutover")
         pg.wait_for_timeout(1000)
         pg.click("text=Assess cutover risk")

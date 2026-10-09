@@ -40,8 +40,17 @@ def main(argv=None):
     fi = fbsub.add_parser("import", help="import a message log (CSV/TSV, JSON or SpreadsheetML)")
     fi.add_argument("--run", required=True)
     fi.add_argument("--file", required=True)
-    fi.add_argument("--append", action="store_true", help="keep earlier feedback of the run")
+    fi.add_argument("--append", action="store_true", help="keep earlier feedback of the round")
+    fi.add_argument("--round", type=int, default=None, help="the round the log answers (default: latest round not yet simulated)")
     fi.add_argument("--json", action="store_true")
+    fr = fbsub.add_parser("rounds", help="package rounds of the run: statuses, results, burn-down of the still-rejected instances")
+    fr.add_argument("--run", required=True)
+    fr.add_argument("--json", action="store_true")
+    fm = fbsub.add_parser("mark", help="record by hand that a round was uploaded in the app or migrated")
+    fm.add_argument("--run", required=True)
+    fm.add_argument("--round", type=int, required=True)
+    fm.add_argument("--status", choices=["UPLOADED", "MIGRATED"], required=True)
+    fm.add_argument("--note", default="")
     fs = fbsub.add_parser("show", help="summary and messages of the run's feedback")
     fs.add_argument("--run", required=True)
     fs.add_argument("--json", action="store_true")
@@ -243,10 +252,32 @@ def main(argv=None):
         from sqlalchemy import select
 
         from .models import CockpitFeedback
+        from .runtime.cockpit_attempts import attempt_out, attempts, burndown, mark_attempt
         from .runtime.cockpit_feedback import feedback_out, feedback_summary, import_feedback, sample_feedback
 
         with session_scope() as session:
             try:
+                if a.fcmd == "rounds":
+                    bd = burndown(session, a.run)
+                    if a.json:
+                        print(json.dumps(bd, indent=2, default=str))
+                    else:
+                        print(f"run {a.run}: {len(bd['rounds'])} round(s), {bd['remaining']} instance(s) still rejected, {bd['resolved_total']} resolved, converged={bd['converged']}")
+                        for r in bd["rounds"]:
+                            res = r["result"]
+                            print(f"  round {r['sequence']} [{r['scope']}] {r['status']}: {r['instances']} instances, {r['rows']} rows" + (f"; rejected {res.get('rejected', 0)}, accepted {res.get('accepted', 0)}, not in log {res.get('not_in_log', 0)}, resolved {res.get('resolved', 0)}" if res else "") + (f"; uploaded by {r['uploaded_by']} ({r['upload_note']})" if r["uploaded_at"] else "") + (f"; migrated by {r['migrated_by']}" if r["migrated_at"] else ""))
+                        for inst in bd["still_rejected"][:20]:
+                            print(f"  still rejected: {inst['instance']} rounds {[h['round'] for h in inst['history']]}; last message: {inst['messages'][-1]['message'] if inst['messages'] else '-'}")
+                    return 0
+                if a.fcmd == "mark":
+                    row = next((x for x in attempts(session, a.run) if x.sequence == a.round), None)
+                    if row is None:
+                        print(f"round {a.round} not found", file=sys.stderr)
+                        return 2
+                    out = attempt_out(mark_attempt(session, row, a.status, "cli", a.note))
+                    session.commit()
+                    print(f"round {out['sequence']} is now {out['status']}")
+                    return 0
                 if a.fcmd == "sample":
                     xml = sample_feedback(session, a.run)
                     if a.out:
@@ -259,7 +290,7 @@ def main(argv=None):
                 if a.fcmd == "import":
                     with open(a.file, encoding="utf-8") as fh:
                         content = fh.read()
-                    summ = import_feedback(session, a.run, content, a.file.rsplit("/", 1)[-1], "cli", replace=not a.append)
+                    summ = import_feedback(session, a.run, content, a.file.rsplit("/", 1)[-1], "cli", replace=not a.append, attempt_sequence=a.round)
                     session.commit()
                 else:
                     summ = feedback_summary(session, a.run)
@@ -270,7 +301,7 @@ def main(argv=None):
                 rows = session.execute(select(CockpitFeedback).where(CockpitFeedback.run_id == a.run)).scalars().all()
                 print(json.dumps({"summary": summ, "messages": [feedback_out(f) for f in rows]}, indent=2, default=str))
             else:
-                print(f"run {a.run}: {summ['messages']} messages ({summ['errors']} errors, {summ['warnings']} warnings), {summ['matched']} matched, {summ['unmatched']} unmatched; rejected instances {summ['rejected_instances']} of {summ['instances_in_log']} in the log (pass rate {summ['pass_rate']})")
+                print(f"run {a.run} round {summ['round']}: {summ['messages']} messages ({summ['errors']} errors, {summ['warnings']} warnings), {summ['matched']} matched, {summ['unmatched']} unmatched; rejected instances {summ['rejected_instances']} of {summ['instances_in_log']} in the log (pass rate {summ['pass_rate']}); still rejected over all rounds: {summ['still_rejected']}, resolved {summ['resolved_total']}, converged={summ['converged']}")
                 for ot, o in summ["objects"].items():
                     print(f"  {ot}: {o['instances']} instances, {o['with_messages']} in log, {o['rejected']} rejected, {o['errors']} E / {o['warnings']} W; categories {o['categories'] or '-'}")
                 for reason, n in summ["unmatched_reasons"].items():

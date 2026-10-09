@@ -5,6 +5,7 @@ from .core import (  # noqa: F401
     AuditEvent,
     BusinessObjectInstance,
     CockpitAlias,
+    CockpitAttempt,
     CockpitFeedback,
     CockpitTemplate,
     DeltaEvent,

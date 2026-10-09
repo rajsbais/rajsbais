@@ -153,13 +153,14 @@ def export_cockpit_files(session: Session, run_id: str, out_dir: str | None = No
     # route exactly as the LOAD stage does
     per_object: dict[str, dict[str, list[dict]]] = defaultdict(lambda: defaultdict(list))
     instances: dict[str, list[dict[str, list[dict]]]] = defaultdict(list)  # per object: one {table: rows} per business object instance
+    order_keys: dict[str, list[str]] = defaultdict(list)  # per object: the instance keys exported, in order
     statuses: dict[str, dict[str, int]] = defaultdict(lambda: defaultdict(int))
     labels: dict[str, set[str]] = defaultdict(set)
     only: set[tuple[str, str]] | None = None
     if scope == "rejected":
-        from .cockpit_feedback import rejected_instances
+        from .cockpit_attempts import still_rejected
 
-        only = rejected_instances(session, run_id)
+        only = still_rejected(session, run_id)
     elif scope != "all":
         raise ValueError("scope must be 'all' or 'rejected'")
     for g in order:
@@ -181,6 +182,7 @@ def export_cockpit_files(session: Session, run_id: str, out_dir: str | None = No
                 statuses[g[0]][by_key[(e.table, e.record_key)].load_status] += 1
         if inst:
             instances[g[0]].append(dict(inst))
+            order_keys[g[0]].append(g[1])
     base = os.path.join(out_dir or os.path.join(config.settings.evidence_dir, "cockpit"), run_id + ("-retry" if scope == "rejected" else ""))
     if os.path.isdir(base):
         shutil.rmtree(base)
@@ -233,8 +235,13 @@ def export_cockpit_files(session: Session, run_id: str, out_dir: str | None = No
             zf.write(os.path.join(base, rel), rel)
         zf.write(os.path.join(base, "manifest.json"), "manifest.json")
     summary = {"exported": True, "scope": scope, "instances": sum(len(v) for v in instances.values()), "templates": sum(1 for o in objects.values() if "template" in o), "release": tgt.release if tgt else "", "dir": base, "zip": zip_path, "manifest_sha256": _sha(manifest_bytes), "generated_at": manifest["generated_at"], "objects": {ot: {k: (v if k != "template" else {kk: vv for kk, vv in v.items() if kk != "sheets"}) for k, v in o.items() if k not in ("rows_by_table",)} for ot, o in objects.items()}, "files": len(files) + 1, "rows": manifest["rows"], "formats": list(formats)}
+    from .cockpit_attempts import create_attempt
+
+    exported_keys = [(ot, okey) for ot in order_keys for okey in order_keys[ot]]
+    attempt = create_attempt(session, run.id, scope, exported_keys, summary, actor)
+    summary["round"] = attempt.sequence
     run.report = {**(run.report or {}), ("cockpit_export" if scope == "all" else "cockpit_retry_export"): summary}
-    record_event(session, actor, "COCKPIT_EXPORTED", "RUN", run.id, {"scope": scope, "objects": len(objects), "rows": summary["rows"], "files": summary["files"], "manifest_sha256": summary["manifest_sha256"]})
+    record_event(session, actor, "COCKPIT_EXPORTED", "RUN", run.id, {"scope": scope, "round": attempt.sequence, "objects": len(objects), "rows": summary["rows"], "files": summary["files"], "manifest_sha256": summary["manifest_sha256"]})
     session.flush()
     return summary
 

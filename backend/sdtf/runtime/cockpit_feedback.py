@@ -229,11 +229,21 @@ def _object_for(name: str, run: MigrationRun, session: Session, templates: dict,
     return None
 
 
-def import_feedback(session: Session, run_id: str, content: str, filename: str, actor: str, replace: bool = True) -> dict:
+def import_feedback(session: Session, run_id: str, content: str, filename: str, actor: str, replace: bool = True, attempt_sequence: int | None = None) -> dict:
+    """`attempt_sequence`: the round the log answers (default: the latest round not yet simulated, else the latest
+    round). `replace` replaces the feedback of that round only."""
+    from .cockpit_attempts import attempts, current_attempt, record_outcomes
+
     run = session.get(MigrationRun, run_id)
     if run is None:
         raise ValueError(f"run {run_id} not found")
     rows, layout = parse_feedback(content, filename)
+    if attempt_sequence is not None:
+        attempt = next((a for a in attempts(session, run_id) if a.sequence == attempt_sequence), None)
+        if attempt is None:
+            raise ValueError(f"round {attempt_sequence} does not exist for this run")
+    else:
+        attempt = current_attempt(session, run_id)
     instances = _instances(session, run)
     templates = templates_for(session, run.project_id)
     registry = project_registry(session, run.project_id)
@@ -246,15 +256,16 @@ def import_feedback(session: Session, run_id: str, content: str, filename: str, 
                 idx.setdefault(v, okey)
         index[ot] = idx
     if replace:
-        for f in session.execute(select(CockpitFeedback).where(CockpitFeedback.run_id == run_id)).scalars().all():
+        for f in session.execute(select(CockpitFeedback).where(CockpitFeedback.run_id == run_id, CockpitFeedback.attempt_id == (attempt.id if attempt else ""))).scalars().all():
             session.delete(f)
-        for ex in session.execute(select(TransformationException).where(TransformationException.run_id == run_id, TransformationException.stage == "COCKPIT")).scalars().all():
+        for ex in session.execute(select(TransformationException).where(TransformationException.run_id == run_id, TransformationException.stage == "COCKPIT", TransformationException.rule_id.like(f"cockpit:%:r{attempt.sequence if attempt else 0}"))).scalars().all():
             session.delete(ex)
         session.flush()
     backend = get_backend(session=session)
     created: list[CockpitFeedback] = []
     exceptions: list[TransformationException] = []
     errored: dict[str, set[str]] = defaultdict(set)
+    in_log: set[tuple[str, str]] = set()
     unmatched_reasons: dict[str, int] = defaultdict(int)
     for r in rows:
         ot = _object_for(r["object"], run, session, templates, registry)
@@ -286,37 +297,59 @@ def import_feedback(session: Session, run_id: str, content: str, filename: str, 
         if okey is None:
             unmatched_reasons[reason] += 1
         cat = classify(r["message"]) if r["severity"] in ("E", "W") else ""
-        fb = CockpitFeedback(run_id=run_id, object_type=ot or "", migration_object=r["object"], instance_key=r["key"], matched_key=okey or "", matched=okey is not None, severity=r["severity"], message=r["message"][:1000], message_class=r["msg_class"][:40], message_number=r["msg_number"][:10], sheet=r["sheet"][:120], field=r["field"][:60], category=cat, reason=reason[:300], source_file=filename[:200], imported_by=actor)
+        fb = CockpitFeedback(run_id=run_id, object_type=ot or "", migration_object=r["object"], instance_key=r["key"], matched_key=okey or "", matched=okey is not None, severity=r["severity"], message=r["message"][:1000], message_class=r["msg_class"][:40], message_number=r["msg_number"][:10], sheet=r["sheet"][:120], field=r["field"][:60], category=cat, reason=reason[:300], source_file=filename[:200], imported_by=actor, attempt_id=attempt.id if attempt else "", attempt_sequence=attempt.sequence if attempt else 0)
         session.add(fb)
         created.append(fb)
         if okey is not None and r["severity"] in ("E", "W"):
             table = next((t for t in TABLES if _norm(t) == _norm(r["sheet"])), "") or (BUSINESS_OBJECTS[ot].header_table if ot in BUSINESS_OBJECTS else "")
-            exceptions.append(TransformationException(run_id=run_id, stage="COCKPIT", table_name=table, record_key=okey, rule_id=f"cockpit:{cat}", severity="ERROR" if r["severity"] == "E" else "WARN", message=f"{r['message']}" + (f" [{r['sheet']}{'.' + r['field'] if r['field'] else ''}]" if r["sheet"] or r["field"] else "")))
+            exceptions.append(TransformationException(run_id=run_id, stage="COCKPIT", table_name=table, record_key=okey, rule_id=f"cockpit:{cat}:r{attempt.sequence if attempt else 0}", severity="ERROR" if r["severity"] == "E" else "WARN", message=f"{r['message']}" + (f" [{r['sheet']}{'.' + r['field'] if r['field'] else ''}]" if r["sheet"] or r["field"] else "") + (f" (round {attempt.sequence})" if attempt else "")))
             if r["severity"] == "E":
                 errored[ot].add(okey)
-    # staged statuses: instances with an error
+        if okey is not None:
+            in_log.add((ot, okey))
+    # staged statuses: instances with an error are marked; instances in the log without an error are released
+    rejected_set = {(ot, okey) for ot, keys in errored.items() for okey in keys}
     changed = []
+    released = 0
     for ot, keys in errored.items():
         for okey in keys:
             for rec in instances[ot][okey]["records"]:
                 if rec.load_status != "COCKPIT_ERROR":
                     rec.load_status = "COCKPIT_ERROR"
-                    rec.lineage = (rec.lineage or []) + [{"rule": "cockpit", "field": "*", "from": "simulation", "to": "COCKPIT_ERROR"}]
+                    rec.lineage = (rec.lineage or []) + [{"rule": "cockpit", "field": "*", "from": "simulation", "to": "COCKPIT_ERROR", "round": attempt.sequence if attempt else 0}]
                     changed.append(rec)
+    for ot, okey in in_log - rejected_set:
+        for rec in instances.get(ot, {}).get(okey, {}).get("records", []):
+            if rec.load_status == "COCKPIT_ERROR":
+                rec.load_status = "LOADED"
+                rec.lineage = (rec.lineage or []) + [{"rule": "cockpit", "field": "*", "from": "COCKPIT_ERROR", "to": "LOADED", "round": attempt.sequence if attempt else 0}]
+                changed.append(rec)
+                released += 1
     if changed:
         backend.update_records(run_id, changed)
     session.add_all(exceptions)
     session.flush()
-    summary = feedback_summary(session, run_id, instances=instances, layout=layout, unmatched_reasons=dict(unmatched_reasons))
+    result = record_outcomes(session, attempt, rejected_set, in_log, actor, filename) if attempt is not None else {}
+    summary = feedback_summary(session, run_id, instances=instances, layout=layout, unmatched_reasons=dict(unmatched_reasons), attempt=attempt)
     run.report = {**(run.report or {}), "cockpit_feedback": summary}
-    record_event(session, actor, "COCKPIT_FEEDBACK_IMPORTED", "RUN", run_id, {"file": filename, "messages": len(created), "errors": summary["errors"], "unmatched": summary["unmatched"], "rows_marked": len(changed)})
+    record_event(session, actor, "COCKPIT_FEEDBACK_IMPORTED", "RUN", run_id, {"file": filename, "round": attempt.sequence if attempt else 0, "messages": len(created), "errors": summary["errors"], "unmatched": summary["unmatched"], "rows_marked": len(changed) - released, "rows_released": released, **({"resolved": result.get("resolved", 0)} if result else {})})
     session.flush()
     return summary
 
 
-def feedback_summary(session: Session, run_id: str, instances: dict | None = None, layout: dict | None = None, unmatched_reasons: dict | None = None) -> dict:
+def feedback_summary(session: Session, run_id: str, instances: dict | None = None, layout: dict | None = None, unmatched_reasons: dict | None = None, attempt=None) -> dict:
+    """Summary of the feedback of one round (default: the latest round that has feedback), plus the run-level
+    burn-down across rounds."""
+    from .cockpit_attempts import attempts, burndown, still_rejected
+
     run = session.get(MigrationRun, run_id)
-    rows = session.execute(select(CockpitFeedback).where(CockpitFeedback.run_id == run_id)).scalars().all()
+    if attempt is None:
+        with_fb = [a for a in attempts(session, run_id) if a.status in ("SIMULATED", "MIGRATED")]
+        attempt = with_fb[-1] if with_fb else None
+    stmt = select(CockpitFeedback).where(CockpitFeedback.run_id == run_id)
+    if attempt is not None:
+        stmt = stmt.where(CockpitFeedback.attempt_id == attempt.id)
+    rows = session.execute(stmt).scalars().all()
     if instances is None:
         instances = _instances(session, run)
     per: dict[str, dict] = {}
@@ -347,16 +380,19 @@ def feedback_summary(session: Session, run_id: str, instances: dict | None = Non
     reasons = unmatched_reasons if unmatched_reasons is not None else dict(sorted(defaultdict(int, {f.reason: sum(1 for g in unmatched if g.reason == f.reason) for f in unmatched}).items()))
     total_rejected = sum(o["rejected"] for o in objects.values())
     total_with = sum(o["with_messages"] for o in objects.values())
-    return {"imported": bool(rows), "messages": len(rows), "errors": sum(1 for f in rows if f.severity == "E"), "warnings": sum(1 for f in rows if f.severity == "W"), "matched": len(rows) - len(unmatched), "unmatched": len(unmatched), "unmatched_reasons": reasons, "rejected_instances": total_rejected, "instances_in_log": total_with, "pass_rate": round((total_with - total_rejected) / total_with, 3) if total_with else None, "categories": {k: sum(o["categories"].get(k, 0) for o in objects.values()) for k in sorted({c for o in objects.values() for c in o["categories"]})}, "objects": objects, "layout": layout or (run.report or {}).get("cockpit_feedback", {}).get("layout", {}), "source_files": sorted({f.source_file for f in rows}), "imported_at": datetime.now(timezone.utc).isoformat() if rows else None}
+    bd = burndown(session, run_id)
+    return {"imported": bool(rows), "round": attempt.sequence if attempt else 0, "round_scope": attempt.scope if attempt else "", "messages": len(rows), "errors": sum(1 for f in rows if f.severity == "E"), "warnings": sum(1 for f in rows if f.severity == "W"), "matched": len(rows) - len(unmatched), "unmatched": len(unmatched), "unmatched_reasons": reasons, "rejected_instances": total_rejected, "instances_in_log": total_with, "pass_rate": round((total_with - total_rejected) / total_with, 3) if total_with else None, "categories": {k: sum(o["categories"].get(k, 0) for o in objects.values()) for k in sorted({c for o in objects.values() for c in o["categories"]})}, "objects": objects, "layout": layout or (run.report or {}).get("cockpit_feedback", {}).get("layout", {}), "source_files": sorted({f.source_file for f in rows}), "imported_at": datetime.now(timezone.utc).isoformat() if rows else None, "still_rejected": len(still_rejected(session, run_id)), "rounds": len(bd["rounds"]), "resolved_total": bd["resolved_total"], "converged": bd["converged"]}
 
 
 def rejected_instances(session: Session, run_id: str) -> set[tuple[str, str]]:
-    """(object_type, instance_key) of every instance the simulation rejected."""
-    return {(f.object_type, f.matched_key) for f in session.execute(select(CockpitFeedback).where(CockpitFeedback.run_id == run_id, CockpitFeedback.matched.is_(True), CockpitFeedback.severity == "E")).scalars().all()}
+    """(object_type, instance_key) of every instance whose latest simulation outcome is rejected."""
+    from .cockpit_attempts import still_rejected
+
+    return still_rejected(session, run_id)
 
 
 def feedback_out(f: CockpitFeedback) -> dict:
-    return {"id": f.id, "object_type": f.object_type, "migration_object": f.migration_object, "instance_key": f.instance_key, "matched_key": f.matched_key, "matched": f.matched, "severity": f.severity, "message": f.message, "message_class": f.message_class, "message_number": f.message_number, "sheet": f.sheet, "field": f.field, "category": f.category, "reason": f.reason, "source_file": f.source_file, "imported_by": f.imported_by, "created_at": f.created_at}
+    return {"id": f.id, "round": f.attempt_sequence, "object_type": f.object_type, "migration_object": f.migration_object, "instance_key": f.instance_key, "matched_key": f.matched_key, "matched": f.matched, "severity": f.severity, "message": f.message, "message_class": f.message_class, "message_number": f.message_number, "sheet": f.sheet, "field": f.field, "category": f.category, "reason": f.reason, "source_file": f.source_file, "imported_by": f.imported_by, "created_at": f.created_at}
 
 
 def clear_feedback(session: Session, run_id: str, actor: str) -> int:
@@ -375,21 +411,36 @@ def clear_feedback(session: Session, run_id: str, actor: str) -> int:
         changed.append(rec)
     if changed:
         backend.update_records(run_id, changed)
+    from .cockpit_attempts import reset_attempts
+
+    rounds = reset_attempts(session, run_id)
     if run is not None:
         run.report = {k: v for k, v in (run.report or {}).items() if k != "cockpit_feedback"}
     session.flush()
-    record_event(session, actor, "COCKPIT_FEEDBACK_CLEARED", "RUN", run_id, {"messages": n, "rows_reset": len(changed)})
+    record_event(session, actor, "COCKPIT_FEEDBACK_CLEARED", "RUN", run_id, {"messages": n, "rows_reset": len(changed), "rounds_reset": rounds})
     return n
 
 
 # ------------------------------------------------------------------------------------------------ sample
-def sample_feedback(session: Session, run_id: str, errors_per_object: int = 1) -> str:
+def sample_feedback(session: Session, run_id: str, errors_per_object: int | None = None) -> str:
     """An ILLUSTRATIVE message log for the run's exported instances (CSV as the app's spreadsheet export is laid
-    out): success messages for most instances, one or two errors and a warning per object. Not an SAP file."""
+    out): success messages for most instances, one error and a warning per object. For a retry round (current
+    round of scope `rejected`) the log covers that round's instances only and accepts all but one, so the rounds
+    converge. Not an SAP file."""
+    from .cockpit_attempts import current_attempt
+
     run = session.get(MigrationRun, run_id)
     if run is None:
         raise ValueError(f"run {run_id} not found")
     instances = _instances(session, run)
+    cur = current_attempt(session, run_id)
+    retry = cur is not None and cur.scope == "rejected" and cur.status in ("EXPORTED", "UPLOADED")
+    if retry:
+        keep = {(ot, k) for ot, k in cur.instance_keys or []}
+        instances = {ot: {k: v for k, v in insts.items() if (ot, k) in keep} for ot, insts in instances.items()}
+        instances = {ot: insts for ot, insts in instances.items() if insts}
+    if errors_per_object is None:
+        errors_per_object = 0 if retry else 1
     buf = io.StringIO()
     w = csv.writer(buf, delimiter=";", lineterminator="\r\n")
     w.writerow(["Migration Object", "Instance", "Message Type", "Message Class", "Message Number", "Message", "Sheet", "Field"])
@@ -402,7 +453,7 @@ def sample_feedback(session: Session, run_id: str, errors_per_object: int = 1) -
         for i, okey in enumerate(keys):
             inst = insts[okey]
             key_txt = "/".join(inst["keys"].values()) or okey.replace("|", "/")
-            if i < errors_per_object:
+            if i < errors_per_object or (retry and n == 0 and i == 0):  # a retry round keeps one instance rejected
                 cat = cats[(n + i) % len(cats)]
                 kf = list(inst["keys"]) or ["KEY"]
                 w.writerow([name, key_txt, "E", "SDTF_SIM", "001", samples[cat].format(v=list(inst["keys"].values())[0] if inst["keys"] else okey, f=kf[-1], k=key_txt), bo.header_table if bo else "", kf[-1]])

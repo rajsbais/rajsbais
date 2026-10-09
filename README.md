@@ -70,6 +70,7 @@ Or: `docker compose -f deploy/docker-compose.yml up --build` (UI :8080, API :800
 | [11](docs/11-vertical-slice-acceptance.md) | vertical slice acceptance criteria and verified results |
 | [capability review](docs/capability-review.md) | built / pending / cannot be built here, per brief section |
 | [test report](docs/test-report.md) | test campaign results, scenario matrix, scale timings, defects fixed |
+| [connect real systems](docs/connect-real-systems.md) | step-by-step first contact with a real ECC (RFC, reads only) and S/4HANA (released APIs), what each step touches, what to send back |
 | [UI walkthrough](docs/ui-walkthrough.md) | screenshots of the cockpit export, templates, aliases and migration object lookup on the running app, with the commands to run it |
 | [cockpit template validation](docs/cockpit-template-validation.md) | what the template-driven cockpit export is verified against (SAP's documented layout, SAP's XML file splitter) and what still needs a downloaded template |
 | [ADRs](docs/adr) | eleven architecture decision records |

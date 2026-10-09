@@ -97,6 +97,19 @@ Alembic (`backend/alembic.ini`, `backend/sdtf/migrations`). `alembic upgrade hea
   (`<run>-retry/`). `DELETE /runs/{id}/cockpit-feedback` clears the feedback and resets the statuses. An
   illustrative log for a run (`GET /runs/{id}/cockpit-feedback/sample`, `sdtf cockpit-feedback sample`) exercises
   the flow; it is not an SAP file, and the app's real log format has not been seen here.
+* **Package rounds (re-upload tracking)**: every cockpit export is a *round* (`GET /runs/{id}/cockpit-rounds`,
+  `sdtf cockpit-feedback rounds --run <id>`, the rounds table on the Runs page): round 1 is the full package,
+  later rounds are retry packages of the instances still rejected. A round is `EXPORTED`, then `UPLOADED` once
+  someone records the upload in the app (`POST /runs/{id}/cockpit-rounds/{n}/mark` with a note such as the app
+  project and transfer id, `sdtf cockpit-feedback mark --round n --status UPLOADED --note ...`), `SIMULATED` once
+  the simulation log is imported against it (the default target of an import is the latest round not yet
+  simulated; `round` picks another), and `MIGRATED` once the app's migration step is recorded; a package
+  exported before the previous one was simulated supersedes it. The import records an outcome per instance of
+  the round (accepted, rejected, not in log), releases instances that were rejected earlier and are accepted now
+  (staging back to `LOADED`, lineage kept), and the burn-down shows per round how many instances were retried,
+  accepted, rejected and resolved, the instances still rejected with their round history and last messages, and
+  whether the rounds converged. `scope=rejected` exports always take the instances whose latest outcome is
+  rejected. Clearing the feedback forgets the outcomes but keeps the rounds and their upload marks.
 * **Template field names (aliases)**: a template field resolves by its own DDIC name, then by a *project alias*,
   then by the global catalogue of BAPI-style names (`catalog/fields.py`, from the public BAPI structures:
   `COMP_CODE`, `PSTNG_DATE`, `AMT_DOCCUR`, `MOVE_TYPE`, ...), then by its Field List description matching the

@@ -90,6 +90,10 @@ by the target, derived prices and statuses.
   feedback** closes the loop: its message log is imported, matched to the exported instances, reflected in staging
   (`COCKPIT_ERROR`) and in COCKPIT-stage exceptions, classified, and a retry package of the rejected instances
   is exported; the log's layout is recognised tolerantly and unmatched messages are reported, never dropped.
+  Every package is a *round* with the manual upload and migration steps recorded by hand and the simulation
+  outcome per instance attached by the import, so the retry loop is tracked to convergence: released instances
+  go back to `LOADED`, still-rejected ones carry their round history, and the next retry package takes exactly
+  them.
 * Pricing, statuses and open items are *modelled*, not SAP's: a real target prices from condition records and
   derives statuses from subsequent documents. The simulator's business activity is restricted to changes the
   released APIs can convey (quantities, master attributes, new documents, item deletions).

@@ -7,7 +7,7 @@ import pytest
 from sqlalchemy import select
 
 from sdtf.cli import main as cli_main
-from sdtf.models import AuditEvent, CockpitFeedback, MigrationRun, TransformationException
+from sdtf.models import AuditEvent, CockpitAttempt, MigrationRun, TransformationException
 from sdtf.runtime.cockpit_export import export_cockpit_files
 from sdtf.runtime.cockpit_feedback import (
     classify,
@@ -21,6 +21,14 @@ from sdtf.runtime.cockpit_feedback import (
 from sdtf.staging import get_backend
 
 API = "/api/v1"
+
+
+def _fresh(session, run_id):
+    """No feedback and no rounds left by other tests: the sample log then covers the full package."""
+    clear_feedback(session, run_id, "test")
+    for a in session.execute(select(CockpitAttempt).where(CockpitAttempt.run_id == run_id)).scalars().all():
+        session.delete(a)
+    session.flush()
 
 
 def test_parse_recognises_delimited_json_and_spreadsheetml():
@@ -43,6 +51,7 @@ def test_parse_recognises_delimited_json_and_spreadsheetml():
 
 def test_import_matches_marks_and_classifies(session, slice_result, tmp_path):
     run = session.get(MigrationRun, slice_result["run_id"])
+    _fresh(session, run.id)
     out = export_cockpit_files(session, run.id, out_dir=str(tmp_path), use_templates=False)
     assert out["instances"] > 0
     backend = get_backend(session=session)
@@ -80,7 +89,8 @@ def test_import_matches_marks_and_classifies(session, slice_result, tmp_path):
     assert items and all(r.load_status == "COCKPIT_ERROR" for r in items)
     # exceptions in the COCKPIT stage, errors and warnings, with sheet/field
     ex = session.execute(select(TransformationException).where(TransformationException.run_id == run.id, TransformationException.stage == "COCKPIT")).scalars().all()
-    assert sorted((e.severity, e.table_name, e.rule_id) for e in ex) == [("ERROR", "SKB1", "cockpit:configuration_missing"), ("ERROR", "VBRK", "cockpit:mandatory_missing"), ("WARN", "SKB1", "cockpit:other")]
+    assert sorted((e.severity, e.table_name, e.rule_id.rsplit(":", 1)[0]) for e in ex) == [("ERROR", "SKB1", "cockpit:configuration_missing"), ("ERROR", "VBRK", "cockpit:mandatory_missing"), ("WARN", "SKB1", "cockpit:other")]
+    assert all(e.rule_id.rsplit(":", 1)[1].startswith("r") for e in ex)  # the round the message answers
     assert any("[SKB1.BUKRS]" in e.message for e in ex)
     assert rejected_instances(session, run.id) == {("FI.GLAccount", f"{gl['BUKRS']}|{gl['SAKNR']}"), ("SD.BillingDocument", bill["VBELN"])}
     assert session.get(MigrationRun, run.id).report["cockpit_feedback"]["rejected_instances"] == 2
@@ -92,13 +102,15 @@ def test_import_matches_marks_and_classifies(session, slice_result, tmp_path):
     assert manifest["scope"] == "rejected" and session.get(MigrationRun, run.id).report["cockpit_retry_export"]["instances"] == 2
     with pytest.raises(ValueError, match="scope"):
         export_cockpit_files(session, run.id, out_dir=str(tmp_path), scope="some")
-    # replace vs append; clear resets statuses and exceptions
-    import_feedback(session, run.id, "Type,Message,Key\nS,ok,nothing\n", "second.csv", "operator", replace=False)
-    assert feedback_summary(session, run.id)["messages"] == 7
+    # a further import attaches to the retry round just exported (the latest round not yet simulated); append vs replace per round
+    s_app = import_feedback(session, run.id, "Type,Message,Key\nS,ok,nothing\n", "second.csv", "operator", replace=False)
+    assert s_app["round"] == retry["round"] and s_app["messages"] == 1 and feedback_summary(session, run.id)["round"] == retry["round"]
+    import_feedback(session, run.id, "Type,Message,Key\nS,ok,nothing\n", "second-b.csv", "operator", replace=False)
+    assert feedback_summary(session, run.id)["messages"] == 2
     summary2 = import_feedback(session, run.id, "Type,Message,Key\nS,ok,nothing\n", "third.csv", "operator")
-    assert summary2["messages"] == 1 and summary2["rejected_instances"] == 0
+    assert summary2["messages"] == 1 and summary2["rejected_instances"] == 0 and summary2["still_rejected"] == 2  # round 1's rejections still stand
     assert {r.record_key: r for r in backend.iter_records(run.id, table="VBRK")}[bill_rows[0].record_key].load_status == "COCKPIT_ERROR"  # a replace does not undo marks: clear does
-    assert clear_feedback(session, run.id, "operator") == 1
+    assert clear_feedback(session, run.id, "operator") == 7  # every round's feedback rows
     assert all(r.load_status == "LOADED" for r in backend.iter_records(run.id, table="VBRK")) and "cockpit_feedback" not in session.get(MigrationRun, run.id).report
     assert session.execute(select(TransformationException).where(TransformationException.run_id == run.id, TransformationException.stage == "COCKPIT")).scalars().first() is None
     actions = [e.action for e in session.execute(select(AuditEvent).where(AuditEvent.subject_id == run.id)).scalars().all()]
@@ -107,6 +119,7 @@ def test_import_matches_marks_and_classifies(session, slice_result, tmp_path):
 
 def test_key_columns_and_key_search(session, slice_result, tmp_path):
     run = session.get(MigrationRun, slice_result["run_id"])
+    _fresh(session, run.id)
     backend = get_backend(session=session)
     gl = next(iter(backend.iter_records(run.id, table="SKB1"))).target_payload
     log = f"Message Type\tMessage\tBUKRS\tSAKNR\nE\tField MITKZ is mandatory\t{gl['BUKRS']}\t{gl['SAKNR']}\n"
@@ -120,6 +133,7 @@ def test_key_columns_and_key_search(session, slice_result, tmp_path):
 
 def test_sample_feedback_round_trips(session, slice_result):
     run = session.get(MigrationRun, slice_result["run_id"])
+    _fresh(session, run.id)
     text = sample_feedback(session, run.id)
     assert "ILLUSTRATIVE" in text and "Instance simulated successfully" in text
     s = import_feedback(session, run.id, text, "sample.csv", "operator")
@@ -130,8 +144,7 @@ def test_sample_feedback_round_trips(session, slice_result):
 
 def test_cockpit_feedback_api(client, tokens, session, slice_result):
     run = session.get(MigrationRun, slice_result["run_id"])
-    for f in session.execute(select(CockpitFeedback).where(CockpitFeedback.run_id == run.id)).scalars().all():
-        session.delete(f)
+    _fresh(session, run.id)
     session.commit()
     r = client.get(f"{API}/runs/{run.id}/cockpit-feedback", headers=tokens["viewer"])
     assert r.status_code == 200 and r.json()["summary"] == {"imported": False} and r.json()["messages"] == []
@@ -163,6 +176,7 @@ def test_cockpit_feedback_api(client, tokens, session, slice_result):
 
 def test_cockpit_feedback_cli(slice_result, session, tmp_path, capsys):
     run_id = slice_result["run_id"]
+    _fresh(session, run_id)
     session.commit()
     f = tmp_path / "sim.csv"
     assert cli_main(["cockpit-feedback", "sample", "--run", run_id, "--out", str(f)]) == 0 and f.exists()
