@@ -34,6 +34,19 @@ def main(argv=None):
     c.add_argument("--out", default=None, help="output directory (default: <evidence dir>/cockpit)")
     c.add_argument("--format", choices=["csv", "xml", "both"], default="both")
     c.add_argument("--json", action="store_true")
+    t = sub.add_parser("cockpit-template", help="migration object templates: write an illustrative sample, register a template for a project, list a project's templates")
+    tsub = t.add_subparsers(dest="tcmd", required=True)
+    ts = tsub.add_parser("sample", help="write an illustrative template (not an SAP file) for a business object")
+    ts.add_argument("--object", required=True)
+    ts.add_argument("--out", default=None, help="file to write (default: stdout)")
+    tr = tsub.add_parser("register", help="register a template file for a project and business object")
+    tr.add_argument("--project", required=True)
+    tr.add_argument("--object", required=True)
+    tr.add_argument("--file", required=True)
+    tr.add_argument("--mapping", default=None, help="JSON file with explicit overrides")
+    tr.add_argument("--json", action="store_true")
+    tl = tsub.add_parser("list", help="list a project's templates with their mapping reports")
+    tl.add_argument("--project", required=True)
     a = ap.parse_args(argv)
     if a.cmd == "fake-idp":
         from .security.fake_idp import main as fake_idp_main
@@ -57,6 +70,49 @@ def main(argv=None):
             else:
                 print(run.report["markdown"])
                 print(f"project_id={out['project'].id} manifest_id={out['manifest'].id} run_id={run.id}")
+        return 0
+    if a.cmd == "cockpit-template":
+        from .runtime.cockpit_templates import (
+            register_template,
+            sample_template,
+            template_summary,
+            templates_for,
+        )
+
+        if a.tcmd == "sample":
+            try:
+                xml = sample_template(a.object)
+            except ValueError as e:
+                print(str(e), file=sys.stderr)
+                return 2
+            if a.out:
+                with open(a.out, "w", encoding="utf-8") as fh:
+                    fh.write(xml)
+                print(f"illustrative template for {a.object} written to {a.out}")
+            else:
+                print(xml)
+            return 0
+        with session_scope() as session:
+            if a.tcmd == "register":
+                with open(a.file, encoding="utf-8") as fh:
+                    content = fh.read()
+                mapping = json.load(open(a.mapping, encoding="utf-8")) if a.mapping else None
+                try:
+                    row = register_template(session, a.project, a.object, content, a.file.rsplit("/", 1)[-1], "cli", mapping)
+                except ValueError as e:
+                    print(str(e), file=sys.stderr)
+                    return 2
+                summ = template_summary(row)
+                session.commit()
+                if a.json:
+                    print(json.dumps(summ, indent=2, default=str))
+                else:
+                    rep = summ["report"]
+                    print(f"template {summ['id']} for {a.object}: {rep['mapped']}/{rep['total']} fields mapped; mandatory unmapped: {rep['mandatory_missing'] or 'none'}")
+                return 0
+            for ot, row in sorted(templates_for(session, a.project).items()):
+                rep = template_summary(row)["report"]
+                print(f"{ot}: {row.filename} ({row.sha256[:12]}) {rep['mapped']}/{rep['total']} mapped; mandatory unmapped: {rep['mandatory_missing'] or 'none'}")
         return 0
     if a.cmd == "cockpit-export":
         from .runtime.cockpit_export import export_cockpit_files

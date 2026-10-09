@@ -47,7 +47,8 @@ Legend: P0 next increment · P1 following · P2 later. Sizes are relative (S/M/L
 | P0 | Activate `Z_SDTF_CDC_POLL` on a real release; validate the API bindings against a real target's `$metadata`, OAuth client, journal entry SOAP namespaces | XL (needs SAP systems) |
 | ✅ | Initial load through the same API loaders (deep inserts, journal postings with target numbering and idempotent source reference, cockpit path for histories and cockpit objects; `load_mode=direct` kept) | M |
 | ✅ | Migration cockpit staging-file export (CSV per staging table, SpreadsheetML workbook per migration object, manifest with checksums, zip; API, UI and CLI) for real targets, since staging tables cannot be posted over HTTPS | M |
-| P2 | Cockpit export from the target's own migration object templates (download the release's XML template, map columns automatically) | M |
+| ✅ | Cockpit export from the target's own migration object templates: register the release's XML template per project, automatic column mapping with coverage report and overrides, filled template in the package (verified against illustrative samples) | M |
+| P3 | Validate the template parser and mapping against real migration object templates of a target release (layout variants, mandatory markers, data types) and extend the alias catalogue from their Field Lists | S |
 | P0 | Benchmark harness and benchmark report (docs/benchmarks.md) | M |
 | P1 | Cutover execution tracking, incident escalation, resource assignment, mock cutover management | M |
 

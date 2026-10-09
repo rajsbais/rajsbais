@@ -63,7 +63,7 @@ def test_export_matches_the_load_stage_routing(slice_result, session, tmp_path):
     header = [d.text for d in vbrk_rows[0].iter(f"{{{SS}}}Data")]
     assert header == rows[0]
     readme = open(os.path.join(base, "README.md"), encoding="utf-8").read()
-    assert "Migrate Your Data" in readme and "not generated from the target's migration object templates" in readme.lower().replace("**", "") or "Not generated" in readme
+    assert "Migrate Your Data" in readme and "not the target's migration object templates" in readme
     # audit event and run report
     ev = session.execute(select(AuditEvent).where(AuditEvent.subject_id == run.id, AuditEvent.action == "COCKPIT_EXPORTED")).scalars().all()
     assert ev and ev[-1].details["rows"] == out["rows"] and ev[-1].actor == "tester"

@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
@@ -390,6 +390,7 @@ def run_evidence(r: MigrationRun = Depends(get_run), db: Session = Depends(get_d
 
 class CockpitExportRequest(BaseModel):
     formats: list[str] = Field(["csv", "xml"], description="csv: one file per staging table; xml: one SpreadsheetML workbook per migration object")
+    use_templates: bool = Field(True, description="also fill the project's registered migration object templates (<OBJECT>.template.xml)")
 
 
 @router.post("/runs/{run_id}/cockpit-export", tags=["runs"], status_code=201)
@@ -403,7 +404,7 @@ def run_cockpit_export(req: CockpitExportRequest | None = None, r: MigrationRun 
         raise HTTPException(422, "formats must include csv and/or xml")
     if r.status not in ("COMPLETED", "FAILED"):
         raise HTTPException(409, f"run is {r.status}; export after the TRANSFORM stage has finished")
-    return export_cockpit_files(db, r.id, actor=p.username, formats=formats)
+    return export_cockpit_files(db, r.id, actor=p.username, formats=formats, use_templates=req.use_templates if req else True)
 
 
 @router.get("/runs/{run_id}/cockpit-export", tags=["runs"])
@@ -426,6 +427,98 @@ def run_cockpit_export_download(r: MigrationRun = Depends(get_run), p: Principal
     if s is None or not os.path.isfile(s["zip"]):
         raise HTTPException(404, "no cockpit export package on disk for this run; export it first")
     return FileResponse(s["zip"], media_type="application/zip", filename=os.path.basename(s["zip"]))
+
+
+class CockpitTemplateIn(BaseModel):
+    object_type: str
+    filename: str = "template.xml"
+    content: str = Field(..., description="the migration object template as the Migrate Your Data app exports it (SpreadsheetML 2003 XML)")
+    mapping: dict | None = Field(None, description='explicit overrides: {"<sheet>": {"table": "VBRP", "fields": {"FIELD": "VBRP.NETWR" | "=const" | ""}}}')
+
+
+class CockpitMappingIn(BaseModel):
+    mapping: dict
+
+
+@router.get("/cockpit-templates/samples", tags=["runs"])
+def cockpit_template_samples(p: Principal = Depends(require("project:read"))):
+    from ..runtime.cockpit_templates import SAMPLE_OBJECTS
+
+    return {"objects": list(SAMPLE_OBJECTS), "note": "illustrative templates in the layout of the app's XML templates; not SAP files"}
+
+
+@router.get("/cockpit-templates/samples/{object_type}", tags=["runs"])
+def cockpit_template_sample(object_type: str, p: Principal = Depends(require("project:read"))):
+    from ..runtime.cockpit_templates import sample_template
+
+    try:
+        xml = sample_template(object_type)
+    except ValueError as e:
+        raise HTTPException(404, str(e)) from None
+    return Response(xml, media_type="application/xml", headers={"Content-Disposition": f'attachment; filename="{object_type}.sample-template.xml"'})
+
+
+@router.post("/projects/{project_id}/cockpit-templates", tags=["runs"], status_code=201)
+def cockpit_template_register(project_id: str, req: CockpitTemplateIn, db: Session = Depends(get_db), p: Principal = Depends(require("project:write"))):
+    """Register (or replace) the migration object template of one business object for the project; the response
+    carries the parsed structure and the automatic mapping report (coverage, mandatory fields left unmapped)."""
+    from ..runtime.cockpit_templates import register_template, template_summary
+
+    assert_project_access(db, p, project_id)
+    try:
+        row = register_template(db, project_id, req.object_type, req.content, req.filename, p.username, req.mapping)
+    except ValueError as e:
+        raise HTTPException(422, str(e)) from None
+    return template_summary(row)
+
+
+@router.get("/projects/{project_id}/cockpit-templates", tags=["runs"])
+def cockpit_template_list(project_id: str, db: Session = Depends(get_db), p: Principal = Depends(require("project:read"))):
+    from ..runtime.cockpit_templates import template_summary, templates_for
+
+    assert_project_access(db, p, project_id)
+    return [template_summary(t) for _, t in sorted(templates_for(db, project_id).items())]
+
+
+def _template(db: Session, p: Principal, project_id: str, template_id: str):
+    from ..models import CockpitTemplate
+
+    assert_project_access(db, p, project_id)
+    t = db.get(CockpitTemplate, template_id)
+    if t is None or t.project_id != project_id:
+        raise HTTPException(404, "template not found")
+    return t
+
+
+@router.get("/projects/{project_id}/cockpit-templates/{template_id}", tags=["runs"])
+def cockpit_template_get(project_id: str, template_id: str, content: bool = False, db: Session = Depends(get_db), p: Principal = Depends(require("project:read"))):
+    from ..runtime.cockpit_templates import template_summary
+
+    t = _template(db, p, project_id, template_id)
+    out = {**template_summary(t), "structure": t.structure}
+    if content:
+        out["content"] = t.content
+    return out
+
+
+@router.put("/projects/{project_id}/cockpit-templates/{template_id}/mapping", tags=["runs"])
+def cockpit_template_mapping(project_id: str, template_id: str, req: CockpitMappingIn, db: Session = Depends(get_db), p: Principal = Depends(require("project:write"))):
+    from ..runtime.cockpit_templates import template_summary
+
+    t = _template(db, p, project_id, template_id)
+    t.mapping = req.mapping
+    db.flush()
+    record_event(db, p.username, "COCKPIT_TEMPLATE_MAPPED", "PROJECT", project_id, {"object_type": t.object_type, "sheets": sorted(req.mapping)})
+    return template_summary(t)
+
+
+@router.delete("/projects/{project_id}/cockpit-templates/{template_id}", tags=["runs"], status_code=204)
+def cockpit_template_delete(project_id: str, template_id: str, db: Session = Depends(get_db), p: Principal = Depends(require("project:write"))):
+    t = _template(db, p, project_id, template_id)
+    record_event(db, p.username, "COCKPIT_TEMPLATE_DELETED", "PROJECT", project_id, {"object_type": t.object_type})
+    db.delete(t)
+    db.flush()
+    return Response(status_code=204)
 
 
 # -------------------------------------------------------------------------------------------- agents
@@ -496,7 +589,8 @@ CAPABILITIES = [
     {"area": "Columnar staging (Parquet on local / S3 / GCS / Azure via fsspec, key-range sidecar index)", "status": "IMPLEMENTED", "note": "Per run/table/partition files, zstd; object-store path tested with the in-memory filesystem"},
     {"area": "Observability (OpenTelemetry traces, metrics, trace-correlated JSON logs)", "status": "IMPLEMENTED", "note": "OTLP/HTTP export when OTEL_EXPORTER_OTLP_ENDPOINT is set; no-op otherwise"},
     {"area": "Target load", "status": "SIMULATED", "note": "Initial load and delta cycles go through the released S/4HANA APIs (business partner, product, sales/purchase order, delivery, journal entry with target numbering) and the migration cockpit for histories and cockpit objects, on the simulated gateway or an HTTPS target; verified on the simulated gateway only (ADR-0015). load_mode=direct keeps the simulated direct loader"},
-    {"area": "Migration cockpit staging-file export", "status": "IMPLEMENTED", "note": "CSV per staging table and SpreadsheetML workbook per migration object for the rows the initial load routes to the cockpit, with manifest, checksums and zip; not generated from the target's own templates (migration object names are hints to verify)"},
+    {"area": "Migration cockpit staging-file export", "status": "IMPLEMENTED", "note": "CSV per staging table and SpreadsheetML workbook per migration object for the rows the initial load routes to the cockpit, with manifest, checksums and zip; generic workbooks are not the target's templates (migration object names are hints to verify)"},
+    {"area": "Template-driven cockpit export", "status": "IMPLEMENTED", "note": "Registered migration object templates (the app's XML workbooks) are parsed (Field List, technical-name rows), mapped automatically (same names, BAPI-style aliases, parent keys, recorded overrides) with a coverage report, and filled with typed cells; verified against illustrative sample templates only, not against a release's real template"},
     {"area": "Reconciliation (technical/functional/financial)", "status": "IMPLEMENTED", "note": "Runs on simulated data"},
     {"area": "Audit trail & evidence packages", "status": "IMPLEMENTED", "note": "Hash-chained events, evidence index"},
     {"area": "AI agents", "status": "IMPLEMENTED", "note": "12 bounded heuristic agents; LLM reasoner planned"},

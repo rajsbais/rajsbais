@@ -370,3 +370,22 @@ class DeltaEvent(IdMixin, Base):
     api_call: Mapped[str] = mapped_column(String(160), default="")  # e.g. API_SALES_ORDER_SRV POST A_SalesOrder (deep insert)
     message: Mapped[str] = mapped_column(Text, default="")
     __table_args__ = (UniqueConstraint("baseline_run_id", "seq", name="uq_delta_event_seq"), Index("ix_delta_target", "baseline_run_id", "table_name", "target_key"))
+
+
+class CockpitTemplate(IdMixin, Base):
+    """A migration object template of the target (the XML workbook the *Migrate Your Data* app provides per object
+    and release), stored per project and business object so the cockpit export can fill it instead of the generic
+    workbook. The parsed structure (sheets, field list) is cached in `structure`; `mapping` holds the explicit
+    column overrides an architect recorded for the automatic mapping."""
+
+    __tablename__ = "cockpit_templates"
+    project_id: Mapped[str] = mapped_column(ForeignKey("projects.id"), nullable=False, index=True)
+    object_type: Mapped[str] = mapped_column(String(48), nullable=False)
+    migration_object: Mapped[str] = mapped_column(String(120), default="")
+    filename: Mapped[str] = mapped_column(String(200), default="")
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    sha256: Mapped[str] = mapped_column(String(64), default="")
+    structure: Mapped[dict] = mapped_column(JSON, default=dict)
+    mapping: Mapped[dict] = mapped_column(JSON, default=dict)
+    uploaded_by: Mapped[str] = mapped_column(String(64), default="")
+    __table_args__ = (UniqueConstraint("project_id", "object_type", name="uq_cockpit_template"),)

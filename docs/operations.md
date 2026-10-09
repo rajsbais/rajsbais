@@ -55,8 +55,19 @@ Alembic (`backend/alembic.ini`, `backend/sdtf/migrations`). `alembic upgrade hea
   migration object (Introduction, Field List, one sheet per table), `manifest.json` with a sha256 per file,
   `README.md` with the upload steps, and a zip served by `GET /runs/{id}/cockpit-export/download`. The package is
   rewritten on every export and recorded in the audit trail (`COCKPIT_EXPORTED`). The files are **not** generated
-  from the target's own migration object templates (those are release specific): download the template in the
-  *Migrate Your Data* app and map the columns; migration object names in the manifest are hints to verify.
+  from the target's own migration object templates (those are release specific); migration object names in the
+  manifest are hints to verify.
+* **Template-driven export**: download the migration object's XML template from the *Migrate Your Data* app and
+  register it for the project (`POST /projects/{id}/cockpit-templates` with the file content, the Runs page's
+  template upload, or `sdtf cockpit-template register --project <id> --object <BO> --file <xml>`). The template is
+  parsed (Field List, technical-name row of each data sheet) and mapped automatically: same technical names,
+  BAPI-style aliases (`COMP_CODE` -> `BUKRS`), parent keys for item sheets; the report lists coverage and the
+  mandatory fields still unmapped. Record overrides per sheet (`PUT .../mapping`, or `--mapping file.json`:
+  `{"<sheet>": {"table": "VBRP", "fields": {"FIELD": "VBRP.NETWR" | "=constant" | ""}}}`). The next export writes
+  `<OBJECT>.template.xml`: the template itself with rows below each technical-name row, dates as DateTime cells,
+  amounts and quantities as Number cells, keys as strings (leading zeros kept); styles and header rows are
+  preserved. Illustrative samples (`sdtf cockpit-template sample --object FI.GLAccount`, also in
+  `docs/cockpit-templates/`) show the layout; they are not SAP files, and the mapping is verified only against them.
 * **Delta synchronisation** (ADR-0014): after a completed baseline run on an RFC source, run cycles from the Delta
   Synchronization Monitor or `POST /runs/{baseline}/delta/cycles`; each cycle is a run with CAPTURE/TRANSFORM/APPLY/
   RECONCILE stages and an event ledger (`GET .../delta/events`: FILTERED reasons, REJECTED change sets, CONFLICT

@@ -53,8 +53,8 @@ loaders (`runtime/api_load.py`, `SDTF_LOAD_MODE=api`, per-run `load_mode`): open
 APIs, journal entries with target numbering and a source reference for idempotency, histories and cockpit objects
 through the (simulated) migration cockpit; `load_mode=direct` keeps the simulated direct loader. For a real target
 the cockpit rows are exported as staging files (`POST /runs/{id}/cockpit-export`: CSV per table, SpreadsheetML per
-migration object, checksummed manifest, zip) for the *Migrate Your Data* app; the files are not generated from the
-target's release-specific templates.
+migration object, checksummed manifest, zip) for the *Migrate Your Data* app, and a registered migration object
+template of the release is parsed, auto-mapped (coverage report, overrides) and filled as `<OBJECT>.template.xml`.
 
 Verify on a real target before relying on the bindings: `$metadata` of each service (property names, key order,
 navigation names for deep inserts), address/role navigations of API_BUSINESS_PARTNER (flattened here), the journal

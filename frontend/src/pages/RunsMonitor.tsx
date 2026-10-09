@@ -31,6 +31,26 @@ export default function RunsMonitor() {
       const a = document.createElement("a"); a.href = url; a.download = `cockpit_${run.id}.zip`; a.click(); URL.revokeObjectURL(url);
     } catch (e: any) { setErr(e.message); }
   };
+  const templates = useApi<any[]>(projectId ? `/projects/${projectId}/cockpit-templates` : null, undefined, [projectId]);
+  const samples = useApi<any>("/cockpit-templates/samples");
+  const [tplObject, setTplObject] = useState("");
+  const [tplBusy, setTplBusy] = useState(false);
+  const registerTemplate = async (content: string, filename: string) => {
+    if (!tplObject) { setErr("choose the business object the template belongs to"); return; }
+    setTplBusy(true); setErr(null);
+    try { await api(`/projects/${projectId}/cockpit-templates`, { body: { object_type: tplObject, filename, content } }); templates.reload(); } catch (e: any) { setErr(e.message); } finally { setTplBusy(false); }
+  };
+  const uploadTemplate = async (e: React.ChangeEvent<HTMLInputElement>) => { const f = e.target.files?.[0]; if (!f) return; await registerTemplate(await f.text(), f.name); e.target.value = ""; };
+  const useSample = async () => {
+    const base = (import.meta.env.VITE_API_BASE as string | undefined) || "/api/v1";
+    setTplBusy(true); setErr(null);
+    try {
+      const res = await fetch(`${base}/cockpit-templates/samples/${tplObject}`, { headers: { Authorization: `Bearer ${getToken() || ""}` } });
+      if (!res.ok) throw new Error(`no sample template for ${tplObject}`);
+      await registerTemplate(await res.text(), `${tplObject}.sample-template.xml`);
+    } catch (e: any) { setErr(e.message); } finally { setTplBusy(false); }
+  };
+  const deleteTemplate = async (t: any) => { setErr(null); try { await api(`/projects/${projectId}/cockpit-templates/${t.id}`, { method: "DELETE" }); templates.reload(); } catch (e: any) { setErr(e.message); } };
   const resume = async () => { setBusy(true); setErr(null); try { await api(`/runs/${run.id}/resume`, { method: "POST" }); runs.reload(); } catch (e: any) { setErr(e.message); } finally { setBusy(false); } };
   if (!projectId) return <Banner>Select a project.</Banner>;
   return (
@@ -54,6 +74,14 @@ export default function RunsMonitor() {
           <KV obj={{ rows: fmtNum(cockpit.data.rows), files: cockpit.data.files, generated: cockpit.data.generated_at, manifest_sha256: String(cockpit.data.manifest_sha256).slice(0, 16) + "…", directory: cockpit.data.dir }} />
           <Table cols={[{ k: "object", h: "Business object" }, { k: "migration_object", h: "Migration object (hint)" }, { k: "tables", h: "Tables", r: (o) => o.tables.join(", ") }, { k: "rows", h: "Rows", r: (o) => fmtNum(o.rows) }, { k: "load_status", h: "Load status", r: (o) => Object.entries(o.load_status || {}).map(([k, v]) => `${v} ${k}`).join(" · ") }, { k: "reasons", h: "Why the cockpit", r: (o) => o.reasons.join("; ") }]} rows={Object.entries(cockpit.data.objects || {}).map(([object, o]: any) => ({ object, ...o }))} />
         </> : <p className="muted">No export yet for this run.</p>}
+        <h4>Migration object templates of the target</h4>
+        <p className="muted">Register the XML template the <i>Migrate Your Data</i> app provides for a migration object; the export then fills it (<code>&lt;OBJECT&gt;.template.xml</code>) through an automatic mapping (same technical names, BAPI-style aliases, parent keys) plus your recorded overrides. The report shows the coverage and the mandatory fields still unmapped. Illustrative samples exist for a few objects; they are not SAP files.</p>
+        <div className="row">
+          <Select value={tplObject} onChange={setTplObject} options={Array.from(new Set([...Object.keys(cockpit.data?.objects || {}), ...(samples.data?.objects || [])])).sort().map((o) => ({ value: o, label: o }))} placeholder="business object" />
+          <label className="chk">template file <input type="file" accept=".xml,text/xml,application/xml" disabled={tplBusy || !tplObject} onChange={uploadTemplate} /></label>
+          {(samples.data?.objects || []).includes(tplObject) && <button className="secondary" disabled={tplBusy} onClick={useSample}>Use illustrative sample</button>}
+        </div>
+        <Table cols={[{ k: "object_type", h: "Business object" }, { k: "migration_object", h: "Migration object" }, { k: "filename", h: "Template" }, { k: "sheets", h: "Sheets", r: (t) => (t.sheets || []).map((s: any) => `${s.name} (${s.fields})`).join(", ") }, { k: "coverage", h: "Mapped", r: (t) => `${t.report.mapped}/${t.report.total} (${Math.round(t.report.coverage * 100)}%)` }, { k: "missing", h: "Mandatory unmapped", r: (t) => Object.entries(t.report.mandatory_missing || {}).map(([s, f]: any) => `${s}: ${f.join(", ")}`).join("; ") || "-" }, { k: "x", h: "", r: (t) => <button className="secondary" onClick={() => deleteTemplate(t)}>Remove</button> }]} rows={templates.data || []} empty="No templates registered for this project." />
       </Card>}
       {run && staged.data && <div className="grid2"><Card title="Staging by table and load status"><Table cols={[{ k: "table", h: "Table" }, { k: "status", h: "Status", r: (r) => <Pill value={r.status} /> }, { k: "count", h: "Records", r: (r) => fmtNum(r.count) }]} rows={staged.data.counts} /></Card><Card title="Staged record samples with lineage"><Table cols={[{ k: "table", h: "Table" }, { k: "key", h: "Source key" }, { k: "target_key", h: "Target key" }, { k: "status", h: "Status", r: (r) => <Pill value={r.status} /> }, { k: "lineage", h: "Lineage", r: (r) => r.lineage.map((l: any) => `${l.rule}:${l.field} ${l.from}→${l.to}`).join("; ") }]} rows={staged.data.items} /></Card></div>}
     </div>

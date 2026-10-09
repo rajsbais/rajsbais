@@ -38,6 +38,7 @@ from ..catalog.business_objects import BUSINESS_OBJECTS
 from ..catalog.tables import TABLES
 from ..models import MigrationRun, SapSystem
 from ..staging import get_backend
+from .cockpit_templates import auto_map, fill_template, mapping_report, parse_template, templates_for
 from .loaders import EventView, object_of, plan_cockpit
 
 # Migration object hints (SAP S/4HANA migration cockpit, "Migrate Your Data" app). Names differ between releases
@@ -124,12 +125,20 @@ def _readme(run: MigrationRun, src: SapSystem | None, tgt: SapSystem | None, obj
              "## Objects", "| Business object | Migration object (hint) | Tables | Rows |", "|---|---|---|---|"]
     for ot, o in objects.items():
         lines.append(f"| {ot} | {o['migration_object']} | {', '.join(o['tables'])} | {o['rows']} |")
-    lines += ["", "## What this export is not", "* Not generated from the target's migration object templates: those are release specific and must be downloaded from the app.", "* Migration object names are hints to verify; the platform never read them from a system.", "* Rows whose `load_status` is LOADED were accepted by the simulated gateway's cockpit; on a real target the cockpit's simulation decides.", "* Values are written as the transformed images hold them (dates YYYYMMDD, amounts as decimals, flags X/blank)."]
+    tpl = {ot: o["template"] for ot, o in objects.items() if "template" in o}
+    if tpl:
+        lines += ["", "## Filled templates", "Objects with a registered migration object template also carry `<OBJECT>.template.xml`: the template itself with the rows written below each sheet's technical-name row, typed by its Field List. Check the mapping coverage and the mandatory fields left unmapped before uploading.", "", "| Business object | Template | Coverage | Mandatory fields unmapped | Rows |", "|---|---|---|---|---|"]
+        for ot, t in tpl.items():
+            missing = "; ".join(f"{sh}: {', '.join(v)}" for sh, v in t["mandatory_missing"].items()) or "-"
+            lines.append(f"| {ot} | {t['source']} | {t['mapped']}/{t['total']} | {missing} | {t['rows']} |")
+    lines += ["", "## What this export is not", "* The generic workbooks are not the target's migration object templates: those are release specific and must be downloaded from the app and registered per project; only `<OBJECT>.template.xml` files are built from a registered template, and their mapping is automatic plus recorded overrides, verified only against illustrative samples.", "* Migration object names are hints to verify; the platform never read them from a system.", "* Rows whose `load_status` is LOADED were accepted by the simulated gateway's cockpit; on a real target the cockpit's simulation decides.", "* Values are written as the transformed images hold them (dates YYYYMMDD, amounts as decimals, flags X/blank)."]
     return "\n".join(lines) + "\n"
 
 
-def export_cockpit_files(session: Session, run_id: str, out_dir: str | None = None, actor: str = "system", formats: tuple[str, ...] = ("csv", "xml")) -> dict:
-    """Write the package for `run_id` and return its summary (also stored under `run.report['cockpit_export']`)."""
+def export_cockpit_files(session: Session, run_id: str, out_dir: str | None = None, actor: str = "system", formats: tuple[str, ...] = ("csv", "xml"), use_templates: bool = True) -> dict:
+    """Write the package for `run_id` and return its summary (also stored under `run.report['cockpit_export']`).
+    With `use_templates`, objects whose migration object template is registered for the project additionally get
+    `<OBJECT>.template.xml`: the template filled through the automatic mapping (plus the recorded overrides)."""
     run = session.get(MigrationRun, run_id)
     if run is None:
         raise ValueError(f"run {run_id} not found")
@@ -148,6 +157,7 @@ def export_cockpit_files(session: Session, run_id: str, out_dir: str | None = No
         groups[g].append(rec)
     # route exactly as the LOAD stage does
     per_object: dict[str, dict[str, list[dict]]] = defaultdict(lambda: defaultdict(list))
+    instances: dict[str, list[dict[str, list[dict]]]] = defaultdict(list)  # per object: one {table: rows} per business object instance
     statuses: dict[str, dict[str, int]] = defaultdict(lambda: defaultdict(int))
     labels: dict[str, set[str]] = defaultdict(set)
     for g in order:
@@ -158,17 +168,22 @@ def export_cockpit_files(session: Session, run_id: str, out_dir: str | None = No
         views = [EventView(0, r.table_name, "I", r.record_key, r.target_key, dict(r.target_payload), g[0], g[1], g[1]) for r in members]
         cockpit, _rest = plan_cockpit(g[0], views, product)
         by_key = {(r.table_name, r.record_key): r for r in members}
+        inst: dict[str, list[dict]] = defaultdict(list)
         for evs, label in cockpit:
             labels[g[0]].add(label)
             for e in evs:
                 per_object[g[0]][e.table].append(e.target_payload)
+                inst[e.table].append(e.target_payload)
                 statuses[g[0]][by_key[(e.table, e.record_key)].load_status] += 1
+        if inst:
+            instances[g[0]].append(dict(inst))
     base = os.path.join(out_dir or os.path.join(config.settings.evidence_dir, "cockpit"), run_id)
     if os.path.isdir(base):
         shutil.rmtree(base)
     os.makedirs(base, exist_ok=True)
     files: dict[str, dict] = {}
     objects: dict[str, dict] = {}
+    templates = templates_for(session, run.project_id) if use_templates else {}
 
     def put(rel: str, data: bytes) -> None:
         path = os.path.join(base, rel)
@@ -191,6 +206,15 @@ def export_cockpit_files(session: Session, run_id: str, out_dir: str | None = No
         if "xml" in formats:
             put(f"{ot}.xml", _workbook_bytes(ot, hint, run, tables))
         objects[ot] = {"migration_object": hint, "reasons": sorted(labels[ot]), "tables": list(tables), "rows": sum(len(r) for _, r in tables.values()), "rows_by_table": {t: len(r) for t, (_, r) in tables.items()}, "load_status": dict(statuses[ot])}
+        trow = templates.get(ot)
+        if trow is not None:
+            tpl = parse_template(trow.content)
+            mappings = auto_map(tpl, ot, trow.mapping or {})
+            data, stats = fill_template(trow.content, tpl, mappings, instances[ot], header_table=bo.header_table if bo else None)
+            put(f"{ot}.template.xml", data)
+            rep = mapping_report(mappings)
+            objects[ot]["template"] = {"file": f"{ot}.template.xml", "source": trow.filename, "template_sha256": trow.sha256, "migration_object": trow.migration_object or hint, "coverage": rep["coverage"], "mapped": rep["mapped"], "total": rep["total"], "mandatory_missing": rep["mandatory_missing"], "unmapped_sheets": rep["unmapped_sheets"], "sheets": stats, "rows": sum(v["rows"] for v in stats.values()), "length_violations": sum(v["length_violations"] for v in stats.values())}
+            objects[ot]["migration_object"] = trow.migration_object or hint
     readme = _readme(run, src, tgt, objects)
     put("README.md", readme.encode("utf-8"))
     manifest = {"run_id": run.id, "project_id": run.project_id, "snapshot_id": run.snapshot_id, "source": {"sid": src.sid, "logical_system": src.logical_system} if src else None, "target": {"sid": tgt.sid, "product": tgt.product} if tgt else None, "generated_at": datetime.now(timezone.utc).isoformat(), "formats": list(formats), "objects": objects, "files": dict(sorted(files.items())), "rows": sum(o["rows"] for o in objects.values()), "disclaimer": "Transformed staging images routed to the migration cockpit; not generated from the target's migration object templates. Verify migration object IDs in the target release."}
@@ -202,7 +226,7 @@ def export_cockpit_files(session: Session, run_id: str, out_dir: str | None = No
         for rel in sorted(files):
             zf.write(os.path.join(base, rel), rel)
         zf.write(os.path.join(base, "manifest.json"), "manifest.json")
-    summary = {"exported": True, "dir": base, "zip": zip_path, "manifest_sha256": _sha(manifest_bytes), "generated_at": manifest["generated_at"], "objects": {ot: {k: v for k, v in o.items() if k != "rows_by_table"} for ot, o in objects.items()}, "files": len(files) + 1, "rows": manifest["rows"], "formats": list(formats)}
+    summary = {"exported": True, "templates": sum(1 for o in objects.values() if "template" in o), "dir": base, "zip": zip_path, "manifest_sha256": _sha(manifest_bytes), "generated_at": manifest["generated_at"], "objects": {ot: {k: (v if k != "template" else {kk: vv for kk, vv in v.items() if kk != "sheets"}) for k, v in o.items() if k != "rows_by_table"} for ot, o in objects.items()}, "files": len(files) + 1, "rows": manifest["rows"], "formats": list(formats)}
     run.report = {**(run.report or {}), "cockpit_export": summary}
     record_event(session, actor, "COCKPIT_EXPORTED", "RUN", run.id, {"objects": len(objects), "rows": summary["rows"], "files": summary["files"], "manifest_sha256": summary["manifest_sha256"]})
     session.flush()

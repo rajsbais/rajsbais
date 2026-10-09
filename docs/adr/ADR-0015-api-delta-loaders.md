@@ -70,9 +70,14 @@ by the target, derived prices and statuses.
   app, so the HTTPS transport refuses cockpit objects with that explanation. The **staging-file export**
   (`runtime/cockpit_export.py`, `POST /runs/{id}/cockpit-export`, `sdtf cockpit-export`) writes the rows the LOAD
   stage routes to the cockpit (one decision, `plan_cockpit`, shared by loader and export) as a CSV per staging
-  table and a SpreadsheetML workbook per migration object with a checksummed manifest and a zip. It is not
-  generated from the target's own migration object templates, which are release specific; mapping onto them and
-  the migration object IDs remain a verified step on the target.
+  table and a SpreadsheetML workbook per migration object with a checksummed manifest and a zip. The generic
+  workbooks are not the target's own migration object templates, which are release specific. The **template-driven
+  export** (`runtime/cockpit_templates.py`) closes that gap: a template downloaded from the app is registered per
+  project and business object, parsed (Field List, technical-name rows), mapped automatically (same names,
+  BAPI-style aliases, parent keys, recorded overrides) with a coverage report that names the mandatory fields still
+  unmapped, and filled with typed cells while everything else in the template is preserved. No real template has
+  been available here: the parser and mapping are verified against illustrative samples in the same layout, and
+  the migration object IDs remain a step to confirm on the target.
 * Pricing, statuses and open items are *modelled*, not SAP's: a real target prices from condition records and
   derives statuses from subsequent documents. The simulator's business activity is restricted to changes the
   released APIs can convey (quantities, master attributes, new documents, item deletions).
