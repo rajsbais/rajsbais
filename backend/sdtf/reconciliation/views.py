@@ -52,6 +52,19 @@ def max_rows() -> int:
     return int(os.getenv("SDTF_RECON_MAX_ROWS", "5000000"))
 
 
+def recon_mode() -> str:
+    """rows: read the scope's financial rows through the add-on; aggregate: totals computed in the source, only the
+    retained documents' lines transferred; auto: aggregate when the scope's BSEG exceeds SDTF_RECON_AGGREGATE_ABOVE."""
+    return os.getenv("SDTF_RECON_MODE", "auto").lower()
+
+
+def aggregate_above() -> int:
+    return int(os.getenv("SDTF_RECON_AGGREGATE_ABOVE", "1000000"))
+
+
+MODES = ("auto", "rows", "aggregate")
+
+
 class ReconciliationViewError(Exception):
     """The view could not be built (scope too large for a row read, adapter failure)."""
 
@@ -117,8 +130,12 @@ def _uses_record_store(system: SapSystem) -> bool:
     return True
 
 
-def build_source_view(session: Session, source: SapSystem, manifest, limit: int | None = None) -> ViewStore:
-    """The source side of the reconciliation for `manifest`'s company codes, read through the source's adapter."""
+def build_source_view(session: Session, source: SapSystem, manifest, limit: int | None = None, mode: str | None = None) -> ViewStore:
+    """The source side of the reconciliation for `manifest`'s company codes, read through the source's adapter.
+    `mode`: rows | aggregate | auto (default from SDTF_RECON_MODE)."""
+    mode = (mode or recon_mode()).lower()
+    if mode not in MODES:
+        raise ReconciliationViewError(f"mode must be one of {', '.join(MODES)}")
     if _uses_record_store(source):
         return record_store_view(session, source.id)
     if source.connector != "RFC":
@@ -126,10 +143,29 @@ def build_source_view(session: Session, source: SapSystem, manifest, limit: int 
     transport = make_transport(source.sid, source.meta, store_loader=lambda: RecordStore.load(session, source.id))
     client = AbapAddonClient(transport)
     scope_ccs = sorted(set(manifest.definition["company_codes"]))
-    view = ViewStore(source.id, "rfc_addon")
     limit = limit or max_rows()
     client.open_snapshot(list(SOURCE_TABLES))
     cc_preds = [predicate("BUKRS", "EQ", cc) for cc in scope_ccs]
+    decision = {"requested": mode, "reason": "requested"}
+    if mode != "rows":
+        try:
+            n_bseg = client.count("BSEG", cc_preds)
+        except RfcError as e:
+            if e.key not in ("FU_NOT_FOUND", "NOT_AUTHORIZED"):
+                raise
+            if mode == "aggregate":
+                raise ReconciliationViewError(f"aggregate-only reconciliation needs Z_SDTF_AGGREGATE in the add-on ({e.key})") from None
+            n_bseg = None
+            decision["reason"] = "Z_SDTF_AGGREGATE unavailable: rows"
+        if n_bseg is not None:
+            decision["bseg_rows"] = n_bseg
+            if mode == "aggregate" or n_bseg > aggregate_above():
+                decision["reason"] = "requested" if mode == "aggregate" else f"BSEG {n_bseg} rows above SDTF_RECON_AGGREGATE_ABOVE={aggregate_above()}"
+                return _aggregate_source_view(session, source, manifest, client, transport, scope_ccs, cc_preds, decision)
+            decision["reason"] = f"BSEG {n_bseg} rows within SDTF_RECON_AGGREGATE_ABOVE={aggregate_above()}: rows"
+    view = ViewStore(source.id, "rfc_addon")
+    view.metrics["mode"] = "rows"
+    view.metrics["mode_decision"] = decision
     aggregate_available = True
     by_table: dict[str, int] = {}
 
@@ -175,6 +211,76 @@ def build_source_view(session: Session, source: SapSystem, manifest, limit: int 
         except RfcError as e:
             view.metrics.setdefault("errors", {})["aggregate"] = str(e)
     view.metrics.update({"transport": getattr(transport, "name", "?"), "snapshot": client.snapshot, "company_codes": scope_ccs, "valuation_areas": areas, "rfc_calls": client.calls, "packages": client.packages, "rows": sum(by_table.values()), "by_table": by_table, "aggregate_available": aggregate_available, "unreadable": sorted(view.unreadable), "limit": limit})
+    return view
+
+
+class AggregateSourceView(ViewStore):
+    """The source side as totals computed in the source database (Z_SDTF_AGGREGATE), for scopes whose line items
+    are too many to transfer for a reconciliation. Holds T001K rows, the aggregates the financial layer needs and
+    the line items of the documents the scope retains (read by key, bounded by the classification). `rows()` of
+    the large tables is empty on purpose: `aggregate_only` tells the checks to use `aggregates` instead."""
+
+    aggregate_only = True
+
+    def __init__(self, system_id: str):
+        super().__init__(system_id, "rfc_aggregate")
+        self.aggregates: dict = {}
+        self.retained_lines: list[dict] = []
+
+
+def _chunks(values, n):
+    vals = sorted(set(values))
+    for i in range(0, len(vals), n):
+        yield vals[i : i + n]
+
+
+def _aggregate_source_view(session: Session, source: SapSystem, manifest, client: AbapAddonClient, transport, scope_ccs: list[str], cc_preds: list[dict], decision: dict) -> AggregateSourceView:
+    from ..runtime import rfc_config
+
+    view = AggregateSourceView(source.id)
+    view.metrics.update({"mode": "aggregate", "mode_decision": decision})
+    A = view.aggregates
+    rows_transferred = 0
+    open_pred = [predicate("AUGBL", "EQ", "")]
+    A["counts"] = {t: client.count(t, cc_preds) for t in ("BKPF", "BSEG", "BSID", "BSIK", "ANLC")}
+    A["gl"] = client.aggregate("BSEG", cc_preds, ["BUKRS", "HKONT", "SHKZG"], ["DMBTR"])
+    A["totals"] = client.aggregate("BSEG", cc_preds, ["BUKRS", "SHKZG"], ["DMBTR", "WRBTR"])
+    A["open_ar"] = client.aggregate("BSID", cc_preds + open_pred, ["BUKRS", "SHKZG"], ["DMBTR"])
+    A["open_ap"] = client.aggregate("BSIK", cc_preds + open_pred, ["BUKRS", "SHKZG"], ["DMBTR"])
+    A["intercompany"] = client.aggregate("BSEG", cc_preds + open_pred + [predicate("VBUND", "NE", "")], ["BUKRS", "VBUND", "KOART", "SHKZG"], ["DMBTR"])
+    A["assets"] = client.aggregate("ANLC", cc_preds, ["BUKRS"], ["KANSW"])
+    A["documents_by_year"] = client.aggregate("BKPF", cc_preds, ["BUKRS", "GJAHR"], [])
+    rows_transferred += view.add_rows("T001K", client.read_all("T001K", cc_preds))
+    areas = sorted({str(r["BWKEY"]) for r in view.rows("T001K")})
+    area_preds = [predicate("BWKEY", "EQ", a) for a in areas]
+    A["inventory"] = client.aggregate("MBEW", area_preds, ["BWKEY"], ["SALK3"]) if areas else []
+    cls = manifest.selection.get("classification", {})
+    not_transferred = [n.split(":", 1)[1] for n, c in cls.items() if c["type"] == "MD.Material" and c["classification"] not in ("FULLY_TRANSFERRED", "PARTIALLY_TRANSFERRED", "SHARED_DUPLICATED")]
+    held = 0.0
+    if areas and not_transferred:
+        for chunk in _chunks(not_transferred, rfc_config.key_chunk()):
+            for a in client.aggregate("MBEW", area_preds + [predicate("MATNR", "EQ", m) for m in chunk], [], ["SALK3"]):
+                held += float(a["SUM_SALK3"])
+    A["inventory_held"] = round(held, 2)
+    # the retained documents' lines, by key: the only line items that cross the wire
+    retained = [n.split(":", 1)[1] for n, c in cls.items() if c["type"] == "FI.AccountingDocument" and c["classification"] not in ("FULLY_TRANSFERRED", "PARTIALLY_TRANSFERRED", "SHARED_DUPLICATED")]
+    by_cc_year: dict[tuple[str, str], list[str]] = defaultdict(list)
+    for k in retained:
+        parts = k.split("|")
+        if len(parts) == 3 and parts[0] in scope_ccs:
+            by_cc_year[(parts[0], parts[2])].append(parts[1])
+    in_scope_retained = sum(len(d) for d in by_cc_year.values())
+    for (cc, year), docs in sorted(by_cc_year.items()):
+        for chunk in _chunks(docs, rfc_config.key_chunk()):
+            lines = list(client.read_all("BSEG", [predicate("BUKRS", "EQ", cc), predicate("GJAHR", "EQ", year)] + [predicate("BELNR", "EQ", d) for d in chunk]))
+            view.retained_lines.extend(lines)
+            rows_transferred += len(lines)
+    # evidence: the source balances in its own books, per company code
+    for cc in scope_ccs:
+        debit = round(sum(float(a["SUM_DMBTR"]) for a in A["totals"] if a["BUKRS"] == cc and a["SHKZG"] == "S"), 2)
+        credit = round(sum(float(a["SUM_DMBTR"]) for a in A["totals"] if a["BUKRS"] == cc and a["SHKZG"] == "H"), 2)
+        view._integrity.append(("source_trial_balance", cc, debit, credit, "debits and credits of the source company code computed in the source database"))
+    view.metrics.update({"transport": getattr(transport, "name", "?"), "snapshot": client.snapshot, "company_codes": scope_ccs, "valuation_areas": areas, "rfc_calls": client.calls, "packages": client.packages, "rows": rows_transferred, "rows_avoided": sum(A["counts"].values()), "retained_documents": in_scope_retained, "retained_documents_outside_scope": len(retained) - in_scope_retained, "retained_lines": len(view.retained_lines), "by_table": {"T001K": len(view.rows("T001K")), "BSEG(retained)": len(view.retained_lines)}, "aggregate_available": True, "unreadable": [], "counts": A["counts"]})
     return view
 
 
@@ -386,4 +492,4 @@ def loaded_keys_of(backend, run_id: str) -> dict[str, set[str]]:
     return dict(out)
 
 
-__all__ = ["SOURCE_TABLES", "normalise", "ViewStore", "ApiTargetView", "ReconciliationViewError", "build_source_view", "build_target_view", "record_store_view", "loaded_keys_of", "journal_rows", "eval_filter", "odata_filter", "record_key"]
+__all__ = ["SOURCE_TABLES", "MODES", "normalise", "ViewStore", "AggregateSourceView", "ApiTargetView", "ReconciliationViewError", "build_source_view", "build_target_view", "record_store_view", "loaded_keys_of", "journal_rows", "eval_filter", "odata_filter", "record_key"]

@@ -276,3 +276,150 @@ def test_reconcile_again_api_and_cli(client, tokens, session, slice_result, caps
     out = capsys.readouterr().out
     assert "reconciliation PASS" in out and "source: record_store" in out and "target: record_store" in out
     assert cli_main(["reconcile", "--run", "nope"]) == 2
+
+
+# ---------------------------------------------------------------------------- aggregate-only source view
+def _financial(session, run_id):
+    return {(r.check_name, r.subject): (r.status, r.source_value, r.target_value) for r in session.execute(select(ReconciliationResult).where(ReconciliationResult.run_id == run_id, ReconciliationResult.layer == "FINANCIAL")).scalars().all()}
+
+
+def test_aggregate_only_reconciliation_matches_the_row_read(session, slice_result, monkeypatch):
+    m = session.get(ScopeManifest, slice_result["manifest_id"])
+    run = session.get(MigrationRun, slice_result["run_id"])
+    src = session.get(SapSystem, slice_result["source_id"])
+    tgt = session.get(SapSystem, slice_result["target_id"])
+    backend = get_backend(session=session)
+    rfc_src = SapSystem(id=src.id, sid=src.sid, client=src.client, role="SOURCE", product="ECC", release="6.0", connector="RFC", meta={"rfc": {"transport": "simulated"}})
+    rows_view = views.build_source_view(session, rfc_src, m, mode="rows")
+    assert rows_view.metrics["mode"] == "rows" and rows_view.metrics["mode_decision"] == {"requested": "rows", "reason": "requested"}
+    assert views.build_source_view(session, rfc_src, m).metrics["mode_decision"]["reason"].endswith(": rows")  # auto on the small landscape
+    tgt_view = views.build_target_view(session, tgt, m, views.loaded_keys_of(backend, run.id), rows_view)
+    session.query(ReconciliationResult).filter(ReconciliationResult.run_id == run.id).delete()
+    by_rows = reconcile_run(session, run, m, rows_view, tgt_view)
+    fin_rows = _financial(session, run.id)
+    agg_view = views.build_source_view(session, rfc_src, m, mode="aggregate")
+    assert isinstance(agg_view, views.AggregateSourceView) and agg_view.aggregate_only and agg_view.origin == "rfc_aggregate" and agg_view.metrics["mode"] == "aggregate" and agg_view.metrics["mode_decision"]["reason"] == "requested"
+    # only T001K and the retained documents' lines crossed the wire; the large tables stayed in the source
+    assert agg_view.rows("BSEG") == [] and agg_view.rows("BKPF") == [] and agg_view.count("T001K") > 0
+    assert agg_view.metrics["rows"] == agg_view.count("T001K") + len(agg_view.retained_lines) and agg_view.metrics["rows_avoided"] == sum(agg_view.aggregates["counts"].values()) > agg_view.metrics["rows"]
+    retained_all = {n.split(":", 1)[1] for n, c in m.selection["classification"].items() if c["type"] == "FI.AccountingDocument" and c["classification"] not in ("FULLY_TRANSFERRED", "PARTIALLY_TRANSFERRED", "SHARED_DUPLICATED")}
+    retained_docs = {k for k in retained_all if k.split("|")[0] in set(m.definition["company_codes"])}  # the ParentCo side of cross-company documents is retained outside the scope: not read
+    assert agg_view.metrics["retained_documents"] == len(retained_docs) and agg_view.metrics["retained_documents_outside_scope"] == len(retained_all) - len(retained_docs) and {f"{l['BUKRS']}|{l['BELNR']}|{l['GJAHR']}" for l in agg_view.retained_lines} == retained_docs
+    integ = agg_view.integrity_results("x")
+    assert {r.check_name for r in integ} == {"source_trial_balance"} and all(r.status == "PASS" for r in integ) and len(integ) == len(m.definition["company_codes"])
+    session.query(ReconciliationResult).filter(ReconciliationResult.run_id == run.id).delete()
+    by_agg = reconcile_run(session, run, m, agg_view, tgt_view)
+    fin_agg = _financial(session, run.id)
+    assert by_agg["overall"] == by_rows["overall"] == "PASS" and by_agg["views"]["source"]["mode"] == "aggregate"
+    # the same financial verdicts and source totals, except currency totals which the aggregate source knows per company code only
+    for key, (status, src_val, tgt_val) in fin_rows.items():
+        if key[0] == "currency_totals":
+            continue
+        assert key in fin_agg, key
+        assert fin_agg[key][0] == status and fin_agg[key][1] == src_val and fin_agg[key][2] == tgt_val, (key, fin_rows[key], fin_agg[key])
+    cur_rows = {k: v for k, v in fin_rows.items() if k[0] == "currency_totals"}
+    cur_agg = {k: v for k, v in fin_agg.items() if k[0] == "currency_totals"}
+    assert cur_agg and all(k[1].endswith("/*") and v[0] == "PASS" for k, v in cur_agg.items()) and len(cur_agg) <= len(cur_rows)
+    gl = [r for r in session.execute(select(ReconciliationResult).where(ReconciliationResult.run_id == run.id, ReconciliationResult.check_name == "gl_balance")).scalars().all()]
+    assert gl and all(r.evidence.get("source_mode") == "aggregate" for r in gl)
+    assert any(r.check_name == "source_trial_balance" for r in session.execute(select(ReconciliationResult).where(ReconciliationResult.run_id == run.id)).scalars().all())
+    # auto mode decides by scope size
+    monkeypatch.setenv("SDTF_RECON_AGGREGATE_ABOVE", "1")
+    auto = views.build_source_view(session, rfc_src, m)
+    assert auto.metrics["mode"] == "aggregate" and "above SDTF_RECON_AGGREGATE_ABOVE=1" in auto.metrics["mode_decision"]["reason"]
+    monkeypatch.delenv("SDTF_RECON_AGGREGATE_ABOVE")
+    monkeypatch.setenv("SDTF_RECON_MODE", "aggregate")
+    assert views.build_source_view(session, rfc_src, m).metrics["mode"] == "aggregate"
+    monkeypatch.delenv("SDTF_RECON_MODE")
+    with pytest.raises(views.ReconciliationViewError, match="mode must be"):
+        views.build_source_view(session, rfc_src, m, mode="totals")
+    # without the aggregate module: auto falls back to rows, aggregate refuses
+    real_call = rfc.SimulatedAbapAddon.call
+
+    def no_aggregate(self, fm, **p):
+        if fm == rfc.FM_AGGREGATE:
+            raise rfc.RfcError("FU_NOT_FOUND", "function module Z_SDTF_AGGREGATE does not exist")
+        return real_call(self, fm, **p)
+
+    monkeypatch.setattr(rfc.SimulatedAbapAddon, "call", no_aggregate)
+    fb = views.build_source_view(session, rfc_src, m)
+    assert fb.metrics["mode"] == "rows" and fb.metrics["mode_decision"]["reason"].startswith("Z_SDTF_AGGREGATE unavailable")
+    with pytest.raises(views.ReconciliationViewError, match="Z_SDTF_AGGREGATE"):
+        views.build_source_view(session, rfc_src, m, mode="aggregate")
+    monkeypatch.undo()
+    session.expire_all()
+
+
+def test_aggregate_mode_explains_retained_filtered_and_rejected_lines(session):
+    """A scope with a fiscal-year window (lines never extracted) and excluded cross-company documents (retained in
+    scope) plus an injected rejected line: the aggregate-only source explains every GL variance exactly like the
+    row read, with the same verdicts, although no line item of the scope crossed the wire."""
+    from sdtf.demo import approve_ruleset, create_demo_project, create_target_shell, demo_scope_definition
+    from sdtf.discovery.service import discover_system
+    from sdtf.graph.service import build_graph, persist_graph
+    from sdtf.models import RuleSet, TransformationException
+    from sdtf.rules.engine import parse_ruleset, validate_ruleset
+    from sdtf.rules.factory import generate_candidate_ruleset
+    from sdtf.runtime.pipeline import start_run
+    from sdtf.scope.service import apply_disposition, approve_manifest, create_manifest, pending_dispositions
+
+    ctx = create_demo_project(session, "architect", scale=1, seed=21, name="aggregate explain", connector="RFC")
+    proj, src = ctx["project"], ctx["source"]
+    store = RecordStore.load(session, src.id)
+    discover_system(session, src, "architect", store)
+    persist_graph(session, src.id, build_graph(store, src.id))
+    tgt = create_target_shell(session, proj, "TAG", src)
+    defn = demo_scope_definition(src, tgt, name="aggregate explain", fiscal_year_from=2024, fiscal_year_to=2025, historical_policy="YEARS", cross_company_policy="EXCLUDE")
+    m = create_manifest(session, proj.id, defn, "architect")
+    apply_disposition(session, m, pending_dispositions(m), "TRANSFER", "approver", "test")
+    approve_manifest(session, m, "approver")
+    y = generate_candidate_ruleset(defn, "S4HANA", name="aggregate-explain-rules")
+    rs = parse_ruleset(y)
+    row = RuleSet(project_id=proj.id, name=rs.name, version=1, content_hash=rs.content_hash, source_yaml=y, compiled={"rules": rs.rules}, validation=validate_ruleset(rs), created_by="architect")
+    session.add(row)
+    session.flush()
+    approve_ruleset(session, row, "approver")
+    run = start_run(session, proj.id, m.id, row.id, "operator")
+    assert run.status == "COMPLETED" and src.connector == "RFC"
+    scope = set(m.definition["company_codes"])
+    retained = [n for n, c in m.selection["classification"].items() if c["type"] == "FI.AccountingDocument" and c["classification"] not in ("FULLY_TRANSFERRED", "PARTIALLY_TRANSFERRED", "SHARED_DUPLICATED") and n.split(":", 1)[1].split("|")[0] in scope]
+    assert retained, "cross-company EXCLUDE retains documents inside the scope"
+    backend = get_backend(session=session)
+    # a line rejected by a rule: exception recorded, never loaded, absent from the target (as a real rejection leaves it)
+    from sdtf.catalog.store import delete_records
+
+    line = next(s for s in backend.iter_records(run.id, table="BSEG") if s.load_status == "LOADED")
+    session.add(TransformationException(run_id=run.id, stage="TRANSFORM", table_name="BSEG", record_key=line.record_key, rule_id="test", severity="ERROR", message="injected"))
+    line.load_status = "REJECTED"
+    backend.update_records(run.id, [line])
+    delete_records(session, tgt.id, "BSEG", [line.target_key])
+    session.flush()
+
+    def reconcile(mode):
+        view = views.build_source_view(session, src, m, mode=mode)
+        tgt_view = views.build_target_view(session, tgt, m, views.loaded_keys_of(backend, run.id), view)
+        session.query(ReconciliationResult).filter(ReconciliationResult.run_id == run.id).delete()
+        summ = reconcile_run(session, run, m, view, tgt_view)
+        return view, summ, {(r.check_name, r.subject): r for r in session.execute(select(ReconciliationResult).where(ReconciliationResult.run_id == run.id, ReconciliationResult.layer == "FINANCIAL")).scalars().all()}
+
+    _rows_view, by_rows, fin_rows = reconcile("rows")
+    agg_view, by_agg, fin_agg = reconcile("aggregate")
+    assert agg_view.metrics["retained_documents"] == len(retained) and agg_view.retained_lines and agg_view.rows("BSEG") == []
+    gl_rows = {k: v for k, v in fin_rows.items() if k[0] == "gl_balance"}
+    gl_agg = {k: v for k, v in fin_agg.items() if k[0] == "gl_balance"}
+    assert set(gl_rows) == set(gl_agg) and gl_rows
+    warn = [k for k, v in gl_rows.items() if v.status == "WARN"]
+    assert warn, "the fiscal-year window and the excluded cross-company documents leave explained variances"
+    for k in gl_rows:
+        assert (gl_agg[k].status, gl_agg[k].source_value, gl_agg[k].target_value, gl_agg[k].variance) == (gl_rows[k].status, gl_rows[k].source_value, gl_rows[k].target_value, gl_rows[k].variance), k
+        if gl_rows[k].status != "PASS":
+            assert ("unexplained 0.0" in gl_agg[k].explanation or "unexplained -0.0" in gl_agg[k].explanation) and "aggregate-only" in gl_agg[k].explanation, gl_agg[k].explanation
+    assert not [k for k, v in gl_agg.items() if v.status == "FAIL"] and by_agg["overall"] == by_rows["overall"]
+    expl = " ".join(gl_agg[k].explanation for k in warn)
+    assert "not extracted" in expl and "retained/excluded by scope policy" in expl
+    rejected_rows = [k for k in warn if "0.0 in lines rejected" not in gl_rows[k].explanation]
+    assert rejected_rows and all("0.0 in lines rejected" not in gl_agg[k].explanation for k in rejected_rows)  # the rejected bucket, from the staging in aggregate mode
+    for name in ("ar_open_items", "ap_open_items", "asset_balances", "inventory_valuation"):
+        kr = next(k for k in fin_rows if k[0] == name)
+        assert (fin_agg[kr].status, fin_agg[kr].source_value) == (fin_rows[kr].status, fin_rows[kr].source_value), name
+    session.expire_all()

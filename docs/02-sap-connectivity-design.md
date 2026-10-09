@@ -81,4 +81,6 @@ read-integrity evidence (`source_read_integrity`, `source_read_amounts`), the ta
 APIs (entities by key through the bindings, `$filter`ed collections for tables with a company code property,
 `API_JOURNALENTRYITEMBASIC_SRV` for journal entries, lazy fetch of referenced masters). Tables with no read path
 (T001, T001K, ANLC, anything without a binding) are reported as *not verified* and their checks carry WARN.
-`SDTF_RECON_MAX_ROWS` (default 5 000 000) bounds a single table read. See `backend/sdtf/reconciliation/views.py`.
+`SDTF_RECON_MAX_ROWS` (default 5 000 000) bounds a single table read; `SDTF_RECON_MODE=auto|rows|aggregate` and
+`SDTF_RECON_AGGREGATE_ABOVE` (default 1 000 000) select the aggregate-only mode, in which the totals are computed in the
+source and only the retained documents' lines are transferred. See `backend/sdtf/reconciliation/views.py`.

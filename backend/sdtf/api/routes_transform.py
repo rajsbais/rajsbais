@@ -317,7 +317,7 @@ def run_report(r: MigrationRun = Depends(get_run), p: Principal = Depends(requir
 
 
 @router.post("/runs/{run_id}/reconcile", tags=["runs"])
-def run_reconcile_again(r: MigrationRun = Depends(get_run), db: Session = Depends(get_db), p: Principal = Depends(require("run:start"))):
+def run_reconcile_again(mode: str = Query("auto", pattern="^(auto|rows|aggregate)$", description="source read: rows through the add-on, aggregate (totals computed in the source, only retained documents' lines transferred), or auto by scope size"), r: MigrationRun = Depends(get_run), db: Session = Depends(get_db), p: Principal = Depends(require("run:start"))):
     """Re-run the three-layer reconciliation of a completed run through the adapters (source over the RFC add-on,
     target over the released APIs; record-store systems read directly) and replace its results and report."""
     from ..reconciliation.views import ReconciliationViewError
@@ -326,7 +326,7 @@ def run_reconcile_again(r: MigrationRun = Depends(get_run), db: Session = Depend
     from ..runtime.target_api import ApiError
 
     try:
-        return reconcile_again(db, r.id, p.username)
+        return reconcile_again(db, r.id, p.username, mode=mode)
     except RunPrecondition as e:
         raise HTTPException(409, str(e)) from None
     except (ReconciliationViewError, RfcError, ApiError) as e:
@@ -1018,7 +1018,7 @@ CAPABILITIES = [
     {"area": "Target load", "status": "SIMULATED", "note": "Initial load and delta cycles go through the released S/4HANA APIs (business partner, product, sales/purchase order, delivery, journal entry with target numbering) and the migration cockpit for histories and cockpit objects, on the simulated gateway or an HTTPS target; verified on the simulated gateway only (ADR-0015). load_mode=direct keeps the simulated direct loader"},
     {"area": "Migration cockpit staging-file export", "status": "IMPLEMENTED", "note": "CSV per staging table and SpreadsheetML workbook per migration object for the rows the initial load routes to the cockpit, with manifest, checksums and zip; generic workbooks are not the target's templates (migration object names are hints to verify)"},
     {"area": "Template-driven cockpit export", "status": "IMPLEMENTED", "note": "Registered migration object templates (the app's XML workbooks) are parsed (Field List incl. hidden SAP Structure/SAP Field columns, hidden technical rows, merged key cell), mapped automatically (same names, BAPI-style aliases, parent/related keys, recorded overrides) with a coverage report, and filled with typed, line-oriented cells; verified against the layout SAP documents and SAP's own XML file splitter on filled files, not against a template downloaded from a release (check endpoint and CLI report deviations); alias catalogue of BAPI-style template names extended from the public BAPI structures, project aliases learned from a template's Field List by DDIC description match and confirmed by an architect; migration object lookup per target release (documented names with renames and availability, unverified ID hints) with a project registry imported from the target's object list; upload simulation feedback import (the app's message log matched to the exported instances, COCKPIT_ERROR statuses and exceptions, classified summary, retry package of rejected instances); re-upload tracking: every package is a round (exported, uploaded, simulated, migrated, superseded) with per-instance outcomes, released instances, and a burn-down of the still-rejected ones across rounds"},
-    {"area": "Reconciliation (technical/functional/financial)", "status": "IMPLEMENTED", "note": "Source read through the RFC add-on (company-code pushdown, Z_SDTF_AGGREGATE counts and totals prove the read complete), target read back through the released APIs (entities by key, filtered collections, journal entry items); tables without a read path are reported as not verified instead of failing; re-run on a completed run with POST /runs/{id}/reconcile; verified on the simulated add-on and gateway only"},
+    {"area": "Reconciliation (technical/functional/financial)", "status": "IMPLEMENTED", "note": "Source read through the RFC add-on (company-code pushdown, Z_SDTF_AGGREGATE counts and totals prove the read complete), target read back through the released APIs (entities by key, filtered collections, journal entry items); tables without a read path are reported as not verified instead of failing; re-run on a completed run with POST /runs/{id}/reconcile; aggregate-only mode for large scopes (GL, open-item, asset, inventory and intercompany totals computed in the source database, only the retained documents' lines transferred, chosen automatically above SDTF_RECON_AGGREGATE_ABOVE); verified on the simulated add-on and gateway only"},
     {"area": "Audit trail & evidence packages", "status": "IMPLEMENTED", "note": "Hash-chained events, evidence index"},
     {"area": "AI agents", "status": "IMPLEMENTED", "note": "12 bounded heuristic agents; LLM reasoner planned"},
     {"area": "Multi-source merger / consolidation", "status": "IMPLEMENTED", "note": "Merge groups, cross-system key collision planning, master-data dedup, group-level financial reconciliation (simulated runtime)"},

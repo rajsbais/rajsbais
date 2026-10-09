@@ -40,6 +40,16 @@ NPL / A4H test, docs/connect-real-systems.md).
   be checked against the target's `$metadata` on A4H (unverified, like the other bindings).
 * Asset values and material valuation are not verifiable through the APIs in this build (WARN, by report);
   adding read services for them is backlog.
-* Reading a whole company code's BSEG for reconciliation is a real transfer on large systems; the aggregate
-  guard refuses reads above the limit, and aggregate-only reconciliation (totals compared without rows) is the
-  next step for very large scopes.
+* Reading a whole company code's BSEG for reconciliation is a real transfer on large systems. The
+  **aggregate-only mode** (`SDTF_RECON_MODE=aggregate`, or `auto` above `SDTF_RECON_AGGREGATE_ABOVE` line items,
+  default 1 000 000; `?mode=` on the re-reconcile endpoint) keeps the line items in the source: GL balances per
+  account, open-item counts and sums, asset and inventory values and open intercompany balances are computed
+  there by `Z_SDTF_AGGREGATE`; only T001K and the line items of the documents the scope *retains* (read by key,
+  bounded by the classification) cross the wire; the "rejected" bucket comes from the staging and the
+  "filtered" bucket is the remainder (lines never extracted). The verdicts equal the row read's on the demo
+  landscape; two things are weaker and said so in the results: document-currency totals are compared per company
+  code (`cc/*`) because a line carries no document currency, and lines of partially transferred documents that were
+  not extracted count as "not extracted" instead of "unexplained". The read-integrity evidence becomes
+  `source_trial_balance` (debits equal credits per company code, computed in the source). The target side still
+  reads the loaded documents back (it must, for the technical layer); a read service with totals does not exist
+  among the released OData V2 APIs.

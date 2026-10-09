@@ -86,7 +86,7 @@ def start_run(session: Session, project_id: str, manifest_id: str, ruleset_id: s
     return execute_run(session, run, actor)
 
 
-def reconcile_again(session: Session, run_id: str, actor: str) -> dict:
+def reconcile_again(session: Session, run_id: str, actor: str, mode: str | None = None) -> dict:
     """Re-run the RECONCILE and REPORT stages of a completed run through the adapters (source over its add-on,
     target over its APIs) and replace the results: the way to reconcile after the systems moved, or after the
     other VM came up. The run's load is not repeated."""
@@ -107,9 +107,9 @@ def reconcile_again(session: Session, run_id: str, actor: str) -> dict:
     st.status, st.started_at = "RUNNING", _now()
     try:
         session.query(ReconciliationResult).filter(ReconciliationResult.run_id == run.id).delete()
-        source_view = build_source_view(session, src, m)
+        source_view = build_source_view(session, src, m, mode=mode)
         target_view = build_target_view(session, tgt, m, loaded_keys_of(backend, run.id), source_view)
-        st.metrics = {**reconcile_run(session, run, m, source_view, target_view, financial=not run.metrics.get("merge_group"), backend=backend), "reconciled_again_by": actor, "reconciled_again_at": _now().isoformat()}
+        st.metrics = {**reconcile_run(session, run, m, source_view, target_view, financial=not run.metrics.get("merge_group"), backend=backend), "reconciled_again_by": actor, "reconciled_again_at": _now().isoformat(), "mode_requested": mode or "auto"}
     except Exception as e:  # noqa: BLE001
         st.status, st.metrics = "FAILED", {**(st.metrics or {}), "error": f"{type(e).__name__}: {e}"}
         st.finished_at, st.duration_ms = _now(), round((time.monotonic() - t0) * 1000, 1)

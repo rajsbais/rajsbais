@@ -59,7 +59,8 @@ Z_SDTF_AGGREGATE       -> COUNT / SUM per group computed in the database (reconc
   the group fields, `COUNT` and `SUM_<FIELD>` (no group field: exactly one row, zeros for an empty result);
   `EV_CHECKSUM` as for packages. The reconciliation reads the source through the add-on and uses the aggregates to
   size its reads and to prove them complete (`backend/sdtf/reconciliation/views.py`). An add-on without this module
-  still works for reconciliation (rows only, no read-integrity evidence).
+  still works for reconciliation (rows only, no read-integrity evidence); the aggregate-only mode for large scopes
+  (totals computed here, only retained documents' lines transferred) requires it.
 * **No writes**: the function group contains read modules only.
 
 ## Reference sources (`src/`)
