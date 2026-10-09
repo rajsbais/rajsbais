@@ -9,6 +9,11 @@ this tests extraction, mapping and planning, not refreshing a real target.
 - Use a **dedicated read-only SAP user**. Put its password in an environment variable; the tools only take the variable's *name*.
 - Start with the smoke test below. It writes a report with counts, field names, widths, timings and error classes: **no row values**, so it can be shared.
 
+## 0. If the SAP system is on the same PC
+- **Port clash:** a local SAP system serves HTTP on **8000** by default, so run the platform on another port: `uvicorn rfactory.api.main:app --port 8088`, then open `http://localhost:8088`. The UI only appears if you ran `npm run build` in `frontend/` first.
+- **ABAP trial (SID `NPL`, "AS ABAP Developer Edition"):** this is a *development* system with the ABAP basis and a demo flight data model. It normally has **none of the business tables the platform models** (sales documents, customers, materials, accounting). Expect the smoke test to connect fine and report most tables as `table-missing`. That still proves the connection, authorizations and DDIC checks, but it cannot exercise a refresh. Typical settings: host `localhost` (or the VM's IP), instance number `00`, client `001`, gateway port 3300. Create a dedicated read-only user in `SU01` rather than using `DEVELOPER` or `SAP*`.
+- **Only a system with real ERP data (an IDES copy, a sandbox ECC, an S/4HANA trial/fully-activated appliance) can show the refresh working.**
+
 ## 1. Get the platform onto that machine
 ```
 git clone <repo> && cd <repo> && git checkout claude/lucid-euler-7xqkbg

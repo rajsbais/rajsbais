@@ -9,9 +9,9 @@ Selective, business-consistent SAP non-production refresh with masking, conflict
 ```bash
 cd backend && pip install -e '.[test]' && python -m pytest          # 498 tests
 cd ../frontend && npm install && npm run build                       # UI served by the API from frontend/dist
-cd ../backend && uvicorn rfactory.api.main:app --port 8000           # http://localhost:8000  (API docs at /docs)
+cd ../backend && uvicorn rfactory.api.main:app --port 8088           # http://localhost:8088  (API docs at /docs). Not 8000: a local SAP system's HTTP port is 8000
 # durable state (survives restarts, encrypted at rest):  RFACTORY_DATA_DIR=./data RFACTORY_STATE_KEY=$(python -c 'from cryptography.fernet import Fernet;print(Fernet.generate_key().decode())') uvicorn ...
-# UI dev server: cd frontend && npm run dev   (proxies /api to :8000)
+# UI dev server: cd frontend && npm run dev   (proxies /api to :8000, edit frontend/vite.config.ts if you moved the API)
 # UI end-to-end + accessibility tests (starts its own backend per test): cd frontend && npm run test:e2e
 ```
 Sign in with the sidebar user switcher (demo header auth; `cora.regional` is a scoped steward limited to company 2000 and EP1/EQ1). Walkthrough: *Control tower → Load synthetic landscape → Selective designer* (create project, scope company 1000 / 90 days,
