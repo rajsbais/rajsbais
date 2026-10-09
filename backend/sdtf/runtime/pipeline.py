@@ -108,7 +108,7 @@ def reconcile_again(session: Session, run_id: str, actor: str, mode: str | None 
     try:
         session.query(ReconciliationResult).filter(ReconciliationResult.run_id == run.id).delete()
         source_view = build_source_view(session, src, m, mode=mode)
-        target_view = build_target_view(session, tgt, m, loaded_keys_of(backend, run.id), source_view)
+        target_view = build_target_view(session, tgt, m, loaded_keys_of(backend, run.id), source_view, mode=mode)
         st.metrics = {**reconcile_run(session, run, m, source_view, target_view, financial=not run.metrics.get("merge_group"), backend=backend), "reconciled_again_by": actor, "reconciled_again_at": _now().isoformat(), "mode_requested": mode or "auto"}
     except Exception as e:  # noqa: BLE001
         st.status, st.metrics = "FAILED", {**(st.metrics or {}), "error": f"{type(e).__name__}: {e}"}

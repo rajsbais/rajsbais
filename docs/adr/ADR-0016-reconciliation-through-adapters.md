@@ -59,6 +59,11 @@ NPL / A4H test, docs/connect-real-systems.md).
   landscape; two things are weaker and said so in the results: document-currency totals are compared per company
   code (`cc/*`) because a line carries no document currency, and lines of partially transferred documents that were
   not extracted count as "not extracted" instead of "unexplained". The read-integrity evidence becomes
-  `source_trial_balance` (debits equal credits per company code, computed in the source). The target side still
-  reads the loaded documents back (it must, for the technical layer); a read service with totals does not exist
-  among the released OData V2 APIs.
+  `source_trial_balance` (debits equal credits per company code, computed in the source). On the target, aggregate
+  mode needs the read-only add-on there (`meta.rfc`): the journal line items are then not read back through
+  `API_JOURNALENTRYITEMBASIC_SRV` at all; GL balances, open items, asset values, inventory values and open
+  intercompany balances are computed in the target by `Z_SDTF_AGGREGATE`, with `target_trial_balance` as
+  evidence. The technical layer then says the loaded journal rows were compared as totals (WARN, not a false
+  FAIL), the per-document balance is not verified (the target's posting logic enforces it, and the explanation
+  says so), and the accounting-document status comparison is not verifiable. `auto` decides per side by that
+  side's journal size. Without the add-on on the target, aggregate mode is refused there and the APIs read rows.

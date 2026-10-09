@@ -493,3 +493,59 @@ def test_api_connector_test_reports_the_rfc_readback(client, tokens, slice_resul
     r = client.post(f"{API}/projects/{pid}/systems", json={"sid": "S4C", "client": "100", "role": "TARGET", "product": "S4HANA", "release": "2023", "connector": "API", "meta": {"api": {"transport": "simulated"}, "rfc": {"transport": "pyrfc"}}}, headers=tokens["architect"])
     t = client.post(f"{API}/systems/{r.json()['id']}/connector/test", headers=tokens["architect"]).json()
     assert t["ok"] and t["rfc_readback"]["ok"] is False and t["rfc_readback"]["error"] in ("RFC_UNAVAILABLE",)
+
+
+# ------------------------------------------------------------------------- aggregate-only on the target
+def test_target_aggregate_only_compares_totals_computed_in_the_target(session, slice_result, monkeypatch):
+    """With the add-on on the target, aggregate mode never reads the journal line items back: GL, open-item,
+    asset, inventory and intercompany totals are computed in the target; verdicts equal the row read's."""
+    m = session.get(ScopeManifest, slice_result["manifest_id"])
+    run = session.get(MigrationRun, slice_result["run_id"])
+    tgt = session.get(SapSystem, slice_result["target_id"])
+    src = session.get(SapSystem, slice_result["source_id"])
+    backend = get_backend(session=session)
+    keys = views.loaded_keys_of(backend, run.id)
+    sv = views.record_store_view(session, src.id)
+    rfc_tgt = SapSystem(id=tgt.id, sid=tgt.sid, client=tgt.client, role="TARGET", product="S4HANA", release="2025", connector="API", meta={"api": {"transport": "simulated"}, "rfc": {"transport": "simulated"}})
+
+    def fin(view):
+        session.query(ReconciliationResult).filter(ReconciliationResult.run_id == run.id).delete()
+        summ = reconcile_run(session, run, m, sv, view)
+        rows = {(r.check_name, r.subject): r for r in session.execute(select(ReconciliationResult).where(ReconciliationResult.run_id == run.id)).scalars().all()}
+        return summ, rows
+
+    rows_view = views.build_target_view(session, rfc_tgt, m, keys, sv, force_api=True, mode="rows")
+    assert rows_view.metrics["mode"] == "rows" and rows_view.metrics["mode_decision"]["reason"] == "requested"
+    by_rows, fin_rows = fin(rows_view)
+    agg_view = views.build_target_view(session, rfc_tgt, m, keys, sv, force_api=True, mode="aggregate")
+    assert agg_view.aggregate_only and agg_view.origin == "api_rfc_aggregate" and agg_view.metrics["mode"] == "aggregate" and agg_view.aggregated_tables == {"BKPF", "BSEG", "BSID", "BSIK", "ANLC", "MBEW"}
+    assert agg_view.rows("BSEG") == [] and agg_view.rows("BKPF") == [] and agg_view.metrics["by_service"].get(views.JOURNAL_SERVICE, 0) == 0 and agg_view.metrics["target_aggregates"]["rows_avoided"] > 0
+    assert agg_view.read_via["BSEG"] == "rfc_aggregate" and agg_view.read_via["KNB1"] == "api" and "T001" in agg_view.metrics["rfc_readback"]["by_table"]
+    integ = agg_view.integrity_results("x")
+    assert {r.check_name for r in integ} >= {"target_trial_balance"} and all(r.status == "PASS" for r in integ)
+    by_agg, fin_agg = fin(agg_view)
+    assert by_agg["overall"] == by_rows["overall"] and by_agg["views"]["target"]["mode"] == "aggregate"
+    for key, r in fin_rows.items():
+        if r.layer != "FINANCIAL" or key[0] in ("currency_totals", "ar_open_items", "ap_open_items"):
+            continue
+        a = fin_agg[key]
+        assert (a.status, a.source_value, a.target_value) == (r.status, r.source_value, r.target_value), (key, (r.status, r.source_value, r.target_value), (a.status, a.source_value, a.target_value))
+    # open items: the API read-back derives them from journal lines, the add-on aggregates the open-item tables themselves
+    assert fin_agg[("ar_open_items", "open_items")].status == "PASS" and fin_agg[("ap_open_items", "open_items")].status == "PASS"
+    tb = fin_agg[("trial_balance", sorted({(m.definition.get("target_ownership", {}).get("company_code_map") or {}).get(c, c) for c in m.definition["company_codes"]})[0])]
+    assert tb.status == "PASS" and "per-document balance not verified" in tb.explanation and tb.evidence["target_mode"] == "aggregate"
+    cur = {k: v for k, v in fin_agg.items() if k[0] == "currency_totals"}
+    assert cur and all(k[1].endswith("/*") and v.status == "PASS" for k, v in cur.items())
+    assert fin_agg[("record_count", "BSEG")].status == "WARN" and fin_agg[("record_count", "BSEG")].evidence.get("aggregated") and fin_rows[("record_count", "BSEG")].status == "PASS"
+    assert fin_agg[("open_document_validity", "FI.AccountingDocument")].evidence.get("unreadable") == ["BSEG"]
+    assert not [k for k, r in fin_agg.items() if r.status == "FAIL"], [(k, r.explanation) for k, r in fin_agg.items() if r.status == "FAIL"]
+    # auto decides by the target's journal size; aggregate needs the add-on on the target
+    monkeypatch.setenv("SDTF_RECON_AGGREGATE_ABOVE", "1")
+    auto = views.build_target_view(session, rfc_tgt, m, keys, sv, force_api=True)
+    assert auto.aggregate_only and "above SDTF_RECON_AGGREGATE_ABOVE=1" in auto.metrics["mode_decision"]["reason"]
+    monkeypatch.delenv("SDTF_RECON_AGGREGATE_ABOVE")
+    plain = views.build_target_view(session, tgt, m, keys, sv, force_api=True)
+    assert not plain.aggregate_only and plain.metrics["mode_decision"]["reason"].startswith("no add-on")
+    with pytest.raises(views.ReconciliationViewError, match="needs the read-only add-on"):
+        views.build_target_view(session, tgt, m, keys, sv, force_api=True, mode="aggregate")
+    session.expire_all()

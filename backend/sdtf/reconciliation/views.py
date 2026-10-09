@@ -358,11 +358,20 @@ class ApiTargetView(ViewStore):
     """The target as the released APIs show it. Built eagerly for the tables the checks scan; `by_key` fetches
     a missing row lazily (a master the load did not create but the target already held)."""
 
-    def __init__(self, session: Session, target: SapSystem, company_codes: Iterable[str], loaded_keys: dict[str, set[str]], valuation_areas: Iterable[str] = (), fiscal_years: tuple[int | None, int | None] = (None, None), rfc_client: AbapAddonClient | None = None):
+    aggregate_only = False
+
+    def __init__(self, session: Session, target: SapSystem, company_codes: Iterable[str], loaded_keys: dict[str, set[str]], valuation_areas: Iterable[str] = (), fiscal_years: tuple[int | None, int | None] = (None, None), rfc_client: AbapAddonClient | None = None, aggregate: bool = False):
         super().__init__(target.id, "api_readback")
         self.transport = make_target_transport(session, target)
         self.client = TargetApiClient(self.transport)
         self.rfc = rfc_client
+        self.aggregate_only = bool(aggregate)
+        self.aggregates: dict = {}
+        self.aggregated_tables: set[str] = set()
+        if self.aggregate_only:
+            if rfc_client is None:
+                raise ReconciliationViewError("aggregate-only reconciliation on the target needs the read-only add-on on the target (meta.rfc)")
+            self.origin = "api_rfc_aggregate"
         self.company_codes = sorted(set(company_codes))
         self.loaded_keys = loaded_keys
         self.valuation_areas = sorted(set(valuation_areas))
@@ -438,24 +447,63 @@ class ApiTargetView(ViewStore):
                 if self._fetch(table, k) is not None:
                     n += 1
             by_table[table] = n
-        # journal entries through the read service
-        flt = odata_filter("CompanyCode", self.company_codes)
-        yf, yt = self.fiscal_years
-        if yf or yt:
-            years = [str(y) for y in range(yf or yt, (yt or yf) + 1)]
-            flt = f"({flt}) and ({odata_filter('FiscalYear', years)})"
-        try:
-            items = self._collection(JOURNAL_SERVICE, JOURNAL_ENTITY, flt)
-            for t, rows in journal_rows(items).items():
-                by_table[t] = self.add_rows(t, rows)
-        except ApiError as e:
-            self.unreadable |= {"BKPF", "BSEG", "BSID", "BSIK"}
-            self.metrics.setdefault("errors", {})["journal"] = str(e)
+        # journal entries through the read service (aggregate mode: totals computed in the target instead, below)
+        if not self.aggregate_only:
+            flt = odata_filter("CompanyCode", self.company_codes)
+            yf, yt = self.fiscal_years
+            if yf or yt:
+                years = [str(y) for y in range(yf or yt, (yt or yf) + 1)]
+                flt = f"({flt}) and ({odata_filter('FiscalYear', years)})"
+            try:
+                items = self._collection(JOURNAL_SERVICE, JOURNAL_ENTITY, flt)
+                for t, rows in journal_rows(items).items():
+                    by_table[t] = self.add_rows(t, rows)
+            except ApiError as e:
+                self.unreadable |= {"BKPF", "BSEG", "BSID", "BSIK"}
+                self.metrics.setdefault("errors", {})["journal"] = str(e)
         for t in by_table:
             self.read_via.setdefault(t, "api")
+        if self.aggregate_only:
+            self._rfc_aggregates(by_table)
         if self.rfc is not None:
             self._rfc_readback(by_table)
-        self.metrics.update({"transport": getattr(self.transport, "name", "?"), "company_codes": self.company_codes, "valuation_areas": self.valuation_areas, "by_table": by_table, "rows": sum(by_table.values()), "unreadable": sorted(self.unreadable), "read_via": dict(self.read_via), **self.client.stats()})
+        self.metrics.update({"transport": getattr(self.transport, "name", "?"), "mode": "aggregate" if self.aggregate_only else "rows", "company_codes": self.company_codes, "valuation_areas": self.valuation_areas, "by_table": by_table, "rows": sum(by_table.values()), "unreadable": sorted(self.unreadable), "read_via": dict(self.read_via), **self.client.stats()})
+
+    def _rfc_aggregates(self, by_table: dict[str, int]) -> None:
+        """Totals computed in the target database through the add-on: the journal tables, open items, asset values
+        and material valuation are never transferred; the financial layer compares totals, the technical layer says
+        the loaded journal rows were compared as totals."""
+        client = self.rfc
+        cc_preds = [predicate("BUKRS", "EQ", cc) for cc in self.company_codes]
+        open_pred = [predicate("AUGBL", "EQ", "")]
+        A: dict = {}
+        try:
+            client.open_snapshot(["BKPF", "BSEG", "BSID", "BSIK", "ANLC", "MBEW"])
+            A["counts"] = {t: client.count(t, cc_preds) for t in ("BKPF", "BSEG", "BSID", "BSIK", "ANLC")}
+            A["gl"] = client.aggregate("BSEG", cc_preds, ["BUKRS", "HKONT", "SHKZG"], ["DMBTR"])
+            A["totals"] = client.aggregate("BSEG", cc_preds, ["BUKRS", "SHKZG"], ["DMBTR", "WRBTR"])
+            A["open_ar"] = client.aggregate("BSID", cc_preds + open_pred, ["BUKRS", "SHKZG"], ["DMBTR"])
+            A["open_ap"] = client.aggregate("BSIK", cc_preds + open_pred, ["BUKRS", "SHKZG"], ["DMBTR"])
+            A["intercompany"] = client.aggregate("BSEG", cc_preds + open_pred + [predicate("VBUND", "NE", "")], ["BUKRS", "VBUND", "KOART", "SHKZG"], ["DMBTR"])
+            A["assets"] = client.aggregate("ANLC", cc_preds, ["BUKRS"], ["KANSW"])
+            A["documents_by_year"] = client.aggregate("BKPF", cc_preds, ["BUKRS", "GJAHR"], [])
+            A["inventory"] = client.aggregate("MBEW", [predicate("BWKEY", "EQ", a) for a in self.valuation_areas], ["BWKEY"], ["SALK3"]) if self.valuation_areas else []
+        except RfcError as e:
+            self.metrics.setdefault("errors", {})["aggregate"] = str(e)
+            raise ReconciliationViewError(f"aggregate-only reconciliation on the target failed: {e}") from e
+        self.aggregates = A
+        self.aggregated_tables = {"BKPF", "BSEG", "BSID", "BSIK", "ANLC", "MBEW"}
+        self.unreadable -= self.aggregated_tables
+        for t in self.aggregated_tables:
+            self.read_via[t] = "rfc_aggregate"
+            self._tables.pop(t, None)
+            self._by_key.pop(t, None)
+            by_table.pop(t, None)
+        for cc in self.company_codes:
+            debit = round(sum(float(a["SUM_DMBTR"]) for a in A["totals"] if a["BUKRS"] == cc and a["SHKZG"] == "S"), 2)
+            credit = round(sum(float(a["SUM_DMBTR"]) for a in A["totals"] if a["BUKRS"] == cc and a["SHKZG"] == "H"), 2)
+            self._integrity.append(("target_trial_balance", cc, debit, credit, "debits and credits of the target company code computed in the target database"))
+        self.metrics["target_aggregates"] = {"rfc_calls": client.calls, "packages": client.packages, "rows_avoided": sum(A["counts"].values()), "counts": A["counts"], "snapshot": client.snapshot}
 
     def _rfc_readback(self, by_table: dict[str, int]) -> None:
         """Tables the APIs could not serve, read through the add-on on the target: company-code tables with the
@@ -555,8 +603,13 @@ class ApiTargetView(ViewStore):
         return self.by_key(table, "|".join(str(key_fields.get(k, "")) for k in td.key_fields))
 
 
-def build_target_view(session: Session, target: SapSystem, manifest, loaded_keys: dict[str, set[str]], source_view: RecordStore | None = None, force_api: bool = False) -> ViewStore:
-    """The target side of the reconciliation: the record store for simulated targets, the released APIs otherwise."""
+def build_target_view(session: Session, target: SapSystem, manifest, loaded_keys: dict[str, set[str]], source_view: RecordStore | None = None, force_api: bool = False, mode: str | None = None) -> ViewStore:
+    """The target side of the reconciliation: the record store for simulated targets, the released APIs otherwise;
+    with the add-on on the target, `mode` aggregate (or auto above SDTF_RECON_AGGREGATE_ABOVE journal lines)
+    computes the totals in the target instead of reading the journal line items back."""
+    mode = (mode or recon_mode()).lower()
+    if mode not in MODES:
+        raise ReconciliationViewError(f"mode must be one of {', '.join(MODES)}")
     if _uses_record_store(target) and not force_api:
         return record_store_view(session, target.id)
     if target.connector not in ("API", "SYNTHETIC"):  # SYNTHETIC only with force_api: the simulated gateway serves it
@@ -569,9 +622,30 @@ def build_target_view(session: Session, target: SapSystem, manifest, loaded_keys
     if source_view is not None:
         areas = {plant_map.get(str(r["BWKEY"]), str(r["BWKEY"])) for r in source_view.rows("T001K") if r["BUKRS"] in set(defn["company_codes"])}
     rfc_client = None
+    aggregate = False
+    decision = {"requested": mode, "reason": "requested"}
     if target_has_rfc(target):
         rfc_client = AbapAddonClient(make_transport(target.sid, target.meta, store_loader=lambda: RecordStore.load(session, target.id)))
-    return ApiTargetView(session, target, target_ccs, loaded_keys, areas, (defn.get("fiscal_year_from"), defn.get("fiscal_year_to")), rfc_client=rfc_client)
+        if mode == "aggregate":
+            aggregate = True
+        elif mode == "auto":
+            try:
+                rfc_client.open_snapshot(["BSEG"])
+                n = rfc_client.count("BSEG", [predicate("BUKRS", "EQ", cc) for cc in sorted(target_ccs)])
+                decision["bseg_rows"] = n
+                aggregate = n > aggregate_above()
+                decision["reason"] = f"BSEG {n} rows {'above' if aggregate else 'within'} SDTF_RECON_AGGREGATE_ABOVE={aggregate_above()}: {'aggregate' if aggregate else 'rows'}"
+            except RfcError as e:
+                if e.key not in ("FU_NOT_FOUND", "NOT_AUTHORIZED"):
+                    raise
+                decision["reason"] = "Z_SDTF_AGGREGATE unavailable on the target: rows"
+    elif mode == "aggregate":
+        raise ReconciliationViewError("aggregate-only reconciliation on the target needs the read-only add-on on the target (meta.rfc)")
+    else:
+        decision["reason"] = "no add-on on the target: rows through the APIs"
+    view = ApiTargetView(session, target, target_ccs, loaded_keys, areas, (defn.get("fiscal_year_from"), defn.get("fiscal_year_to")), rfc_client=rfc_client, aggregate=aggregate)
+    view.metrics["mode_decision"] = decision
+    return view
 
 
 def target_has_rfc(target: SapSystem) -> bool:

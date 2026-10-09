@@ -141,7 +141,7 @@ def main(argv=None):
     mde.add_argument("--json", action="store_true")
     rc = sub.add_parser("reconcile", help="re-run the three-layer reconciliation of a completed run through the adapters (source over the RFC add-on, target over the released APIs)")
     rc.add_argument("--run", required=True)
-    rc.add_argument("--mode", choices=["auto", "rows", "aggregate"], default="auto", help="source read: rows through the add-on, aggregate (totals computed in the source), auto by scope size")
+    rc.add_argument("--mode", choices=["auto", "rows", "aggregate"], default="auto", help="rows: read the rows through the adapters; aggregate: totals computed in the source and, with the add-on on the target, in the target; auto: per side by journal size")
     rc.add_argument("--json", action="store_true")
     mo = sub.add_parser("migration-objects", help="migration object lookup per S/4HANA release: list the catalogue, resolve a business object, import the target's object list for a project")
     mosub = mo.add_subparsers(dest="mcmd", required=True)

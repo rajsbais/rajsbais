@@ -41,7 +41,9 @@ switch VMs and *Resume from checkpoint*: completed stages and completed extracti
 > names are unverified against A4H's `$metadata`: send the first `$metadata` of that service if the read fails. After
 > switching VMs, `POST /runs/{id}/reconcile` (or `sdtf reconcile --run`) re-runs the reconciliation without repeating the
 > load. On a large company code use `?mode=aggregate` (`--mode aggregate`): the totals are computed in the source and only
-> the retained documents' lines are transferred; `auto` switches to it above `SDTF_RECON_AGGREGATE_ABOVE` line items.
+> the retained documents' lines are transferred, and on a target registered with the add-on too the target totals are
+> computed there instead of reading the journal line items back; `auto` switches per side above
+> `SDTF_RECON_AGGREGATE_ABOVE` line items.
 
 Networking: the platform runs on the Windows host (Python, the SAP NW RFC SDK for Windows, `pyrfc`; if no `pyrfc` wheel
 exists for your Python, use a 3.12 virtual environment for the API process) or inside the `docker-host` VM through

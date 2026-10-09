@@ -317,7 +317,7 @@ def run_report(r: MigrationRun = Depends(get_run), p: Principal = Depends(requir
 
 
 @router.post("/runs/{run_id}/reconcile", tags=["runs"])
-def run_reconcile_again(mode: str = Query("auto", pattern="^(auto|rows|aggregate)$", description="source read: rows through the add-on, aggregate (totals computed in the source, only retained documents' lines transferred), or auto by scope size"), r: MigrationRun = Depends(get_run), db: Session = Depends(get_db), p: Principal = Depends(require("run:start"))):
+def run_reconcile_again(mode: str = Query("auto", pattern="^(auto|rows|aggregate)$", description="rows: read the scope's rows through the adapters; aggregate: totals computed in the source (only retained documents' lines transferred) and, when the target hosts the add-on, in the target (journal line items not read back); auto: per side by journal size"), r: MigrationRun = Depends(get_run), db: Session = Depends(get_db), p: Principal = Depends(require("run:start"))):
     """Re-run the three-layer reconciliation of a completed run through the adapters (source over the RFC add-on,
     target over the released APIs; record-store systems read directly) and replace its results and report."""
     from ..reconciliation.views import ReconciliationViewError
