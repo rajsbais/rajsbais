@@ -77,5 +77,12 @@ class RelationalStaging:
     def keys(self, run_id: str, table: str) -> set[str]:
         return {k for (k,) in self.session.execute(select(StagedRecord.record_key).where(StagedRecord.run_id == run_id, StagedRecord.table_name == table))}
 
+    def contains(self, run_id: str, table: str, keys) -> set[str]:
+        ks = list(set(keys))
+        found: set[str] = set()
+        for i in range(0, len(ks), 500):
+            found.update(k for (k,) in self.session.execute(select(StagedRecord.record_key).where(StagedRecord.run_id == run_id, StagedRecord.table_name == table, StagedRecord.record_key.in_(ks[i : i + 500]))))
+        return found
+
     def drop_run(self, run_id: str) -> None:
         self.session.query(StagedRecord).filter(StagedRecord.run_id == run_id).delete()

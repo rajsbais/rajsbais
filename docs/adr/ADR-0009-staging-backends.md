@@ -19,7 +19,8 @@ The backend is chosen per run and recorded in `run.metrics.staging_backend` so e
 + Staging volume leaves PostgreSQL; files are immutable per partition except for stage rewrites; parallel writers
   need no row locks; (table, key) uniqueness is enforced on write (first copy wins).
 − Transform/load rewrite whole partition files rather than updating rows; acceptable because stages are
-  partition-oriented. Row-level random access goes through `keys()` + file scans, which on object stores means one
-  GET per file; a per-file key-range index in a run manifest is the planned mitigation. Real S3/GCS behaviour
+  partition-oriented. Row-level membership goes through `contains()`, which uses the per-file sidecar index
+  (`staging/index.py`: count, min/max key, status counts, Bloom filter) to prune files by key range before reading
+  any Parquet column; `counts()` is answered from sidecars alone. Files without a sidecar are scanned, never skipped. Real S3/GCS behaviour
   (latency, eventual listing consistency on some providers) is not exercised here: tests use the in-memory and
   local filesystems.

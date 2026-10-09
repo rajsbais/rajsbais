@@ -236,3 +236,49 @@ def test_columnar_staging_file_url_and_missing_driver(tmp_path):
     assert (tmp_path / "stg" / "r" / "KNA1" / "P.parquet").exists()
     with pytest.raises(RuntimeError, match="s3fs"):
         ColumnarStaging("s3://bucket/prefix")
+
+
+def test_key_range_index_prunes_files_and_never_misses(columnar):
+    from sdtf.staging.index import Bloom, FileIndex
+
+    # bloom: no false negatives, low false positives
+    b = Bloom.for_items(1000)
+    keys = [f"5000|{i}|2024" for i in range(1000)]
+    for k in keys:
+        b.add(k)
+    assert all(b.maybe_contains(k) for k in keys)
+    fp = sum(1 for i in range(1000, 11000) if b.maybe_contains(f"5000|{i}|2024"))
+    assert fp < 300, fp
+    # three partitions with disjoint key ranges
+    for p, lo in (("P1", 1000), ("P2", 2000), ("P3", 3000)):
+        columnar.write_partition("r-idx", p, [StagedRow(p, "BSEG", f"5000|{lo + i}|2024|1", {"BUZEI": 1}) for i in range(100)])
+    fp_ = columnar.footprint("r-idx")
+    assert fp_["files"] == 3 and fp_["index_files"] == 3 and 0 < fp_["index_bytes"] < fp_["bytes"]
+    columnar.stats.update({"files_listed": 0, "files_pruned": 0, "files_scanned": 0})
+    # keys that fall outside every file's range: no Parquet file is read
+    assert columnar.contains("r-idx", "BSEG", ["5000|9999|2024|1", "5000|8888|2024|1"]) == set()
+    assert columnar.stats["files_scanned"] == 0 and columnar.stats["files_pruned"] == 3
+    # keys inside one partition's range: at most that file is scanned, and existing keys are always found
+    columnar.stats.update({"files_listed": 0, "files_pruned": 0, "files_scanned": 0})
+    want = {"5000|2010|2024|1", "5000|2050|2024|1", "5000|2999|2024|1"}
+    assert columnar.contains("r-idx", "BSEG", want) == {"5000|2010|2024|1", "5000|2050|2024|1"}
+    assert columnar.stats["files_scanned"] <= 1 and columnar.stats["files_pruned"] >= 2
+    # write-time dedup uses the index and still rejects duplicates
+    assert columnar.write_partition("r-idx", "P4", [StagedRow("P4", "BSEG", "5000|2010|2024|1", {}), StagedRow("P4", "BSEG", "5000|4000|2024|1", {})]) == 1
+    # counts come from sidecars and match the files
+    assert sum(c["count"] for c in columnar.counts("r-idx")) == 301
+    rows = list(columnar.iter_records("r-idx", partition="P2"))
+    for r in rows[:10]:
+        r.load_status = "LOADED"
+    columnar.update_records("r-idx", rows[:10])
+    assert {c["status"]: c["count"] for c in columnar.counts("r-idx")} == {"LOADED": 10, "STAGED": 291}
+    # a file without a sidecar (older writer) is still scanned, never skipped
+    idx_path = FileIndex  # noqa: F841 - documents the type under test
+    import os
+
+    sidecars = [os.path.join(dp, f) for dp, _, fs in os.walk(columnar.root) for f in fs if f.endswith(".idx.json") and "P1" in f]
+    assert len(sidecars) == 1
+    os.remove(sidecars[0])
+    columnar._index_cache.clear()
+    assert columnar.contains("r-idx", "BSEG", ["5000|1005|2024|1"]) == {"5000|1005|2024|1"}
+    assert columnar.footprint("r-idx")["index_files"] == 3  # P2, P3, P4

@@ -17,7 +17,8 @@
 | Merger (cross-source duplicate detection, collision plan blocks naive rulesets, resolved plan runs both sources into one company code with group financial PASS; API merge flow) | 3 | pass |
 | Staging & workers (columnar contract, slice on columnar staging, two in-process workers over EXTRACT/TRANSFORM/LOAD jobs, lease expiry + re-queue, two `sdtf worker` subprocesses with concurrent load jobs and zero conflicts, pipelined vs barrier overlap, crash-between-jobs self-healing, reconciliation as per-table/functional/financial jobs with summary equal to the inline path) | 7 | pass |
 | Object-store staging (fsspec `memory://` URL: contract + full slice; `file://` URL; clear error when the S3 driver is missing) | 2 | pass |
-| **Total** | **79** | **78 passed, 1 skipped by default (e2e)** |
+| Key-range index (Bloom filter has no false negatives, files outside the key range are never read, at most one file scanned for in-range keys, write-time dedup through the index, counts from sidecars, missing sidecar falls back to a scan) | 1 | pass |
+| **Total** | **80** | **79 passed, 1 skipped by default (e2e)** |
 
 Lint: `ruff check backend/sdtf backend/tests` clean. Frontend: `tsc --noEmit` and `vite build` clean.
 
