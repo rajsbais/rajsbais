@@ -11,7 +11,7 @@ async function scan(page: Page, label: string): Promise<string[]> {
 }
 
 const VIEWS = ["Control tower", "Landscape", "Readiness", "Selective designer", "Delta refresh", "Dependencies", "Conflicts", "Masking", "Execution",
-  "Reconciliation", "Lean client", "Full refresh", "Post-copy", "Orchestration", "Test catalog", "Audit", "AI agents"];
+  "Reconciliation", "Lean client", "Full refresh", "Post-copy", "Orchestration", "Benchmarks", "Test catalog", "Audit", "AI agents"];
 
 test("every view of the empty app has no accessibility violations", async ({ app }) => {
   const found: string[] = [];

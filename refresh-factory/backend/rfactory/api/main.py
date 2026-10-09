@@ -68,6 +68,34 @@ class FullRefreshIn(BaseModel):
     mechanism: str = "simulated-homogeneous-copy"
 
 
+class BenchRunIn(BaseModel):
+    source_id: str
+    windows: list[int] = [15, 30, 60, 90, 120, 180]
+    repeats: int = 2
+    company_code: str = "1000"
+
+
+class BenchSampleIn(BaseModel):
+    phase: str
+    rows: int
+    seconds: float
+    bytes: int = 0
+    environment: str
+    label: str = ""
+
+
+class BenchBindIn(BaseModel):
+    system_id: str
+    environment: str
+
+
+class BenchEstimateIn(BaseModel):
+    rows: int
+    bytes: int = 0
+    source_id: str
+    target_id: str | None = None
+
+
 class ApprovalIn(BaseModel):
     label: str
 
@@ -711,6 +739,42 @@ def create_app(data_dir: Path | None = None, persist: bool | None = None, auth: 
     @app.get("/api/full-refresh/programs/{pid}/evidence")
     def fr_evidence(pid: str, _: Principal = Depends(need("audit:read"))):
         return svc.full.evidence_report(pid)
+
+    # ---------------- benchmarks and calibrated estimates ----------------
+    @app.get("/api/benchmark/summary")
+    def bench_summary(_: Principal = Depends(need("view"))):
+        return svc.bench.summary()
+
+    @app.get("/api/benchmark/samples")
+    def bench_samples(phase: str | None = None, environment: str | None = None, _: Principal = Depends(need("view"))):
+        return [s.public() for s in reversed(svc.bench.samples) if (not phase or s.phase == phase) and (not environment or s.environment == environment)][:500]
+
+    @app.post("/api/benchmark/run")
+    def bench_run(b: BenchRunIn, p: Principal = Depends(me)):
+        if len(b.windows) > 12 or not 1 <= b.repeats <= 5 or any(w < 1 or w > 3650 for w in b.windows):
+            raise HTTPException(422, "at most 12 windows of 1-3650 days, 1-5 repeats")
+        return svc.bench.run_benchmark(p, b.source_id, tuple(b.windows), b.repeats, b.company_code)
+
+    @app.post("/api/benchmark/samples", status_code=201)
+    def bench_import(b: BenchSampleIn, p: Principal = Depends(me)):
+        return svc.bench.import_sample(p, b.model_dump()).public()
+
+    @app.post("/api/benchmark/samples/{sid}/exclude")
+    def bench_exclude(sid: str, excluded: bool = True, p: Principal = Depends(me)):
+        return svc.bench.exclude(p, sid, excluded).public()
+
+    @app.post("/api/benchmark/bind")
+    def bench_bind(b: BenchBindIn, p: Principal = Depends(me)):
+        return svc.bench.bind(p, b.system_id, b.environment)
+
+    @app.post("/api/benchmark/estimate")
+    def bench_estimate(b: BenchEstimateIn, a: Principal = Depends(need("view"))):
+        for sid in (b.source_id, b.target_id):
+            if sid:
+                svc.system(sid)
+                if not authz.visible(svc, a, sid):
+                    raise HTTPException(403, f"no access to {sid}")
+        return svc.bench.estimate(b.rows, b.bytes, b.source_id, b.target_id)
 
     # ---------------- orchestration (module 14) ----------------
     def _orch(fn, *a, **k):

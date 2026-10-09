@@ -285,3 +285,11 @@ def test_kind_check_holds_even_for_a_service_principal_that_has_the_permission(s
     assert robot.can("system:write")
     with pytest.raises(Forbidden):
         svc.agents.apply(robot, rid)
+
+
+def test_performance_agent_reports_estimate_calibration(svc):
+    r = run(svc, "performance-optimization")
+    assert any("placeholder" in f["text"] for f in r["findings"]) and r["artifacts"]["estimate_calibration"]["models"] == 0
+    svc.bench.run_benchmark(ALICE, svc.src_id, windows=(15, 30, 60, 90, 120, 180), repeats=2)
+    r = run(svc, "performance-optimization")
+    assert not any("placeholder" in f["text"] for f in r["findings"]) and r["artifacts"]["estimate_calibration"]["models"] >= 3

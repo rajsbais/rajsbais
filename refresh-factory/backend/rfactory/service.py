@@ -1,6 +1,8 @@
 """Application service: projects, workflow state machine, governance gates and report/evidence generation."""
 from __future__ import annotations
 
+import time
+
 import copy
 import io
 import json
@@ -95,7 +97,10 @@ class RefreshService:
         self.full = FullRefreshService(self)
         from .orchestration.engine import OrchestrationService
         self.orch = OrchestrationService(self)
+        from .benchmark.service import BenchmarkService
+        self.bench = BenchmarkService(self)
         self.remote_profiles: dict = {}
+        self.plan_extract_s: dict = {}
         self.store = None
         if persist:
             from .persistence.store import StateStore
@@ -301,10 +306,15 @@ class RefreshService:
         p = self.project(pid)
         if not p.manifest:
             raise Conflict("no manifest")
+        t0 = time.perf_counter()
         plan = Planner(self.source_view(p.source_id), self.reg(p)).build(p.manifest)
+        extract_s = time.perf_counter() - t0
         authz.require_plan(actor, plan, {r["WERKS"]: r["BUKRS"] for r in self.source_view(p.source_id).select("T001W")})
         p.plan, p.report, p.approval = plan, None, None
         p.status = "PLANNED"
+        self.plan_extract_s[pid] = extract_s
+        if not plan.blocking:
+            self.bench.record_plan(p, extract_s)
         rows = {t: [r for i in plan.instances.values() for r in i.rows.get(t, [])] for t in
                 {t for i in plan.instances.values() for t in i.rows}}
         self.required_sensitive[pid] = discover_sensitive(rows)
@@ -317,7 +327,7 @@ class RefreshService:
         if not p.plan:
             raise Conflict("plan not built")
         s = p.plan.summary()
-        s["estimate"] = advisors.estimate_duration(bytes_total=s["bytes"], rows_total=s["total_rows"])
+        s["estimate"] = self.bench.estimate_for_project(p)
         s["simulated"] = True
         s["source_total_rows"] = sum(self.adapters[p.source_id].table_counts().values()) if self.is_local(p.source_id) else None
         return s
@@ -511,9 +521,11 @@ class RefreshService:
 
     def _after_run(self, p: Project, run: Run) -> Run:
         if run.status == "COMPLETED":
+            t0 = time.perf_counter()
             run.reconciliation = reconcile(run, p.plan, self.source_view(p.source_id), self.adapters[p.target_id],
                                            self.engines[p.id], self.reg(p), self.required_sensitive.get(p.id, []),
                                            p.report.row_exclusions)
+            self.bench.record_run(p, run, time.perf_counter() - t0)
             run.release = run.reconciliation["release"]
             p.status = "COMPLETED" if run.release == "RELEASED" else "HELD"
             self.audit.append("system", "reconciliation.completed", run.id,

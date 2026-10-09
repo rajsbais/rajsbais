@@ -386,9 +386,9 @@ def test_data_key_rotation_reencrypts_everything_and_keeps_working(dsvc):
     p = ready_project(dsvc)
     dsvc.checkpoint()
     db = sqlite3.connect(dsvc.store.path)
-    before = {r[0]: r[1] for r in db.execute("SELECT id, blob FROM aggregates")}
+    before = {(r[0], r[1]): r[2] for r in db.execute("SELECT kind, id, blob FROM aggregates")}
     n = dsvc.store.rotate_dek()
-    after = {r[0]: r[1] for r in db.execute("SELECT id, blob FROM aggregates")}
+    after = {(r[0], r[1]): r[2] for r in db.execute("SELECT kind, id, blob FROM aggregates")}
     db.close()
     assert n == len(before) and all(before[k] != after[k] for k in before)
     q = restart(dsvc)  # restores with the same KEK (the wrapped DEK was replaced)

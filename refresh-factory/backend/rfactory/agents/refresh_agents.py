@@ -364,6 +364,15 @@ def performance_optimization(svc, params, rep: AgentReport) -> None:
     runs = [r for r in svc.runs.values() if r.status in ("COMPLETED", "FAILED")]
     rep.subject = f"{len(runs)} execution(s)"
     rep.limitations.append("Observed in a simulation: durations are in-process timings and row counts, NOT SAP benchmark figures. Do not size real jobs from them.")
+    bs = svc.bench.summary()
+    cal = [m for m in bs["models"] if m["model"]]
+    rep.artifacts["estimate_calibration"] = {"samples": bs["samples"], "models": len(cal), "accuracy": bs["accuracy"]["recent_mape"], "interval_coverage": bs["accuracy"]["interval_coverage"]}
+    if not cal:
+        rep.finding("info", "Duration estimates are still the placeholder throughput model: no phase has enough measurements. Run the benchmark (Benchmarks view) to calibrate them for the simulator, "
+                    "or import controlled measurements from a real system.", [ev("benchmark", "samples", f"{bs['samples']} sample(s), no usable model")])
+    elif bs["accuracy"]["recent_mape"] is not None and bs["accuracy"]["recent_mape"] > 0.5:
+        rep.finding("warning", f"Calibrated estimates are off by {bs['accuracy']['recent_mape']:.0%} on average over recent runs: collect more samples at the sizes you actually run, or exclude bad ones.",
+                    [ev("benchmark", "accuracy", f"MAPE {bs['accuracy']['recent_mape']}, interval coverage {bs['accuracy']['interval_coverage']}")])
     if not runs:
         rep.summary = "No executed runs yet; nothing to analyse."
         return

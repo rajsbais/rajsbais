@@ -56,7 +56,7 @@ export default function ControlTower() {
       <section className="card">
         <header><h3>Slice volume</h3></header>
         {plan ? <div className="grid two"><Bars data={plan.by_type} /><div><p className="mono big">{plan.total_rows} rows · {(plan.bytes / 1024).toFixed(1)} KB</p>
-          <p className="muted">Estimated {plan.estimate.seconds}s <Badge kind="warn">placeholder model</Badge></p></div></div>
+          <p className="muted">Estimated {plan.estimate.seconds}s {plan.estimate.basis === "calibrated" ? <Badge kind="pass">calibrated</Badge> : <Badge kind="warn">placeholder model</Badge>}</p></div></div>
           : <p className="body">Build a plan to see object counts. Estimates are planning figures, not a throughput benchmark.</p>}
       </section>
       <h3 className="section-title">Portfolio</h3>

@@ -9,5 +9,5 @@
 7. **More objects** (PP orders/BOMs and MM-IM goods movements exist, see M6): QM/PM/PS/WM-EWM, routings/operations and confirmations, batches/stock/valuation, HR/payroll masking, key remapping (REMAP).
 8. **Full refresh adapters** (SWPM, HANA, storage/VM snapshot) and **real adapters for the post-copy tasks** (the factory and its safety logic exist against simulated state).
 9. **TDM hardening** (catalog exists, simulated): Cloud ALM / Jira / Xray connectors, outbound webhooks, templates for PP, FI-AA, MM-IM and full intercompany, persistent catalog.
-10. **Benchmarks**: controlled throughput tests replacing the placeholder duration model.
+10. **Benchmarks on real systems** (calibrated estimates exist, see M18: fitted per phase and environment from simulator measurements and declared imports): controlled runs on real ECC/S/4 sandboxes, HANA/SWPM/copy timings, a multivariate model (row width, index load, parallelism), scheduled re-calibration.
 11. **UI**: remaining screens, e2e tests, accessibility audit.

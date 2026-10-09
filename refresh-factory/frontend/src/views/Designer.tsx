@@ -91,7 +91,7 @@ export default function Designer() {
               <div className="grid stats">
                 <Stat label="Business objects" value={plan.instances} /><Stat label="Rows" value={plan.total_rows} hint={`of ${plan.source_total_rows} in source`} />
                 <Stat label="Volume" value={`${(plan.bytes / 1024).toFixed(1)} KB`} />
-                <Stat label="Est. duration" value={`${plan.estimate.seconds}s`} hint="placeholder model, not a benchmark" />
+                <Stat label="Est. duration" value={`${plan.estimate.seconds}s`} hint={plan.estimate.basis === "calibrated" ? `calibrated, 80% ${plan.estimate.low}–${plan.estimate.high}s · simulator timing, not SAP` : "placeholder model, not a benchmark"} />
               </div>
               <div className="grid two">
                 <div><h3>Objects by type</h3><Bars data={plan.by_type} /></div>

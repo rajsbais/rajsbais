@@ -18,6 +18,7 @@ import Reconciliation from "./views/Reconciliation";
 import Compliance from "./views/Compliance";
 import Agents from "./views/Agents";
 import Orchestration from "./views/Orchestration";
+import Benchmarks from "./views/Benchmarks";
 
 const GROUPS: { group: string; views: { id: string; label: string; el: () => JSX.Element; perm?: string }[] }[] = [
   { group: "Overview", views: [
@@ -28,7 +29,7 @@ const GROUPS: { group: string; views: { id: string; label: string; el: () => JSX
     { id: "dependencies", label: "Dependencies", el: Dependencies },
     { id: "conflicts", label: "Conflicts", el: Conflicts }, { id: "masking", label: "Masking", el: Masking },
     { id: "execution", label: "Execution", el: Execution }, { id: "reconciliation", label: "Reconciliation", el: Reconciliation }] },
-  { group: "Basis", views: [{ id: "lean", label: "Lean client", el: LeanClient }, { id: "fullrefresh", label: "Full refresh", el: FullRefresh }, { id: "postcopy", label: "Post-copy", el: PostCopy }, { id: "orchestration", label: "Orchestration", el: Orchestration }] },
+  { group: "Basis", views: [{ id: "lean", label: "Lean client", el: LeanClient }, { id: "fullrefresh", label: "Full refresh", el: FullRefresh }, { id: "postcopy", label: "Post-copy", el: PostCopy }, { id: "orchestration", label: "Orchestration", el: Orchestration }, { id: "benchmarks", label: "Benchmarks", el: Benchmarks }] },
   { group: "Data", views: [
     { id: "catalog", label: "Test catalog", el: TestCatalog }, { id: "compliance", label: "Audit", el: Compliance, perm: "audit:read" },
     { id: "agents", label: "AI agents", el: Agents }] },
