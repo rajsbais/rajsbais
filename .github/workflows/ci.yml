@@ -28,5 +28,19 @@ jobs:
     needs: [backend, frontend]
     steps:
       - uses: actions/checkout@v4
-      - run: docker build -f deploy/Dockerfile.backend -t sdtf-backend:ci .
-      - run: docker build -f deploy/Dockerfile.frontend -t sdtf-frontend:ci .
+      # Docker Hub rate-limits unauthenticated pulls from shared runners (HTTP 429); build from the public mirror of
+      # the official images and retry a transient registry error a few times before failing the job.
+      - name: Build backend image
+        run: |
+          for i in 1 2 3; do
+            docker build --build-arg REGISTRY=public.ecr.aws/docker/library -f deploy/Dockerfile.backend -t sdtf-backend:ci . && exit 0
+            echo "backend image build attempt $i failed; retrying in $((i * 30))s" >&2; sleep $((i * 30))
+          done
+          exit 1
+      - name: Build frontend image
+        run: |
+          for i in 1 2 3; do
+            docker build --build-arg REGISTRY=public.ecr.aws/docker/library -f deploy/Dockerfile.frontend -t sdtf-frontend:ci . && exit 0
+            echo "frontend image build attempt $i failed; retrying in $((i * 30))s" >&2; sleep $((i * 30))
+          done
+          exit 1

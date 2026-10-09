@@ -1,4 +1,7 @@
-FROM python:3.12-slim AS base
+# Official Docker Library images; the registry is an argument so CI can pull from the public mirror
+# (public.ecr.aws/docker/library) when Docker Hub rate-limits unauthenticated pulls.
+ARG REGISTRY=docker.io/library
+FROM ${REGISTRY}/python:3.12-slim AS base
 ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 PIP_NO_CACHE_DIR=1
 WORKDIR /app
 COPY backend/pyproject.toml ./
