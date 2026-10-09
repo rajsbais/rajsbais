@@ -54,7 +54,7 @@ def test_all_screens_render_against_live_api():
         pg.click("button:has-text('cockpit files'), button:has-text('Re-export')")
         pg.wait_for_timeout(4000)
         txt = pg.inner_text("main")
-        assert "Migration object (hint)" in txt and "SD.BillingDocument" in txt and "Download zip" in txt
+        assert "Migration object" in txt and "Migration objects of the target release" in txt and "SD.BillingDocument" in txt and "Download zip" in txt
         pg.select_option("main select >> nth=-1", "FI.GLAccount")
         pg.click("button:has-text('Use illustrative sample')")
         pg.wait_for_timeout(2500)

@@ -408,3 +408,21 @@ class CockpitAlias(IdMixin, Base):
     created_by: Mapped[str] = mapped_column(String(64), default="")
     decided_by: Mapped[str] = mapped_column(String(64), default="")
     __table_args__ = (UniqueConstraint("project_id", "alias", "table_name", name="uq_cockpit_alias"),)
+
+
+class MigrationObjectEntry(IdMixin, Base):
+    """A migration object as the target shows it (imported from the app's object list or a release's documentation):
+    release, documented name and technical ID, with the business objects and staging tables it serves. Project
+    entries win over the catalogue (`catalog/migration_objects.py`) for their release."""
+
+    __tablename__ = "migration_object_registry"
+    project_id: Mapped[str] = mapped_column(ForeignKey("projects.id"), nullable=False, index=True)
+    release: Mapped[str] = mapped_column(String(32), default="*")  # normalised release or "*"
+    name: Mapped[str] = mapped_column(String(120), nullable=False)
+    object_id: Mapped[str] = mapped_column(String(60), default="")  # technical ID (SIF_...)
+    object_types: Mapped[list] = mapped_column(JSON, default=list)
+    tables: Mapped[list] = mapped_column(JSON, default=list)
+    notes: Mapped[str] = mapped_column(String(400), default="")
+    source: Mapped[str] = mapped_column(String(200), default="")
+    imported_by: Mapped[str] = mapped_column(String(64), default="")
+    __table_args__ = (UniqueConstraint("project_id", "release", "name", name="uq_migration_object_entry"),)

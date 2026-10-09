@@ -47,24 +47,8 @@ from .cockpit_templates import (
     templates_for,
 )
 from .loaders import EventView, object_of, plan_cockpit
+from .migration_objects import resolve_for_export
 
-# Migration object hints (SAP S/4HANA migration cockpit, "Migrate Your Data" app). Names differ between releases
-# and between the cloud and on-premise editions: verify the ID in the target before mapping the files.
-MIGRATION_OBJECT_HINTS: dict[str, str] = {
-    "FI.GLAccount": "G/L account (company code segment)",
-    "FI.AccountingDocument": "FI - Accounts receivable open item / Accounts payable open item / G/L account balance and open item",
-    "FI.FixedAsset": "Fixed asset (incl. balances)",
-    "MM.MaterialDocument": "Material - Inventory balance (stock on hand); historical movements are not migrated",
-    "MM.InvoiceReceipt": "Supplier invoice (open items) / Accounts payable open item",
-    "SD.BillingDocument": "no standard migration object for historical billing: custom migration object or archive-like history table",
-    "SD.SalesOrder": "Sales order (open) - exported here only as history that the API cannot re-create",
-    "MM.PurchaseOrder": "Purchase order (open) / PO history - exported here only as history that the API cannot re-create",
-    "SD.Delivery": "no standard migration object for goods-issued deliveries: history",
-    "PP.ProductionOrder": "Production order - components and confirmations the API does not expose",
-    "Z.ExportControl": "custom migration object (custom table)",
-    "Z.TsaScope": "custom migration object (custom table)",
-    "Z.SupplierExt": "custom migration object (custom table)",
-}
 EXPORTED_STATUSES = ("TRANSFORMED", "LOADED", "UNSUPPORTED", "CONFLICT", "REJECTED")  # has a target image; STAGED/SKIPPED/MATCHED have none or are configuration
 SS = "urn:schemas-microsoft-com:office:spreadsheet"
 
@@ -129,16 +113,18 @@ def _readme(run: MigrationRun, src: SapSystem | None, tgt: SapSystem | None, obj
     lines = [f"# Migration cockpit staging files for run {run.id}", "", f"Source: {src.sid if src else '?'} ({src.logical_system if src else ''}) -> Target: {tgt.sid if tgt else '?'} ({tgt.product if tgt else ''}), snapshot {run.snapshot_id or '-'}.", "",
              "These files hold the transformed staging-table images the initial load routes to the SAP S/4HANA migration cockpit: objects the compatibility registry assigns to the cockpit, tables the released document APIs do not expose, and histories (completed sales orders, fully delivered purchase orders, goods-issued deliveries) whose statuses the APIs cannot set.", "",
              "## How to use them", "1. In the target, open the *Migrate Your Data* app, create a migration project and select the migration objects listed below.", "2. Download the object's XML/CSV template for your release; sheet and column names come from the template, not from here.", "3. Map the columns of each `<TABLE>.csv` (SAP field names, catalog order, keys first) onto the template, or load the CSV into the template with the field list in `<OBJECT>.xml`.", "4. Upload, simulate, then migrate. Record the cockpit's own result in the cutover runbook; this package's `manifest.json` carries a sha256 per file for the evidence package.", "",
-             "## Objects", "| Business object | Migration object (hint) | Tables | Rows |", "|---|---|---|---|"]
+             f"Migration objects are looked up for the target release ({tgt.release if tgt else '-'}): entries imported from the target's object list first, then the documented catalogue (names documented per release, technical IDs unverified: confirm them in the app).", "",
+             "## Objects", "| Business object | Migration object | Source / confidence | Tables | Rows |", "|---|---|---|---|---|"]
     for ot, o in objects.items():
-        lines.append(f"| {ot} | {o['migration_object']} | {', '.join(o['tables'])} | {o['rows']} |")
+        mo = o.get("migration_object_lookup") or {}
+        lines.append(f"| {ot} | {o['migration_object']} | {mo.get('source', '-')} / {mo.get('confidence', '-')} | {', '.join(o['tables'])} | {o['rows']} |")
     tpl = {ot: o["template"] for ot, o in objects.items() if "template" in o}
     if tpl:
         lines += ["", "## Filled templates", "Objects with a registered migration object template also carry `<OBJECT>.template.xml`: the template itself with the rows written below each sheet's technical-name row, typed by its Field List. Check the mapping coverage and the mandatory fields left unmapped before uploading.", "", "| Business object | Template | Coverage | Mandatory fields unmapped | Rows |", "|---|---|---|---|---|"]
         for ot, t in tpl.items():
             missing = "; ".join(f"{sh}: {', '.join(v)}" for sh, v in t["mandatory_missing"].items()) or "-"
             lines.append(f"| {ot} | {t['source']} | {t['mapped']}/{t['total']} | {missing} | {t['rows']} |")
-    lines += ["", "## What this export is not", "* The generic workbooks are not the target's migration object templates: those are release specific and must be downloaded from the app and registered per project; only `<OBJECT>.template.xml` files are built from a registered template, and their mapping is automatic plus recorded overrides, verified only against illustrative samples.", "* Migration object names are hints to verify; the platform never read them from a system.", "* Rows whose `load_status` is LOADED were accepted by the simulated gateway's cockpit; on a real target the cockpit's simulation decides.", "* Values are written as the transformed images hold them (dates YYYYMMDD, amounts as decimals, flags X/blank)."]
+    lines += ["", "## What this export is not", "* The generic workbooks are not the target's migration object templates: those are release specific and must be downloaded from the app and registered per project; only `<OBJECT>.template.xml` files are built from a registered template, and their mapping is automatic plus recorded overrides, verified only against illustrative samples.", "* Migration object names come from the catalogue of documented objects per release unless imported from the target; technical IDs from the catalogue are unverified and must be confirmed in the app's object list.", "* Rows whose `load_status` is LOADED were accepted by the simulated gateway's cockpit; on a real target the cockpit's simulation decides.", "* Values are written as the transformed images hold them (dates YYYYMMDD, amounts as decimals, flags X/blank)."]
     return "\n".join(lines) + "\n"
 
 
@@ -210,10 +196,11 @@ def export_cockpit_files(session: Session, run_id: str, out_dir: str | None = No
             rows.sort(key=lambda r: tuple(_cell(r.get(k)) for k in keys))
             if "csv" in formats:
                 put(f"{ot}/{t}.csv", _csv_bytes(cols, rows))
-        hint = MIGRATION_OBJECT_HINTS.get(ot, "verify the migration object for this table in the target release")
+        mo = resolve_for_export(session, run.project_id, tgt.release if tgt else "", ot, list(tables))
+        hint = (f"{mo['name']} [{mo['id']}]" if mo.get("id") else mo["name"]) if mo["status"] == "found" else (("one of " + ", ".join(mo["candidates"])) if mo["status"] == "candidates" else mo["note"])
         if "xml" in formats:
             put(f"{ot}.xml", _workbook_bytes(ot, hint, run, tables))
-        objects[ot] = {"migration_object": hint, "reasons": sorted(labels[ot]), "tables": list(tables), "rows": sum(len(r) for _, r in tables.values()), "rows_by_table": {t: len(r) for t, (_, r) in tables.items()}, "load_status": dict(statuses[ot])}
+        objects[ot] = {"migration_object": hint, "migration_object_lookup": mo, "reasons": sorted(labels[ot]), "tables": list(tables), "rows": sum(len(r) for _, r in tables.values()), "rows_by_table": {t: len(r) for t, (_, r) in tables.items()}, "load_status": dict(statuses[ot])}
         trow = templates.get(ot)
         if trow is not None:
             tpl = parse_template(trow.content)
@@ -234,7 +221,7 @@ def export_cockpit_files(session: Session, run_id: str, out_dir: str | None = No
         for rel in sorted(files):
             zf.write(os.path.join(base, rel), rel)
         zf.write(os.path.join(base, "manifest.json"), "manifest.json")
-    summary = {"exported": True, "templates": sum(1 for o in objects.values() if "template" in o), "dir": base, "zip": zip_path, "manifest_sha256": _sha(manifest_bytes), "generated_at": manifest["generated_at"], "objects": {ot: {k: (v if k != "template" else {kk: vv for kk, vv in v.items() if kk != "sheets"}) for k, v in o.items() if k != "rows_by_table"} for ot, o in objects.items()}, "files": len(files) + 1, "rows": manifest["rows"], "formats": list(formats)}
+    summary = {"exported": True, "templates": sum(1 for o in objects.values() if "template" in o), "release": tgt.release if tgt else "", "dir": base, "zip": zip_path, "manifest_sha256": _sha(manifest_bytes), "generated_at": manifest["generated_at"], "objects": {ot: {k: (v if k != "template" else {kk: vv for kk, vv in v.items() if kk != "sheets"}) for k, v in o.items() if k not in ("rows_by_table",)} for ot, o in objects.items()}, "files": len(files) + 1, "rows": manifest["rows"], "formats": list(formats)}
     run.report = {**(run.report or {}), "cockpit_export": summary}
     record_event(session, actor, "COCKPIT_EXPORTED", "RUN", run.id, {"objects": len(objects), "rows": summary["rows"], "files": summary["files"], "manifest_sha256": summary["manifest_sha256"]})
     session.flush()

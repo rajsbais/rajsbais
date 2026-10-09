@@ -73,6 +73,16 @@ Alembic (`backend/alembic.ini`, `backend/sdtf/migrations`). `alembic upgrade hea
   in row 7, hidden SAP Field column) and names every assumption otherwise; the Runs page shows the verdict per
   template. Filled files are line oriented and go through SAP's own XML file splitter (see
   docs/cockpit-template-validation.md).
+* **Migration object IDs per release**: the files of every cockpit object are labelled with the migration object
+  they are for, resolved for the target's release (`SapSystem.release`, e.g. `2023`, `S/4HANA 2023 FPS01`,
+  `cloud`): the project's registry first, then the catalogue of documented objects (`catalog/migration_objects.py`:
+  names per release with their renames Vendor -> Supplier, Material -> Product, availability such as "Sales order
+  (open)" from 1709; technical `SIF_*` IDs are hints marked *unverified*). Accounting documents resolve per staging
+  table (BSID -> receivable, BSIK -> payable, BKPF/BSEG -> G/L balance and open item). Make it authoritative by
+  importing the target's object list: `POST /projects/{id}/migration-objects/import` with
+  `[{name, id, release, object_types, tables}]`, `sdtf migration-objects import --project <id> --file list.json`,
+  or the paste box on the Runs page; `sdtf migration-objects list --release 2023` prints the catalogue and
+  `--project <id>` the project's resolution. The export manifest and README carry name, ID, source and confidence.
 * **Template field names (aliases)**: a template field resolves by its own DDIC name, then by a *project alias*,
   then by the global catalogue of BAPI-style names (`catalog/fields.py`, from the public BAPI structures:
   `COMP_CODE`, `PSTNG_DATE`, `AMT_DOCCUR`, `MOVE_TYPE`, ...), then by its Field List description matching the

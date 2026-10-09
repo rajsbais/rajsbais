@@ -57,6 +57,19 @@ def main(argv=None):
     tc.add_argument("--file", required=True)
     tc.add_argument("--object", default=None, help="business object: also print the automatic mapping report")
     tc.add_argument("--json", action="store_true")
+    mo = sub.add_parser("migration-objects", help="migration object lookup per S/4HANA release: list the catalogue, resolve a business object, import the target's object list for a project")
+    mosub = mo.add_subparsers(dest="mcmd", required=True)
+    ml = mosub.add_parser("list", help="catalogue (or the project's resolution table) for a release")
+    ml.add_argument("--release", default=None)
+    ml.add_argument("--project", default=None, help="resolve for this project's registry and target release")
+    ml.add_argument("--object", default="", help="business object to resolve")
+    ml.add_argument("--json", action="store_true")
+    mi = mosub.add_parser("import", help="import entries [{name, id, release, object_types, tables, notes}] from a JSON file")
+    mi.add_argument("--project", required=True)
+    mi.add_argument("--file", required=True)
+    mi.add_argument("--release", default=None)
+    mi.add_argument("--replace", action="store_true")
+    mi.add_argument("--source", default="")
     a = ap.parse_args(argv)
     if a.cmd == "fake-idp":
         from .security.fake_idp import main as fake_idp_main
@@ -80,6 +93,46 @@ def main(argv=None):
             else:
                 print(run.report["markdown"])
                 print(f"project_id={out['project'].id} manifest_id={out['manifest'].id} run_id={run.id}")
+        return 0
+    if a.cmd == "migration-objects":
+        from .catalog.migration_objects import catalogue, lookup_table
+
+        if a.mcmd == "list" and not a.project:
+            rows = lookup_table(a.object, a.release) if a.object else None
+            if a.json:
+                print(json.dumps(rows if rows is not None else catalogue(a.release), indent=2, default=str))
+            elif rows is not None:
+                for ot, r in rows.items():
+                    print(f"{ot}: {r['status']} {r['name']} [{r['id'] or '-'}] ({r['source']}, {r['confidence']}) {r['note']}")
+            else:
+                for c in catalogue(a.release):
+                    print(f"{c['key']:24} {c['name'] or '(not available in ' + str(a.release) + ')':45} id hint {c['id_hint']:24} for {', '.join(c['object_types']) or '-'}")
+            return 0
+        from .runtime.migration_objects import entry_out, import_entries, project_lookup
+
+        with session_scope() as session:
+            if a.mcmd == "import":
+                entries = json.load(open(a.file, encoding="utf-8"))
+                if isinstance(entries, dict):
+                    entries = entries.get("entries", [])
+                try:
+                    rows = import_entries(session, a.project, entries, "cli", a.release, a.replace, a.source)
+                except ValueError as e:
+                    print(str(e), file=sys.stderr)
+                    return 2
+                session.commit()
+                print(f"imported {len(rows)} migration object(s) for project {a.project}")
+                for e in rows:
+                    print(f"  {e.release:6} {e.name} [{e.object_id or '-'}] -> {', '.join(e.object_types or []) or '-'}")
+                return 0
+            res = project_lookup(session, a.project, a.release, a.object)
+            if a.json:
+                print(json.dumps(res, indent=2, default=str))
+            else:
+                print(f"project {a.project}, release {res['release'] or '-'} ({res['normalized_release'] or 'unknown'}), {res['registry_entries']} registry entries")
+                for ot, r in res["objects"].items():
+                    print(f"  {ot}: {r['status']} {r['name']} [{r['id'] or '-'}] ({r['source']}, {r['confidence']}) {r['note']}")
+            _ = entry_out
         return 0
     if a.cmd == "cockpit-template":
         from .runtime.cockpit_templates import (

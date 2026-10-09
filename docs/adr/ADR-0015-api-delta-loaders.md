@@ -83,7 +83,10 @@ by the target, derived prices and statuses.
   Template field names resolve through the DDIC name, the project's confirmed aliases, the global catalogue of
   BAPI-style names (`catalog/fields.py`) and the Field List description against the DDIC descriptions; unknown
   names and disagreeing global aliases are proposed per project and confirmed or rejected by an architect, so the
-  catalogue grows from real Field Lists without silent guesses.
+  catalogue grows from real Field Lists without silent guesses. The migration object each file set is for is looked
+  up per target release (`catalog/migration_objects.py`: documented names with renames and availability per
+  release, technical IDs as unverified hints) with a project registry imported from the target's object list
+  taking precedence; the manifest records name, ID, source and confidence.
 * Pricing, statuses and open items are *modelled*, not SAP's: a real target prices from condition records and
   derives statuses from subsequent documents. The simulator's business activity is restricted to changes the
   released APIs can convey (quantities, master attributes, new documents, item deletions).

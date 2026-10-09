@@ -11,6 +11,7 @@ from .core import (  # noqa: F401
     ExtractionJob,
     GraphEdge,
     GraphNode,
+    MigrationObjectEntry,
     MigrationRun,
     OrgUnit,
     Project,

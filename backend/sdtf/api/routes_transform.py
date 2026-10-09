@@ -641,6 +641,71 @@ def cockpit_alias_delete(project_id: str, alias_id: str, db: Session = Depends(g
     return Response(status_code=204)
 
 
+class MigrationObjectImport(BaseModel):
+    entries: list[dict] = Field(..., description="[{name, id?, release?, object_types?, tables?, notes?}] as the target's object list shows them")
+    release: str | None = Field(None, description="default release for entries without one; omit for any release")
+    replace: bool = Field(False, description="drop the project's other entries first")
+    source: str = Field("", description="where the list comes from (app export, documentation page)")
+
+
+@router.get("/migration-objects/catalogue", tags=["runs"])
+def migration_object_catalogue(release: str | None = None, p: Principal = Depends(require("project:read"))):
+    """Documented migration objects, with the name valid in `release` (renames applied) and the unverified ID hints."""
+    from ..catalog.migration_objects import (
+        CATALOGUE_SOURCE,
+        ON_PREMISE_RELEASES,
+        catalogue,
+        normalize_release,
+    )
+
+    return {"release": release, "normalized_release": normalize_release(release) if release else "", "releases": list(ON_PREMISE_RELEASES) + ["CLOUD"], "source": CATALOGUE_SOURCE, "objects": catalogue(release)}
+
+
+@router.get("/migration-objects/lookup", tags=["runs"])
+def migration_object_lookup(object_type: str, release: str, table: str | None = None, p: Principal = Depends(require("project:read"))):
+    from ..catalog.migration_objects import lookup
+
+    return lookup(object_type, release, table)
+
+
+@router.get("/projects/{project_id}/migration-objects", tags=["runs"])
+def project_migration_objects(project_id: str, release: str | None = None, object_type: str = "", db: Session = Depends(get_db), p: Principal = Depends(require("project:read"))):
+    """The project's registry (imported from the target) and the resolution per business object for the target's
+    release (or `release`)."""
+    from ..models import MigrationObjectEntry
+    from ..runtime.migration_objects import entry_out, project_lookup
+
+    assert_project_access(db, p, project_id)
+    rows = db.execute(select(MigrationObjectEntry).where(MigrationObjectEntry.project_id == project_id).order_by(MigrationObjectEntry.release, MigrationObjectEntry.name)).scalars().all()
+    return {**project_lookup(db, project_id, release, object_type), "registry": [entry_out(e) for e in rows]}
+
+
+@router.post("/projects/{project_id}/migration-objects/import", tags=["runs"], status_code=201)
+def project_migration_objects_import(project_id: str, req: MigrationObjectImport, db: Session = Depends(get_db), p: Principal = Depends(require("project:write"))):
+    from ..runtime.migration_objects import entry_out, import_entries
+
+    assert_project_access(db, p, project_id)
+    try:
+        rows = import_entries(db, project_id, req.entries, p.username, req.release, req.replace, req.source)
+    except ValueError as e:
+        raise HTTPException(422, str(e)) from None
+    return [entry_out(e) for e in rows]
+
+
+@router.delete("/projects/{project_id}/migration-objects/{entry_id}", tags=["runs"], status_code=204)
+def project_migration_object_delete(project_id: str, entry_id: str, db: Session = Depends(get_db), p: Principal = Depends(require("project:write"))):
+    from ..models import MigrationObjectEntry
+
+    assert_project_access(db, p, project_id)
+    e = db.get(MigrationObjectEntry, entry_id)
+    if e is None or e.project_id != project_id:
+        raise HTTPException(404, "entry not found")
+    record_event(db, p.username, "MIGRATION_OBJECT_DELETED", "PROJECT", project_id, {"name": e.name, "release": e.release})
+    db.delete(e)
+    db.flush()
+    return Response(status_code=204)
+
+
 # -------------------------------------------------------------------------------------------- agents
 @router.get("/agents", tags=["agents"])
 def agents(p: Principal = Depends(current_principal)):
@@ -710,7 +775,7 @@ CAPABILITIES = [
     {"area": "Observability (OpenTelemetry traces, metrics, trace-correlated JSON logs)", "status": "IMPLEMENTED", "note": "OTLP/HTTP export when OTEL_EXPORTER_OTLP_ENDPOINT is set; no-op otherwise"},
     {"area": "Target load", "status": "SIMULATED", "note": "Initial load and delta cycles go through the released S/4HANA APIs (business partner, product, sales/purchase order, delivery, journal entry with target numbering) and the migration cockpit for histories and cockpit objects, on the simulated gateway or an HTTPS target; verified on the simulated gateway only (ADR-0015). load_mode=direct keeps the simulated direct loader"},
     {"area": "Migration cockpit staging-file export", "status": "IMPLEMENTED", "note": "CSV per staging table and SpreadsheetML workbook per migration object for the rows the initial load routes to the cockpit, with manifest, checksums and zip; generic workbooks are not the target's templates (migration object names are hints to verify)"},
-    {"area": "Template-driven cockpit export", "status": "IMPLEMENTED", "note": "Registered migration object templates (the app's XML workbooks) are parsed (Field List incl. hidden SAP Structure/SAP Field columns, hidden technical rows, merged key cell), mapped automatically (same names, BAPI-style aliases, parent/related keys, recorded overrides) with a coverage report, and filled with typed, line-oriented cells; verified against the layout SAP documents and SAP's own XML file splitter on filled files, not against a template downloaded from a release (check endpoint and CLI report deviations); alias catalogue of BAPI-style template names extended from the public BAPI structures, project aliases learned from a template's Field List by DDIC description match and confirmed by an architect"},
+    {"area": "Template-driven cockpit export", "status": "IMPLEMENTED", "note": "Registered migration object templates (the app's XML workbooks) are parsed (Field List incl. hidden SAP Structure/SAP Field columns, hidden technical rows, merged key cell), mapped automatically (same names, BAPI-style aliases, parent/related keys, recorded overrides) with a coverage report, and filled with typed, line-oriented cells; verified against the layout SAP documents and SAP's own XML file splitter on filled files, not against a template downloaded from a release (check endpoint and CLI report deviations); alias catalogue of BAPI-style template names extended from the public BAPI structures, project aliases learned from a template's Field List by DDIC description match and confirmed by an architect; migration object lookup per target release (documented names with renames and availability, unverified ID hints) with a project registry imported from the target's object list"},
     {"area": "Reconciliation (technical/functional/financial)", "status": "IMPLEMENTED", "note": "Runs on simulated data"},
     {"area": "Audit trail & evidence packages", "status": "IMPLEMENTED", "note": "Hash-chained events, evidence index"},
     {"area": "AI agents", "status": "IMPLEMENTED", "note": "12 bounded heuristic agents; LLM reasoner planned"},
