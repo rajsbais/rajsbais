@@ -153,6 +153,11 @@ class SmokeIn(BaseModel):
     confirm: bool = False  # "this is a sandbox or a copy and the user is read-only"
 
 
+class WriteRequestIn(BaseModel):
+    note: str = ""
+    attest_outbound_inactive: bool = False  # "I checked that the system's outbound interfaces / jobs are inactive"
+
+
 class AgentRunIn(BaseModel):
     params: dict = Field(default_factory=dict)
     narrate: bool = False
@@ -454,6 +459,18 @@ def create_app(data_dir: Path | None = None, persist: bool | None = None, auth: 
             raise HTTPException(422, f"invalid system or profile: {e}")
         return svc.smoke_remote(p, system, profile, b.tables, b.max_rows)
 
+    @app.post("/api/systems/{sid}/write-request")
+    def write_request(sid: str, b: WriteRequestIn, p: Principal = Depends(me)):
+        return svc.request_remote_write(p, sid, b.note, b.attest_outbound_inactive)
+
+    @app.post("/api/systems/{sid}/write-approve")
+    def write_approve(sid: str, p: Principal = Depends(me)):
+        return svc.approve_remote_write(p, sid)
+
+    @app.post("/api/systems/{sid}/write-revoke")
+    def write_revoke(sid: str, p: Principal = Depends(me)):
+        return svc.revoke_remote_write(p, sid)
+
     @app.get("/api/systems/{sid}/remote")
     def remote_info(sid: str, _: Principal = Depends(need("view"))):
         svc.system(sid)
@@ -461,7 +478,8 @@ def create_app(data_dir: Path | None = None, persist: bool | None = None, auth: 
             raise HTTPException(409, "this system is simulated, not remote")
         a, prof = svc.adapters[sid], svc.remote_profiles.get(sid)
         return {"profile": prof.public() if prof else None, "capabilities": a.capabilities(), "stats": a.stats.public(), "schema_drift": a.drift,
-                "change_documents": svc.change_doc_info(sid), "gaps": a.gaps() if hasattr(a, "gaps") else {}, "validated_against_real_sap": False}
+                "change_documents": svc.change_doc_info(sid), "write": {"request": svc.write_requests.get(sid), "writable": svc.system(sid).can_be_write_target,
+                                                                  "approval": (prof.options.get("write") if prof else None)}, "gaps": a.gaps() if hasattr(a, "gaps") else {}, "validated_against_real_sap": False}
 
     @app.post("/api/demo/connect-fake-rfc", status_code=201)
     def demo_connect_fake(change_documents: bool = False, p: Principal = Depends(need("system:write"))):

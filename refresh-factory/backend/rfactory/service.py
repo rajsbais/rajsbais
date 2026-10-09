@@ -102,6 +102,7 @@ class RefreshService:
         self.bench = BenchmarkService(self)
         self.remote_profiles: dict = {}
         self.plan_extract_s: dict = {}
+        self.write_requests: dict = {}
         self.store = None
         if persist:
             from .persistence.store import StateStore
@@ -172,8 +173,12 @@ class RefreshService:
                 from .sap.connectors.fake_odata import FakeODataTransport
                 from .sap.connectors.fake_rfc import FakeRfcTransport
                 from .sap.synthetic import make_demo_pair
-                sim, _t = make_demo_pair()
-                transport = FakeRfcTransport(sim) if profile.kind == "rfc" else FakeODataTransport(sim)
+                sim, tsim = make_demo_pair()
+                if profile.kind == "rfc" and host.startswith("target."):  # a FAKE loader on a writable simulated sandbox (for tests of the write path)
+                    from .sap.connectors.fake_loader import FakeLoaderTransport
+                    transport, sim = FakeLoaderTransport(tsim, sid=system.sid, client=system.client), tsim
+                else:
+                    transport = FakeRfcTransport(sim) if profile.kind == "rfc" else FakeODataTransport(sim)
                 reference = sim.reference_date
         if transport is None:
             try:
@@ -216,6 +221,88 @@ class RefreshService:
                                                                     "verdict": levels, "max_rows": max_rows})
         return rep
 
+    # ---------------- write access to a remote non-production system (two people) ----------------
+    def _remote_rfc(self, sid: str):
+        from .sap.connectors.rfc import RfcSourceAdapter
+        s, a = self.system(sid), self.adapters.get(sid)
+        if self.is_local(sid) or not isinstance(a, RfcSourceAdapter):
+            raise Conflict("only a connected RFC system can be enabled as a write target")
+        return s, a
+
+    def request_remote_write(self, actor: Principal, sid: str, note: str = "", attest_outbound_inactive: bool = False) -> dict:
+        """Step 1 of 2: a person with system:write asks to let the platform WRITE to a connected non-production system. Nothing is enabled yet."""
+        from .sap.connectors.rfc_target import RfcTargetAdapter
+        from .sap.connectors.rfc import RemoteError
+        from .sap.adapter import ProductionWriteBlocked
+        if actor.kind != "human" or not actor.can("system:write"):
+            raise Forbidden("a human with system:write is required")
+        authz.require_systems(self, actor, sid)
+        s, a = self._remote_rfc(sid)
+        if s.is_production:
+            raise Forbidden(f"{s.label} is a production system: the platform never writes to production")
+        if isinstance(a, RfcTargetAdapter):
+            raise Conflict("this system is already enabled as a write target")
+        probe = RfcTargetAdapter(s, a._t._inner, a.profile, sleep=a._sleep, reference=a._reference)
+        try:
+            info = probe.handshake()
+        except (RemoteError, ProductionWriteBlocked) as e:
+            raise Conflict(f"the loader on {s.label} is not ready: {e}")
+        req = {"id": f"wr-{uuid.uuid4().hex[:8]}", "system_id": sid, "requested_by": actor.id, "at": datetime.now(timezone.utc).isoformat(), "note": note[:300],
+               "outbound_inactive_attested": bool(attest_outbound_inactive), "handshake": {k: info[k] for k in ("version", "sid", "client", "category", "writes_enabled", "allowed_tables")},
+               "status": "PENDING"}
+        self.write_requests[sid] = req
+        self.audit.append(actor.id, "target.write_requested", sid, {"request": req["id"], "attested": req["outbound_inactive_attested"], "allowed_tables": len(info["allowed_tables"])})
+        return req
+
+    def approve_remote_write(self, approver: Principal, sid: str) -> dict:
+        """Step 2 of 2: a DIFFERENT person with target:approve enables writing. The platform's other gates (plan approval, separation of duties,
+        reconciliation, release) still apply to every refresh."""
+        from .sap.connectors.rfc_target import RfcTargetAdapter
+        from .sap.connectors.rfc import RemoteError
+        from .sap.adapter import ProductionWriteBlocked
+        if approver.kind != "human" or not approver.can("target:approve"):
+            raise Forbidden("a human with target:approve (security officer) is required")
+        authz.require_systems(self, approver, sid)
+        s, a = self._remote_rfc(sid)
+        req = self.write_requests.get(sid)
+        if not req or req["status"] != "PENDING":
+            raise Conflict("there is no pending write request for this system")
+        if approver.id == req["requested_by"]:
+            raise Forbidden("separation of duties: the person who asked for write access cannot approve it")
+        if s.is_production:
+            raise Forbidden("production systems are never write targets")
+        s.writable_target_allowed = True  # the adapter checks this on every write
+        target = RfcTargetAdapter(s, a._t._inner, a.profile, sleep=a._sleep, reference=a._reference)
+        try:
+            info = target.handshake()  # re-checked now: the SAP side may have changed since the request
+        except (RemoteError, ProductionWriteBlocked) as e:
+            s.writable_target_allowed = False
+            raise Conflict(f"the loader on {s.label} is no longer ready: {e}")
+        a.profile.options["write"] = {"requested_by": req["requested_by"], "approved_by": approver.id, "approved_at": datetime.now(timezone.utc).isoformat(),
+                                      "outbound_attested_by": approver.id if req["outbound_inactive_attested"] else None}
+        self.adapters[sid] = target
+        req["status"] = "APPROVED"
+        req["approved_by"] = approver.id
+        self.audit.append(approver.id, "target.write_approved", sid, {"request": req["id"], "requested_by": req["requested_by"], "outbound_attested": req["outbound_inactive_attested"],
+                                                                      "tables": info["allowed_tables"]})
+        return req
+
+    def revoke_remote_write(self, actor: Principal, sid: str) -> dict:
+        """Anyone responsible may switch writing off again at any time."""
+        from .sap.connectors.rfc import RfcSourceAdapter
+        from .sap.connectors.rfc_target import RfcTargetAdapter
+        if actor.kind != "human" or not (actor.can("system:write") or actor.can("target:approve")):
+            raise Forbidden("a human with system:write or target:approve is required")
+        authz.require_systems(self, actor, sid)
+        s, a = self._remote_rfc(sid)
+        s.writable_target_allowed = False
+        if isinstance(a, RfcTargetAdapter):
+            self.adapters[sid] = RfcSourceAdapter(s, a._t._inner, a.profile, sleep=a._sleep, reference=a._reference)
+        a.profile.options.pop("write", None)
+        req = self.write_requests.pop(sid, None)
+        self.audit.append(actor.id, "target.write_revoked", sid, {"request": (req or {}).get("id")})
+        return {"system_id": sid, "writable": False}
+
     def change_doc_info(self, sid: str) -> dict:
         """What the change-document reader of a remote system covers, and what it did last."""
         a = self.adapters[sid]
@@ -236,6 +323,9 @@ class RefreshService:
         try:
             if profile.kind == "odata":
                 return ODataSourceAdapter(system, HttpODataTransport(profile), profile)
+            if (profile.options.get("write") or {}).get("approved_by") and system.writable_target_allowed:
+                from .sap.connectors.rfc_target import RfcTargetAdapter
+                return RfcTargetAdapter(system, PyRfcTransport(profile), profile)  # approved earlier; the handshake runs again before every run
             return RfcSourceAdapter(system, PyRfcTransport(profile), profile)
         except Exception as e:  # noqa: BLE001 - no SDK, no network, no credentials
             return DisconnectedAdapter(system, profile, f"{type(e).__name__}: {e}"[:160])
@@ -554,6 +644,8 @@ class RefreshService:
         target = self.adapters[p.target_id]
         if target.system.is_production:
             raise ProductionWriteBlocked("production systems are never writable")
+        if not target.system.can_be_write_target:
+            raise Forbidden(f"{target.system.label} is locked against being overwritten (write access was revoked or never approved)")
         engine = MaskingEngine(p.masking_policy)
         self.engines[pid] = engine
         self.reg(p)

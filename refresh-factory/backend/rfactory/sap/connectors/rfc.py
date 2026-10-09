@@ -420,7 +420,7 @@ class DisconnectedAdapter:
     def _down(self, *a, **k):
         raise RemoteError(f"{self.system.label} is disconnected ({self.reason}); reconnect it before use")
 
-    select = lookup = get = count = table_counts = discover = reference_date = change_seq = changes_since = change_coverage = select_in = select_between = gaps = _down
+    select = lookup = get = count = table_counts = discover = reference_date = change_seq = changes_since = change_coverage = select_in = select_between = gaps = assert_writable = upsert = delete = set_number_level = number_level = owner_of = outbound_interfaces = _down
 
     def capabilities(self) -> dict:
         return {"connected": False, "reason": self.reason}

@@ -14,6 +14,8 @@ export default function Landscape() {
   const act = useAction();
   const [f, setF] = useState({ kind: "rfc", sid: "", role: "SBX", client: "100", host: "", sysnr: "00", user: "", pwEnv: "", cd: false, maxRows: 500, cpm: 120, confirm: false });
   const [smoke, setSmoke] = useState<J>(null);
+  const [attest, setAttest] = useState(false);
+  const [wnote, setWnote] = useState("");
   const profileOf = () => ({
     system: { sid: f.sid.toUpperCase(), client: f.client, role: f.role, owner: "onboarding" },
     profile: f.kind === "rfc"
@@ -120,6 +122,25 @@ export default function Landscape() {
             : <p className="small muted">Change documents: off. {remote.change_documents.note}</p>}
           {remote.profile?.kind === "odata" && <p className="small">OData mapping: {remote.capabilities.mapped_tables.join(", ")}. Tables with fields the API does not supply: {Object.entries(remote.capabilities.tables_with_gaps).map(([t, f]: J) => `${t} (${f.join(", ")})`).join("; ") || "none"}.
             {" "}{remote.capabilities.tables_unavailable.length} other tables are unavailable through this connection, so scopes that need them are blocked in the plan instead of being copied incompletely.</p>}
+          {remote.profile?.kind === "rfc" && (
+            <div className="write-box">
+              <h3>Write access (non-production sandbox only)</h3>
+              {remote.write.writable
+                ? <p className="small"><Badge kind="warn">writable target</Badge> Approved by {remote.write.approval?.approved_by} (requested by {remote.write.approval?.requested_by}).
+                    {remote.write.approval?.outbound_attested_by ? ` Outbound interfaces attested inactive by ${remote.write.approval.outbound_attested_by}.` : " Outbound interfaces are NOT attested: every refresh will be held at the release gate."}</p>
+                : <p className="small muted">Read-only. Writing needs the loader installed by the SAP system's owner (docs/05-abap-loader.md, never compiled by the platform authors), a request from one person and an approval by a different security officer. Production is never writable.</p>}
+              {!remote.write.writable && !remote.write.request && can("system:write") && (
+                <div className="row">
+                  <label>Reason<input value={wnote} onChange={(e) => setWnote(e.target.value)} /></label>
+                  <label className="check"><input type="checkbox" checked={attest} onChange={(e) => setAttest(e.target.checked)} />I checked that the system's outbound interfaces and jobs are inactive</label>
+                  <button disabled={act.busy} onClick={() => act.run(async () => { await api.post(`/api/systems/${sel}/write-request`, { note: wnote, attest_outbound_inactive: attest }); setRemote(await api.get(`/api/systems/${sel}/remote`)); })}>Request write access</button>
+                </div>)}
+              {remote.write.request?.status === "PENDING" && !remote.write.writable && (
+                <p className="small">Request {remote.write.request.id} by {remote.write.request.requested_by} is waiting for a security officer.{" "}
+                  <button disabled={!can("target:approve") || act.busy} onClick={() => act.run(async () => { await api.post(`/api/systems/${sel}/write-approve`); await reload(); setRemote(await api.get(`/api/systems/${sel}/remote`)); })}>Approve write access</button></p>)}
+              {(remote.write.writable || remote.write.request) && (can("system:write") || can("target:approve")) && (
+                <button disabled={act.busy} onClick={() => act.run(async () => { await api.post(`/api/systems/${sel}/write-revoke`); await reload(); setRemote(await api.get(`/api/systems/${sel}/remote`)); })}>Revoke write access</button>)}
+            </div>)}
           <p className="small">Calls {remote.stats.calls} · retries {remote.stats.retries} · rows read {remote.stats.rows} · full scans {remote.stats.scans} ({remote.stats.scanned_tables.join(", ") || "none"}) · guard trips {remote.stats.guard_trips}</p>
           <p className="small">Pushed down to the system: {remote.capabilities.pushdown.join(", ")}.
             {Object.keys(remote.schema_drift).length ? ` Schema drift: ${JSON.stringify(remote.schema_drift)}` : " The modelled DDIC fields and keys all exist remotely."}</p>

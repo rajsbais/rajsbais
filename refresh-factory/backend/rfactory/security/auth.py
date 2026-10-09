@@ -18,12 +18,12 @@ PERMISSIONS: dict[str, set[str]] = {
     "scheduler": {"run:execute", "view"},  # service account for the external scheduler: can only trigger approved runs
     "basis_lead": {"postcopy:approve:basis_lead", "view"},
     "integration_owner": {"postcopy:approve:integration_owner", "view"},
-    "security_officer": {"postcopy:approve:security_officer", "view", "audit:read"},
+    "security_officer": {"postcopy:approve:security_officer", "target:approve", "view", "audit:read"},
     "viewer": {"view"},
 }
 # Permissions that an AI agent principal may never hold, whatever roles it is given.
 AGENT_FORBIDDEN = {"plan:approve", "exception:approve", "run:execute", "masking:reidentify", "system:write",
-                   "postcopy:approve:basis_lead", "postcopy:approve:integration_owner", "postcopy:approve:security_officer"}
+                   "postcopy:approve:basis_lead", "postcopy:approve:integration_owner", "postcopy:approve:security_officer", "target:approve"}
 
 
 @dataclass(frozen=True)

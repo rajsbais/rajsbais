@@ -30,6 +30,16 @@ EXTRA_DFIES = {
 }
 
 
+_REF: dict = {}
+
+
+def _reference() -> dict:
+    if not _REF:
+        from ..synthetic import build_source_dataset
+        _REF.update(build_source_dataset("ECC"))
+    return _REF
+
+
 class FakeRfcTransport:
     def __init__(self, sap, *, denied: set[str] | None = None, unstable: set[str] | None = None, widen: dict[str, int] | None = None, seed: int = 11,
                  unlogged_classes: set[str] | None = None, no_clock: bool = False):
@@ -79,6 +89,8 @@ class FakeRfcTransport:
         if table in self._meta_cache:
             return self._meta_cache[table]
         rows = self.sap.data.get(table, [])
+        if not rows:  # an empty table (a clean target): a real DDIC has fixed widths, so borrow the shape from the reference dataset
+            rows = _reference().get(table, [])
         out = []
         for pos, f in enumerate(td.fields, start=1):
             vals = [r.get(f) for r in rows if r.get(f) not in (None, "")]
