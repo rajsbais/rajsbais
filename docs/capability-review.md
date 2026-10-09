@@ -23,7 +23,7 @@ Reviewed against the master build prompt (sections A–S) on the current branch.
 |---|---|
 | Release/DB/OS, clients, org hierarchy, tables/keys/fields/sizes, custom Z tables, volumes by year/org, interfaces, jobs, S/4 impacts | **Built** against the synthetic record store; **cannot be run against a real SAP system here** (needs RFC/ABAP add-on, doc 02) |
 | Archiving/retention status, growth statistics over time | **Pending** (needs real DBSTATC / archive info; synthetic has none) |
-| Dependency graph, traversal policies, explainability, missing/shared/duplicate/cross-boundary detection | **Built** |
+| Dependency graph, traversal policies, explainability, missing/shared/duplicate/cross-boundary detection; property-graph (Neo4j) store adapter | **Built**; Neo4j adapter not exercised against a live server here |
 | Scope designer, real-time impact preview, what-if compare, versioned immutable manifest, no execution without approval | **Built** |
 | Carve-out classification (7 classes), detections, completeness and residual reports, explicit business dispositions | **Built** |
 

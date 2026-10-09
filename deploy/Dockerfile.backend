@@ -4,7 +4,7 @@ WORKDIR /app
 COPY backend/pyproject.toml ./
 COPY backend/sdtf ./sdtf
 COPY backend/alembic.ini ./
-RUN pip install --upgrade pip && pip install ".[postgres,columnar,s3,gcs,otel]"
+RUN pip install --upgrade pip && pip install ".[postgres,columnar,s3,gcs,otel,neo4j]"
 RUN useradd -r -u 10001 sdtf && mkdir -p /app/data && chown -R sdtf /app
 USER sdtf
 EXPOSE 8000

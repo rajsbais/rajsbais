@@ -19,7 +19,9 @@
 | Object-store staging (fsspec `memory://` URL: contract + full slice; `file://` URL; clear error when the S3 driver is missing) | 2 | pass |
 | Key-range index (Bloom filter has no false negatives, files outside the key range are never read, at most one file scanned for in-range keys, write-time dedup through the index, counts from sidecars, missing sidecar falls back to a scan) | 1 | pass |
 | Observability (run/stage span tree and metrics for an inline run; job spans, staging-write child spans and pruning metrics for a distributed run; error status on a failed run; JSON logs carry trace ids; no-op when disabled; health reports telemetry status) | 6 | pass |
-| **Total** | **86** | **85 passed, 1 skipped by default (e2e)** |
+| Graph store (Cypher adapter round-trip through a fake Cypher executor: batched parameterised MERGEs, per-type labels, attribute round trip, traversal parity, search, isolation; neighbourhood query shape; relational parity; missing-URI error) | 4 | pass |
+| Neo4j live integration | 1 | skipped unless `SDTF_NEO4J_URI` is set |
+| **Total** | **91** | **89 passed, 2 skipped by default (e2e, Neo4j)** |
 
 Lint: `ruff check backend/sdtf backend/tests` clean. Frontend: `tsc --noEmit` and `vite build` clean.
 

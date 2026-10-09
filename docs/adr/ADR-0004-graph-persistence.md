@@ -5,10 +5,17 @@
 The brief suggests a graph database for semantic dependencies.
 
 ## Decision
-Persist nodes/edges in `graph_nodes`/`graph_edges` and load them into an in-process adjacency structure for
-traversal. Keep the `Graph` interface (`add_node`, `add_edge`, `out_edges`, `in_edges`, `traverse`, `neighbourhood`)
-backend-agnostic so Neo4j/JanusGraph can be plugged in when instance graphs exceed memory (≈ tens of millions of edges).
+A `GraphStore` contract (`backend/sdtf/graph/store.py`) with two implementations. `RelationalGraphStore` (default)
+persists nodes/edges in `graph_nodes`/`graph_edges`. `Neo4jGraphStore` persists a property graph through batched,
+parameterised Cypher (label `SdtfNode` plus a label per object type, relationships typed by edge type, JSON
+attributes), answers statistics, node search and variable-length neighbourhoods server-side, and loads a system's
+graph into the in-process `Graph` for scope traversal. Selected by `SDTF_GRAPH_BACKEND` with `SDTF_NEO4J_URI`,
+`SDTF_NEO4J_USER`, `SDTF_NEO4J_PASSWORD`, `SDTF_NEO4J_DATABASE`. The Cypher layer is isolated around a
+`run(query, params)` callable so it is testable without a server.
 
 ## Consequences
-+ No extra infrastructure for the first increments; transactional consistency with manifests.
-− In-process traversal is bounded by memory; mitigated by building per-system graphs and pruning hub expansion.
++ No extra infrastructure by default; transactional consistency with manifests; Neo4j available for large
+  landscapes and for graph-native exploration by analysts.
+− Scope traversal still loads the system graph into memory (server-side traversal with policies is the next
+  step); the Neo4j adapter is verified at Cypher-statement level and through an opt-in integration test, not
+  against a live server in this environment.

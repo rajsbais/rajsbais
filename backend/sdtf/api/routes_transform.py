@@ -445,7 +445,7 @@ def cutover_runbook(m: ScopeManifest = Depends(get_manifest), db: Session = Depe
 CAPABILITIES = [
     {"area": "Synthetic ECC landscape", "status": "IMPLEMENTED", "note": "Deterministic generator with shared masters, cross-company documents, balanced FI"},
     {"area": "Landscape discovery", "status": "IMPLEMENTED", "note": "Runs against the record store; SAP connectors are planned"},
-    {"area": "Business object dependency graph", "status": "IMPLEMENTED", "note": "Relational persistence; property-graph backend planned"},
+    {"area": "Business object dependency graph", "status": "IMPLEMENTED", "note": "Relational store by default; Neo4j property-graph adapter (SDTF_GRAPH_BACKEND=neo4j) verified at Cypher level, not against a live server here"},
     {"area": "Selective scope designer + manifest", "status": "IMPLEMENTED", "note": "Versioned, hashed, four-eyes approval"},
     {"area": "Carve-out classification & reports", "status": "IMPLEMENTED", "note": "Completeness, residual exposure, intercompany balances"},
     {"area": "Transformation rule DSL", "status": "IMPLEMENTED", "note": "YAML DSL, validation, embedded tests, dry run"},

@@ -10,12 +10,10 @@ from __future__ import annotations
 from collections import defaultdict, deque
 from dataclasses import dataclass, field
 
-from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
 from ..catalog.business_objects import BUSINESS_OBJECTS, RELATIONSHIPS, instance_company_codes
 from ..catalog.store import RecordStore
-from ..models import GraphEdge, GraphNode
 
 
 def node_id(type_id: str, key: str) -> str:
@@ -81,25 +79,15 @@ def build_graph(store: RecordStore, system_id: str) -> Graph:
 
 
 def persist_graph(session: Session, system_id: str, g: Graph) -> dict:
-    session.execute(delete(GraphEdge).where(GraphEdge.system_id == system_id))
-    session.execute(delete(GraphNode).where(GraphNode.system_id == system_id))
-    nodes = [{"system_id": system_id, "node_id": n["id"], "node_type": n["type"], "label": n["label"][:200], "attributes": n["attributes"]} for n in g.nodes.values()]
-    for i in range(0, len(nodes), 2000):
-        session.execute(GraphNode.__table__.insert(), nodes[i : i + 2000])
-    edges = [{"system_id": system_id, "from_node": e["from"], "to_node": e["to"], "edge_type": e["type"], "attributes": e["attributes"]} for es in g.out_edges.values() for e in es]
-    for i in range(0, len(edges), 2000):
-        session.execute(GraphEdge.__table__.insert(), edges[i : i + 2000])
-    session.flush()
-    return g.stats()
+    from .store import get_graph_store
+
+    return get_graph_store(session).persist(system_id, g)
 
 
 def load_graph(session: Session, system_id: str) -> Graph:
-    g = Graph()
-    for n in session.execute(select(GraphNode.node_id, GraphNode.node_type, GraphNode.label, GraphNode.attributes).where(GraphNode.system_id == system_id)):
-        g.nodes[n[0]] = {"id": n[0], "type": n[1], "label": n[2], "attributes": n[3]}
-    for e in session.execute(select(GraphEdge.from_node, GraphEdge.to_node, GraphEdge.edge_type, GraphEdge.attributes).where(GraphEdge.system_id == system_id)):
-        g.add_edge(e[0], e[1], e[2], **(e[3] or {}))
-    return g
+    from .store import get_graph_store
+
+    return get_graph_store(session).load(system_id)
 
 
 # ------------------------------------------------------------------------------- traversal

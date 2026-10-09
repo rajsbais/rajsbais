@@ -10,6 +10,7 @@ data:
   SDTF_STAGING_FS_OPTIONS: "{}"            # e.g. {"endpoint_url": "https://minio.internal"} for S3-compatible stores
   SDTF_JOB_LEASE_SECONDS: "600"
   SDTF_LOG_FORMAT: "json"
+  SDTF_GRAPH_BACKEND: "relational"            # or neo4j with SDTF_NEO4J_URI=bolt://neo4j.graph.svc:7687 (+ SDTF_NEO4J_PASSWORD in the Secret)
   OTEL_EXPORTER_OTLP_ENDPOINT: "http://otel-collector.observability.svc:4318"   # remove to disable export
   OTEL_SERVICE_NAME: "sdtf-api"
   SDTF_DEV_USERS: "0"

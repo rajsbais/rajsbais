@@ -15,7 +15,8 @@ Legend: P0 next increment · P1 following · P2 later. Sizes are relative (S/M/L
 | ✅ | OIDC SSO + group→role mapping (done: `security/oidc.py`); UI PKCE login flow pending | M |
 | ✅ | Multi-source MERGER orchestration, key-collision planner, master-data dedup (done: `runtime/merge.py`, `catalog/dedup.py`) | L |
 | ✅ | OpenTelemetry traces/metrics/JSON logs (ADR-0011) | M |
-| P1 | Property-graph backend adapter (ADR-0004) with the same `Graph` interface | M |
+| ✅ | Property-graph backend adapter: Neo4j store behind `GraphStore` (ADR-0004) | M |
+| P1 | Server-side policy traversal in Neo4j for scope evaluation on very large graphs | M |
 | P1 | Scope designer: saved scenarios, scenario matrix comparison across >2 manifests | S |
 | P1 | Carve-out: asset vs share deal templates, residual cleanup execution with approval workflow | M |
 | P1 | Rule editor: visual mapping grid, lookup table upload, per-rule approval | M |

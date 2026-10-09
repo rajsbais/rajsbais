@@ -13,11 +13,9 @@ from ..catalog.tables import TABLES
 from ..db import get_db
 from ..demo import create_demo_project
 from ..discovery.service import discover_system, latest_snapshot
-from ..graph.service import TraversalPolicy, build_graph, load_graph, neighbourhood, persist_graph, traverse
+from ..graph.service import TraversalPolicy, build_graph, load_graph, persist_graph, traverse
 from ..models import (
     BusinessObjectInstance,
-    GraphEdge,
-    GraphNode,
     MigrationRun,
     OrgUnit,
     Project,
@@ -239,28 +237,26 @@ def graph_build(s: SapSystem = Depends(get_system), db: Session = Depends(get_db
 
 @router.get("/systems/{system_id}/graph/stats", tags=["graph"])
 def graph_stats(s: SapSystem = Depends(get_system), db: Session = Depends(get_db), p: Principal = Depends(require("project:read"))):
-    nodes = db.execute(select(GraphNode.node_type, func.count()).where(GraphNode.system_id == s.id).group_by(GraphNode.node_type)).all()
-    edges = db.execute(select(GraphEdge.edge_type, func.count()).where(GraphEdge.system_id == s.id).group_by(GraphEdge.edge_type)).all()
-    return {"nodes": sum(n for _, n in nodes), "edges": sum(n for _, n in edges), "nodes_by_type": dict(nodes), "edges_by_type": dict(edges), "relationship_model": [{"from": r.from_type, "to": r.to_type, "edge": r.edge_type, "name": r.name, "description": r.description} for r in RELATIONSHIPS]}
+    from ..graph.store import get_graph_store
+
+    return {**get_graph_store(db).stats(s.id), "relationship_model": [{"from": r.from_type, "to": r.to_type, "edge": r.edge_type, "name": r.name, "description": r.description} for r in RELATIONSHIPS]}
 
 
 @router.get("/systems/{system_id}/graph/nodes", tags=["graph"])
 def graph_nodes(s: SapSystem = Depends(get_system), node_type: str | None = None, q: str | None = None, limit: int = Query(50, le=500), db: Session = Depends(get_db), p: Principal = Depends(require("project:read"))):
-    stmt = select(GraphNode).where(GraphNode.system_id == s.id)
-    if node_type:
-        stmt = stmt.where(GraphNode.node_type == node_type)
-    if q:
-        stmt = stmt.where(GraphNode.node_id.like(f"%{q}%"))
-    rows = db.execute(stmt.limit(limit)).scalars().all()
-    return [{"id": n.node_id, "type": n.node_type, "label": n.label, "attributes": n.attributes} for n in rows]
+    from ..graph.store import get_graph_store
+
+    return get_graph_store(db).search_nodes(s.id, node_type, q, limit)
 
 
 @router.get("/systems/{system_id}/graph/neighbourhood", tags=["graph"])
 def graph_neighbourhood(node: str, depth: int = Query(2, ge=1, le=4), s: SapSystem = Depends(get_system), db: Session = Depends(get_db), p: Principal = Depends(require("project:read"))):
-    g = load_graph(db, s.id)
-    if node not in g.nodes:
+    from ..graph.store import get_graph_store
+
+    store = get_graph_store(db)
+    if not store.has_node(s.id, node):
         raise HTTPException(404, "node not found")
-    return neighbourhood(g, node, depth)
+    return store.neighbourhood(s.id, node, depth)
 
 
 class TraverseRequest(BaseModel):

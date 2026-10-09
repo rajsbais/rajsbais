@@ -13,7 +13,8 @@ migrations, deployment) for the Phase 1 foundation and the first vertical slice.
   transfers, intercompany postings, balanced FI, custom Z tables, interfaces, jobs).
 * Discovery: system facts, organisational hierarchy, table statistics, business object inventory, S/4 impacts,
   complexity score, scope estimates.
-* Business object dependency graph with explainable policy-driven traversal (Sales Order → Delivery → Goods Issue →
+* Business object dependency graph with explainable policy-driven traversal, stored relationally or in a Neo4j
+  property graph (Sales Order → Delivery → Goods Issue →
   Billing → Accounting Document → Clearing; PO → GR → IR → FI; Production Order → Consumption → Confirmation).
 * Selective scope designer → classification (fully / partially transferred, shared duplicated, retained, reference,
   excluded, manual disposition) → impact preview → **versioned, hashed, four-eyes-approved manifest**; what-if compare.
@@ -37,7 +38,7 @@ migrations, deployment) for the Phase 1 foundation and the first vertical slice.
 ## Quick start
 ```bash
 python3 -m venv .venv && . .venv/bin/activate && pip install -e "backend[dev]"
-cd backend && pytest -q                      # 85 tests (+1 opt-in UI e2e)
+cd backend && pytest -q                      # 89 tests (+ opt-in UI e2e and Neo4j integration)
 python -m sdtf.cli demo                      # full vertical slice, prints the execution report
 python -m sdtf.cli serve                     # API http://localhost:8000/docs
 cd ../frontend && npm install && npm run dev # UI http://localhost:5173 (login architect/architect)
