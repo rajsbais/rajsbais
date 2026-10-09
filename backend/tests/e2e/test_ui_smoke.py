@@ -25,6 +25,8 @@ def test_all_screens_render_against_live_api():
         pg.on("pageerror", lambda e: problems.append(("pageerror", str(e))))
         pg.on("response", lambda r: problems.append(("http", r.url, r.status)) if r.status >= 400 and "/api/" in r.url and not any(a in r.url for a in ALLOWED_403) else None)
         pg.goto(base + "/")
+        pg.wait_for_selector("form", state="attached")
+        pg.evaluate("() => { const d = document.querySelector('details'); if (d) d.open = true; }")  # dev form is collapsed when SSO is on
         pg.fill("input >> nth=0", "architect")
         pg.fill("input[type=password]", "architect")
         pg.click("button[type=submit]")

@@ -20,6 +20,11 @@ services:
       SDTF_ENV: compose
       SDTF_LOG_FORMAT: json
       OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}   # e.g. http://otel-collector:4318
+      # Single sign-on (ADR-0012): register a public client with redirect URI http://localhost:8080/auth/callback
+      SDTF_OIDC_ISSUER: ${SDTF_OIDC_ISSUER:-}            # e.g. https://idp.example.com/realms/sdtf
+      SDTF_OIDC_JWKS_URL: ${SDTF_OIDC_JWKS_URL:-}        # e.g. https://idp.example.com/realms/sdtf/protocol/openid-connect/certs
+      SDTF_OIDC_AUDIENCE: ${SDTF_OIDC_AUDIENCE:-sdtf-ui}
+      SDTF_OIDC_ROLE_MAP: ${SDTF_OIDC_ROLE_MAP:-}        # e.g. {"SAP-Migration-Architects":"architect"}; empty = identical names
     volumes: ["evidence:/app/data"]
     depends_on: { postgres: { condition: service_healthy } }
     ports: ["8000:8000"]

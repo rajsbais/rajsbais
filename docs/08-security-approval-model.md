@@ -5,7 +5,17 @@ Implemented in `backend/sdtf/security/auth.py`, enforced on every route via `Dep
 ## Identity
 * Dev build: seeded users with PBKDF2 password hashes, HMAC-SHA256 signed bearer tokens with expiry
   (`SDTF_AUTH_SECRET`, `SDTF_TOKEN_TTL`). `SDTF_DEV_USERS=0` disables seeding in production images.
-* OIDC SSO (`security/oidc.py`): RS256 bearer tokens are verified against the provider's JWKS (URL or file), issuer, audience and expiry; the groups claim is mapped to SDTF roles via `SDTF_OIDC_ROLE_MAP`, the tenant claim to the tenant. Unknown groups degrade to `viewer`. Dev HMAC tokens stay available for local use. SAML and the UI-side PKCE login flow are planned.
+* OIDC SSO (`security/oidc.py`): RS256 bearer tokens are verified against the provider's JWKS (URL or file), issuer, audience and expiry; the groups claim is mapped to SDTF roles via `SDTF_OIDC_ROLE_MAP`, the tenant claim to the tenant. Unknown groups degrade to `viewer`. Dev HMAC tokens stay available for local use (`SDTF_DEV_USERS=1`). SAML is not supported.
+* Browser login (ADR-0012): the SPA runs the **authorization code flow with PKCE (S256)** (`frontend/src/auth/`).
+  `GET /auth/oidc/config` publishes issuer, client id, scopes and endpoints (explicit `SDTF_OIDC_*_ENDPOINT`
+  settings or OIDC discovery). The SPA generates verifier/state/nonce with Web Crypto, redirects to the provider and
+  returns to `/auth/callback`; by default the **API exchanges the code** (`POST /auth/oidc/exchange`, forwarding the
+  verifier), verifies the ID token incl. nonce, picks the bearer (access token when it verifies against the API's
+  issuer/audience, else the ID token), maps groups to roles and audits a `LOGIN`. `SDTF_OIDC_EXCHANGE=browser` lets
+  the SPA call the token endpoint itself (needs CORS on the provider); the API then only verifies. Silent refresh via
+  `POST /auth/oidc/refresh` when a refresh token was issued; sign-out performs RP-initiated logout at
+  `end_session_endpoint`. A **test-only provider** (`python -m sdtf.cli fake-idp`) exercises the whole flow locally;
+  it authenticates nobody and must never be exposed.
 
 ## RBAC + ABAC
 | Role | Permissions |

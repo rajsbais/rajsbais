@@ -63,6 +63,12 @@ textarea.code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; fon
 .tree li { padding: 2px 0; }
 .tree .code { font-family: ui-monospace, monospace; color: var(--accent); margin-right: 6px; }
 .login { max-width: 380px; margin: 100px auto; }
+.login .sso { display: grid; gap: 8px; }
+.login .sso button { width: 100%; padding: 10px; }
+.login details { margin-top: 4px; }
+.login details summary { cursor: pointer; margin-bottom: 8px; }
+.login .divider { display: flex; align-items: center; gap: 10px; margin: 14px 0; color: var(--muted); font-size: 12px; }
+.login .divider::before, .login .divider::after { content: ""; flex: 1; border-top: 1px solid var(--border); }
 .graph { background: var(--panel2); border-radius: 8px; width: 100%; height: 560px; }
 .graph text { fill: var(--text); font-size: 10px; pointer-events: none; }
 .graph line { stroke: #4a5868; stroke-width: 1; }

@@ -7,8 +7,16 @@ The API accepts, in addition to the dev HMAC tokens, RS256 JWTs issued by an OID
   SDTF_OIDC_JWKS_FILE   local JWKS document (air-gapped deployments, tests)
   SDTF_OIDC_ROLE_MAP    JSON {"<group or role claim value>": "<sdtf role>"}; default maps identical names
   SDTF_OIDC_GROUPS_CLAIM claim holding groups/roles (default "groups")
-Only signature, issuer, audience and expiry are verified here; the authorization code flow itself happens in the
-identity provider / frontend (PKCE), which hands the ID/access token to the API.
+Browser login (authorization code + PKCE, RFC 7636) is driven by the SPA; the API publishes the provider
+configuration it needs (`GET /auth/oidc/config`) and, by default, performs the code exchange on the SPA's behalf
+(`POST /auth/oidc/exchange`) so the token endpoint never has to be CORS-enabled and the ID token is verified
+server-side before it is handed back:
+  SDTF_OIDC_CLIENT_ID       public client id the SPA uses (default: SDTF_OIDC_AUDIENCE)
+  SDTF_OIDC_CLIENT_SECRET   optional; only for confidential clients when the API performs the exchange
+  SDTF_OIDC_DISCOVERY_URL   `<issuer>/.well-known/openid-configuration` by default; endpoints below override it
+  SDTF_OIDC_AUTHORIZATION_ENDPOINT / SDTF_OIDC_TOKEN_ENDPOINT / SDTF_OIDC_END_SESSION_ENDPOINT
+  SDTF_OIDC_SCOPES          default "openid profile email"
+  SDTF_OIDC_EXCHANGE        api (default) | browser - who calls the token endpoint
 """
 from __future__ import annotations
 
@@ -45,10 +53,22 @@ class OidcConfig:
     groups_claim: str = field(default_factory=lambda: os.getenv("SDTF_OIDC_GROUPS_CLAIM", "groups"))
     role_map: dict = field(default_factory=lambda: json.loads(os.getenv("SDTF_OIDC_ROLE_MAP", "{}") or "{}"))
     tenant_claim: str = field(default_factory=lambda: os.getenv("SDTF_OIDC_TENANT_CLAIM", "tenant"))
+    client_id: str = field(default_factory=lambda: os.getenv("SDTF_OIDC_CLIENT_ID", ""))
+    client_secret: str = field(default_factory=lambda: os.getenv("SDTF_OIDC_CLIENT_SECRET", ""))
+    discovery_url: str = field(default_factory=lambda: os.getenv("SDTF_OIDC_DISCOVERY_URL", ""))
+    authorization_endpoint: str = field(default_factory=lambda: os.getenv("SDTF_OIDC_AUTHORIZATION_ENDPOINT", ""))
+    token_endpoint: str = field(default_factory=lambda: os.getenv("SDTF_OIDC_TOKEN_ENDPOINT", ""))
+    end_session_endpoint: str = field(default_factory=lambda: os.getenv("SDTF_OIDC_END_SESSION_ENDPOINT", ""))
+    scopes: str = field(default_factory=lambda: os.getenv("SDTF_OIDC_SCOPES", "openid profile email"))
+    exchange: str = field(default_factory=lambda: os.getenv("SDTF_OIDC_EXCHANGE", "api"))  # api | browser
 
     @property
     def enabled(self) -> bool:
         return bool(self.issuer and (self.jwks_url or self.jwks_file))
+
+    @property
+    def effective_client_id(self) -> str:
+        return self.client_id or self.audience
 
 
 class JwksCache:
@@ -87,17 +107,149 @@ class JwksCache:
 
 _cache: JwksCache | None = None
 _config: OidcConfig | None = None
+_metadata: dict | None = None
+_transport = None  # httpx transport override (tests plug a fake identity provider in here)
 
 
-def configure(cfg: OidcConfig | None = None) -> OidcConfig:
-    global _cache, _config
+def configure(cfg: OidcConfig | None = None, transport=None) -> OidcConfig:
+    global _cache, _config, _metadata, _transport
     _config = cfg or OidcConfig()
     _cache = JwksCache(_config)
+    _metadata = None
+    _transport = transport
     return _config
+
+
+def _client():
+    import httpx
+
+    return httpx.Client(transport=_transport, timeout=10)
 
 
 def config() -> OidcConfig:
     return _config or configure()
+
+
+def provider_metadata(cfg: OidcConfig | None = None) -> dict:
+    """Authorization/token/end-session endpoints: explicit settings win, the rest comes from OIDC discovery
+    (fetched once per process). Never raises - a provider that is down yields empty endpoints plus an `error`."""
+    global _metadata
+    cfg = cfg or config()
+    meta = {"authorization_endpoint": cfg.authorization_endpoint, "token_endpoint": cfg.token_endpoint, "end_session_endpoint": cfg.end_session_endpoint, "jwks_uri": cfg.jwks_url}
+    if cfg.enabled and not (meta["authorization_endpoint"] and meta["token_endpoint"]):
+        if _metadata is None:
+            url = cfg.discovery_url or cfg.issuer.rstrip("/") + "/.well-known/openid-configuration"
+            try:
+                with _client() as c:
+                    r = c.get(url)
+                    r.raise_for_status()
+                    _metadata = r.json()
+            except Exception as e:  # noqa: BLE001
+                return {**meta, "error": f"OIDC discovery failed: {e}"}
+        for k in ("authorization_endpoint", "token_endpoint", "end_session_endpoint", "jwks_uri"):
+            meta[k] = meta[k] or _metadata.get(k, "")
+    return meta
+
+
+def public_config(cfg: OidcConfig | None = None) -> dict:
+    """What the SPA needs to start a PKCE login. Contains no secrets."""
+    cfg = cfg or config()
+    if not cfg.enabled:
+        return {"enabled": False}
+    meta = provider_metadata(cfg)
+    return {"enabled": True, "issuer": cfg.issuer, "client_id": cfg.effective_client_id, "scopes": cfg.scopes, "exchange": cfg.exchange if cfg.exchange in ("api", "browser") else "api", "authorization_endpoint": meta["authorization_endpoint"], "token_endpoint": meta["token_endpoint"], "end_session_endpoint": meta["end_session_endpoint"], "pkce": "S256", **({"error": meta["error"]} if meta.get("error") else {})}
+
+
+def _unverified_claims(token: str) -> dict:
+    try:
+        return json.loads(_unb64(token.split(".")[1]))
+    except Exception:  # noqa: BLE001
+        return {}
+
+
+def _select_bearer(tokens: dict, cfg: OidcConfig, nonce: str | None) -> tuple[str, str, dict]:
+    """Pick the token the SPA should present to this API: the access token when it verifies against our
+    issuer/audience, else the ID token (whose `aud` is the client id). Returns (token, kind, claims)."""
+    id_token = tokens.get("id_token") or ""
+    if not id_token:
+        raise OidcError("token response carries no id_token")
+    id_claims = verify_jwt(id_token, cfg)
+    if nonce and id_claims.get("nonce") != nonce:
+        raise OidcError("nonce mismatch")
+    access = tokens.get("access_token") or ""
+    if access and looks_like_jwt(access):
+        try:
+            return access, "access_token", verify_jwt(access, cfg)
+        except OidcError:
+            pass
+    return id_token, "id_token", id_claims
+
+
+def _token_request(data: dict, cfg: OidcConfig) -> dict:
+    meta = provider_metadata(cfg)
+    if not meta.get("token_endpoint"):
+        raise OidcError(meta.get("error") or "token endpoint unknown")
+    data = {**data, "client_id": cfg.effective_client_id}
+    if cfg.client_secret:
+        data["client_secret"] = cfg.client_secret
+    try:
+        with _client() as c:
+            r = c.post(meta["token_endpoint"], data=data, headers={"Accept": "application/json"})
+    except Exception as e:  # noqa: BLE001
+        raise OidcError(f"token endpoint unreachable: {e}") from e
+    try:
+        body = r.json()
+    except Exception:  # noqa: BLE001
+        body = {}
+    if r.status_code != 200:
+        raise OidcError(f"token endpoint rejected the request: {body.get('error_description') or body.get('error') or r.status_code}")
+    return body
+
+
+def _login_result(tokens: dict, cfg: OidcConfig, nonce: str | None) -> dict:
+    bearer, kind, claims = _select_bearer(tokens, cfg, nonce)
+    p = principal_from_claims(claims, cfg)
+    id_claims = _unverified_claims(tokens.get("id_token", ""))
+    return {
+        "access_token": bearer,
+        "token_kind": kind,
+        "token_type": "bearer",
+        "expires_at": int(claims.get("exp", 0)),
+        "id_token": tokens.get("id_token"),
+        "refresh_token": tokens.get("refresh_token"),
+        "username": p.username,
+        "roles": p.roles,
+        "tenant_id": p.tenant_id,
+        "display_name": id_claims.get("name") or id_claims.get("preferred_username") or p.username,
+    }
+
+
+def exchange_code(code: str, code_verifier: str, redirect_uri: str, nonce: str | None = None, cfg: OidcConfig | None = None) -> dict:
+    """Authorization-code grant with PKCE on behalf of the SPA. The code verifier is forwarded untouched; the
+    returned ID token is verified (signature, issuer, audience, expiry, nonce) before anything is handed back."""
+    cfg = cfg or config()
+    if not cfg.enabled:
+        raise OidcError("OIDC is not configured")
+    if cfg.exchange == "browser":
+        raise OidcError("the browser performs the code exchange in this deployment (SDTF_OIDC_EXCHANGE=browser)")
+    tokens = _token_request({"grant_type": "authorization_code", "code": code, "code_verifier": code_verifier, "redirect_uri": redirect_uri}, cfg)
+    return _login_result(tokens, cfg, nonce)
+
+
+def refresh_tokens(refresh_token: str, cfg: OidcConfig | None = None) -> dict:
+    cfg = cfg or config()
+    if not cfg.enabled:
+        raise OidcError("OIDC is not configured")
+    tokens = _token_request({"grant_type": "refresh_token", "refresh_token": refresh_token}, cfg)
+    return _login_result(tokens, cfg, None)
+
+
+def verify_browser_tokens(tokens: dict, nonce: str | None = None, cfg: OidcConfig | None = None) -> dict:
+    """SDTF_OIDC_EXCHANGE=browser: the SPA exchanged the code itself and asks the API which token to use."""
+    cfg = cfg or config()
+    if not cfg.enabled:
+        raise OidcError("OIDC is not configured")
+    return _login_result(tokens, cfg, nonce)
 
 
 def looks_like_jwt(token: str) -> bool:

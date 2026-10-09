@@ -60,6 +60,55 @@ def me(p: Principal = Depends(current_principal)):
     return {"username": p.username, "roles": p.roles, "tenant_id": p.tenant_id}
 
 
+# OIDC browser login (authorization code + PKCE). The SPA generates verifier/challenge/state/nonce, sends the
+# user to the provider, and on return hands the code to the API which exchanges and verifies it.
+class OidcExchange(BaseModel):
+    code: str = ""
+    code_verifier: str = ""
+    redirect_uri: str = ""
+    nonce: str | None = None
+    tokens: dict | None = None  # SDTF_OIDC_EXCHANGE=browser: the SPA already holds the token response
+
+
+class OidcRefresh(BaseModel):
+    refresh_token: str
+
+
+@router.get("/auth/oidc/config", tags=["auth"])
+def oidc_config():
+    from ..config import settings
+    from ..security import oidc
+
+    return {**oidc.public_config(), "dev_login": settings.dev_users_enabled}
+
+
+@router.post("/auth/oidc/exchange", tags=["auth"])
+def oidc_exchange(req: OidcExchange, db: Session = Depends(get_db)):
+    from ..security import oidc
+
+    try:
+        if req.tokens is not None:
+            out = oidc.verify_browser_tokens(req.tokens, req.nonce)
+        else:
+            if not (req.code and req.code_verifier and req.redirect_uri):
+                raise HTTPException(422, "code, code_verifier and redirect_uri are required")
+            out = oidc.exchange_code(req.code, req.code_verifier, req.redirect_uri, req.nonce)
+    except oidc.OidcError as e:
+        raise HTTPException(401, f"OIDC login failed: {e}") from None
+    record_event(db, out["username"], "LOGIN", "USER", out["username"], {"method": "oidc", "idp": oidc.config().issuer, "token_kind": out["token_kind"]}, tenant_id=out["tenant_id"])
+    return out
+
+
+@router.post("/auth/oidc/refresh", tags=["auth"])
+def oidc_refresh(req: OidcRefresh):
+    from ..security import oidc
+
+    try:
+        return oidc.refresh_tokens(req.refresh_token)
+    except oidc.OidcError as e:
+        raise HTTPException(401, f"OIDC refresh failed: {e}") from None
+
+
 # ---------------------------------------------------------------------------------------- projects
 class ProjectCreate(BaseModel):
     name: str

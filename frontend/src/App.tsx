@@ -1,6 +1,8 @@
 import { useEffect, useState } from "react";
-import { NavLink, Route, Routes, useLocation } from "react-router-dom";
-import { currentUser, getToken, login, logout } from "./api";
+import { NavLink, Route, Routes, useLocation, useNavigate } from "react-router-dom";
+import { currentUser, login } from "./api";
+import { CALLBACK_PATH, beginOidcLogin, completeOidcLogin, isAuthenticated, oidcConfig, scheduleRefresh, signOut } from "./auth/session";
+import type { OidcPublicConfig } from "./auth/pkce";
 import { useApi, useProject } from "./hooks";
 import { Card, ErrorBox } from "./components/ui";
 import Dashboard from "./pages/Dashboard";
@@ -31,19 +33,60 @@ const NAV: { group: string; items: { to: string; label: string }[] }[] = [
   { group: "Govern", items: [{ to: "/copilot", label: "AI Transformation Copilot" }, { to: "/compliance", label: "Compliance & Evidence Center" }] },
 ];
 
-function Login({ onDone }: { onDone: () => void }) {
+function Login({ onDone, returnTo }: { onDone: () => void; returnTo: string }) {
   const [u, setU] = useState("architect");
   const [p, setP] = useState("architect");
   const [err, setErr] = useState<string | null>(null);
+  const [cfg, setCfg] = useState<OidcPublicConfig | null>(null);
+  const [busy, setBusy] = useState(false);
+  useEffect(() => { oidcConfig().then(setCfg); }, []);
+  const sso = !!cfg?.enabled;
+  const dev = cfg ? cfg.dev_login !== false : true;
+  const issuerHost = (() => { try { return cfg?.issuer ? new URL(cfg.issuer).host : ""; } catch { return cfg?.issuer || ""; } })();
   return (
     <div className="login"><Card title="Sign in to SDTF">
-      <p className="muted">Development users: admin, architect, approver, operator, auditor, viewer (password = username).</p>
-      <form className="form" onSubmit={(e) => { e.preventDefault(); login(u, p).then(onDone).catch((x) => setErr(x.message)); }}>
-        <label>Username<input value={u} onChange={(e) => setU(e.target.value)} /></label>
-        <label>Password<input type="password" value={p} onChange={(e) => setP(e.target.value)} /></label>
-        <button type="submit">Sign in</button>
-      </form>
+      {!cfg && <p className="muted">Loading sign-in options…</p>}
+      {sso && (
+        <div className="sso">
+          <button type="button" disabled={busy} onClick={() => { setBusy(true); setErr(null); beginOidcLogin(returnTo).catch((x) => { setErr(x.message); setBusy(false); }); }}>
+            {busy ? "Redirecting to your identity provider…" : `Sign in with single sign-on${issuerHost ? ` (${issuerHost})` : ""}`}
+          </button>
+          <p className="muted">OpenID Connect authorization code flow with PKCE. Your password never reaches SDTF; roles come from your directory groups.</p>
+          {cfg?.error && <ErrorBox error={`Identity provider unreachable: ${cfg.error}`} />}
+        </div>
+      )}
+      {sso && dev && <div className="divider"><span>or</span></div>}
+      {dev && (
+        <details open={!sso}>
+          <summary className="muted">Development users: admin, architect, approver, operator, auditor, viewer (password = username).</summary>
+          <form className="form" onSubmit={(e) => { e.preventDefault(); login(u, p).then(onDone).catch((x) => setErr(x.message)); }}>
+            <label>Username<input value={u} onChange={(e) => setU(e.target.value)} /></label>
+            <label>Password<input type="password" value={p} onChange={(e) => setP(e.target.value)} /></label>
+            <button type="submit">Sign in</button>
+          </form>
+        </details>
+      )}
+      {cfg && !sso && !dev && <ErrorBox error="No sign-in method is enabled: configure SDTF_OIDC_* for single sign-on or SDTF_DEV_USERS=1 for development users." />}
       <ErrorBox error={err} />
+    </Card></div>
+  );
+}
+
+/** /auth/callback: the identity provider sends the browser back here with ?code&state. */
+function OidcCallback({ onDone }: { onDone: (path: string) => void }) {
+  const [err, setErr] = useState<string | null>(null);
+  const loc = useLocation();
+  useEffect(() => {
+    completeOidcLogin(loc.search).then(onDone).catch((x) => setErr(x.message));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  return (
+    <div className="login"><Card title="Completing sign-in">
+      {!err && <p className="muted">Verifying the authorization code with the identity provider…</p>}
+      {err && <>
+        <ErrorBox error={`Sign-in failed: ${err}`} />
+        <button type="button" onClick={() => onDone("/")}>Back to sign-in</button>
+      </>}
     </Card></div>
   );
 }
@@ -56,10 +99,18 @@ function ProjectPicker() {
 }
 
 export default function App() {
-  const [authed, setAuthed] = useState(!!getToken());
+  const [authed, setAuthed] = useState(isAuthenticated());
   const loc = useLocation();
-  useEffect(() => { setAuthed(!!getToken()); }, [loc]);
-  if (!authed) return <Login onDone={() => setAuthed(true)} />;
+  const nav = useNavigate();
+  useEffect(() => { setAuthed(isAuthenticated()); }, [loc]);
+  useEffect(() => {
+    const h = () => setAuthed(isAuthenticated());
+    window.addEventListener("sdtf.auth", h);
+    scheduleRefresh();
+    return () => window.removeEventListener("sdtf.auth", h);
+  }, []);
+  if (loc.pathname === CALLBACK_PATH) return <OidcCallback onDone={(path) => { setAuthed(isAuthenticated()); nav(path, { replace: true }); }} />;
+  if (!authed) return <Login onDone={() => setAuthed(true)} returnTo={loc.pathname + loc.search} />;
   const user = currentUser();
   return (
     <div className="layout">
@@ -71,8 +122,8 @@ export default function App() {
         <div className="topbar">
           <h1>{NAV.flatMap((g) => g.items).find((i) => i.to === loc.pathname)?.label || "SDTF"}</h1>
           <ProjectPicker />
-          <span className="muted">{user?.display_name} ({user?.roles.join(", ")})</span>
-          <button className="secondary" onClick={() => { logout(); setAuthed(false); }}>Sign out</button>
+          <span className="muted" title={user?.method === "oidc" ? "Signed in through single sign-on" : "Development user"}>{user?.display_name} ({user?.roles.join(", ")}){user?.method === "oidc" ? " · SSO" : ""}</span>
+          <button className="secondary" onClick={() => { signOut().then(() => setAuthed(false)); }}>Sign out</button>
         </div>
         <Routes>
           <Route path="/" element={<Dashboard />} />

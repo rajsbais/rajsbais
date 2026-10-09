@@ -43,7 +43,7 @@ Reviewed against the master build prompt (sections A–S) on the current branch.
 | Capability | Status |
 |---|---|
 | 12 bounded agents with confidence, evidence, approvals, decision log | **Built** (heuristic); LLM reasoner **pending** |
-| RBAC/ABAC, tenant segregation, four-eyes, masking, immutable audit, tamper detection, OIDC SSO (JWKS, group→role map) | **Built**; secrets manager integration, tokenisation service, PKCE login flow in the UI **pending** |
+| RBAC/ABAC, tenant segregation, four-eyes, masking, immutable audit, tamper detection, OIDC SSO (JWKS, group→role map), browser login with authorization code + PKCE (ADR-0012) | **Built** (PKCE flow verified in a real browser against the bundled test-only provider); secrets manager integration, tokenisation service **pending**; **validation against a customer's Keycloak/Entra/Okta tenant cannot be done here** |
 | Export-control and cross-border controls | **Built** as classification + compliance findings; **legal determinations cannot be made by the platform** |
 | 18 frontend applications on live APIs | **Built** (Playwright e2e verified) |
 | Containers, Kubernetes, CI/CD, IaC | **Built** manifests/workflow; **not exercised on a real cluster here** (no cluster); Terraform/Helm **pending** |

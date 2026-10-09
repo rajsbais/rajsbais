@@ -17,6 +17,22 @@ Alembic (`backend/alembic.ini`, `backend/sdtf/migrations`). `alembic upgrade hea
 * **Audit chain broken** (`/audit/verify` ok=false): treat as a security incident; the event id in `broken_at`
   identifies the first inconsistent record; restore from backup and investigate write access to `audit_events`.
 * **Rotate auth secret**: change `SDTF_AUTH_SECRET`; all tokens are invalidated (users re-login).
+* **Enable single sign-on** (ADR-0012): register SDTF in the identity provider as a public client with redirect URI
+  `https://<ui-host>/auth/callback` and post-logout URI `https://<ui-host>/`, PKCE S256 required, authorization
+  code grant (+ refresh if wanted), groups in the token. Set `SDTF_OIDC_ISSUER`, `SDTF_OIDC_AUDIENCE` (= client id
+  unless the access token carries a different audience, then also `SDTF_OIDC_CLIENT_ID`), `SDTF_OIDC_JWKS_URL`,
+  `SDTF_OIDC_ROLE_MAP`, optionally `SDTF_OIDC_SCOPES`, `SDTF_OIDC_GROUPS_CLAIM`, `SDTF_OIDC_TENANT_CLAIM`. Endpoints
+  come from `<issuer>/.well-known/openid-configuration` (override with `SDTF_OIDC_DISCOVERY_URL` or the explicit
+  `SDTF_OIDC_AUTHORIZATION_ENDPOINT` / `SDTF_OIDC_TOKEN_ENDPOINT` / `SDTF_OIDC_END_SESSION_ENDPOINT`). The API must reach
+  the token endpoint; the UI must be served over https (or localhost). `SDTF_OIDC_CLIENT_SECRET` only for confidential
+  clients; `SDTF_OIDC_EXCHANGE=browser` if the provider must be called from the browser instead. Check
+  `GET /api/v1/auth/oidc/config` (reports `error` when discovery fails) and set `SDTF_DEV_USERS=0`.
+* **SSO sign-in fails**: the callback screen shows the reason. `state mismatch` / `no login in progress`: the
+  browser tab lost `sessionStorage` (private window, redirect across hosts) or the attempt is older than 10 minutes.
+  `PKCE verification failed`: the provider does not support S256 or the client registration disables PKCE.
+  `issuer mismatch` / `audience mismatch`: align `SDTF_OIDC_ISSUER`/`SDTF_OIDC_AUDIENCE` with the token claims
+  (decode the ID token at the provider). `OIDC discovery failed`: the API cannot reach the issuer; set explicit
+  endpoints. Every successful SSO login is a `LOGIN` audit event with `method: oidc`.
 
 ## Distributed runs
 Start runs with `execution=DISTRIBUTED`; scale `sdtf worker` processes/pods as needed. Monitor `/runs/{id}/jobs`

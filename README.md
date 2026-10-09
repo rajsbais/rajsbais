@@ -32,16 +32,23 @@ migrations, deployment) for the Phase 1 foundation and the first vertical slice.
   and idle self-healing; columnar Parquet staging on local, S3, GCS or Azure filesystems via fsspec. INLINE threads and relational
   staging remain for small scopes.
 * OpenTelemetry traces, metrics and trace-correlated JSON logs across API and workers.
-* RBAC/ABAC, tenant segregation, masking, four-eyes approvals, tamper detection, OIDC single sign-on.
+* RBAC/ABAC, tenant segregation, masking, four-eyes approvals, tamper detection, OIDC single sign-on with a
+  browser PKCE login (authorization code flow, API-mediated exchange, refresh, provider logout).
 * 19 frontend applications wired to the API; Docker/compose/Kubernetes/CI.
 
 ## Quick start
 ```bash
 python3 -m venv .venv && . .venv/bin/activate && pip install -e "backend[dev]"
-cd backend && pytest -q                      # 95 tests (+ opt-in UI e2e and Neo4j integration)
+cd backend && pytest -q                      # 100 tests (+ opt-in UI e2e, OIDC e2e and Neo4j integration)
 python -m sdtf.cli demo                      # full vertical slice, prints the execution report
 python -m sdtf.cli serve                     # API http://localhost:8000/docs
 cd ../frontend && npm install && npm run dev # UI http://localhost:5173 (login architect/architect)
+```
+Single sign-on locally (test-only provider, see ADR-0012):
+```bash
+python -m sdtf.cli fake-idp --port 9400 &
+SDTF_OIDC_ISSUER=http://127.0.0.1:9400 SDTF_OIDC_JWKS_URL=http://127.0.0.1:9400/certs SDTF_OIDC_AUDIENCE=sdtf-ui \
+  SDTF_OIDC_ROLE_MAP='{"SAP-Migration-Architects":"architect"}' python -m sdtf.cli serve
 ```
 Or: `docker compose -f deploy/docker-compose.yml up --build` (UI :8080, API :8000, PostgreSQL).
 

@@ -24,7 +24,15 @@ def main(argv=None):
     s = sub.add_parser("serve", help="run the API server")
     s.add_argument("--host", default="0.0.0.0")
     s.add_argument("--port", type=int, default=8000)
+    f = sub.add_parser("fake-idp", help="run the TEST-ONLY OpenID Connect provider for local PKCE login demos")
+    f.add_argument("--host", default="127.0.0.1")
+    f.add_argument("--port", type=int, default=9400)
+    f.add_argument("--issuer", default=None)
     a = ap.parse_args(argv)
+    if a.cmd == "fake-idp":
+        from .security.fake_idp import main as fake_idp_main
+
+        return fake_idp_main(["--host", a.host, "--port", str(a.port)] + (["--issuer", a.issuer] if a.issuer else []))
     init_schema()
     if a.cmd != "worker":  # workers never seed identities
         with session_scope() as session:

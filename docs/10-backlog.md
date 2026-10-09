@@ -12,7 +12,8 @@ Legend: P0 next increment · P1 following · P2 later. Sizes are relative (S/M/L
 | ✅ | Reconciliation as distributed jobs: technical per table, functional, financial | M |
 | ✅ | S3/GCS/Azure staging via fsspec (`sdtf[s3]`, `sdtf[gcs]`) | M |
 | ✅ | Per-file key-range sidecar index with Bloom filter for membership and counts on object stores | M |
-| ✅ | OIDC SSO + group→role mapping (done: `security/oidc.py`); UI PKCE login flow pending | M |
+| ✅ | OIDC SSO + group→role mapping (done: `security/oidc.py`) | M |
+| ✅ | UI-side OIDC login: authorization code + PKCE, API-mediated exchange, refresh, RP-initiated logout, test-only provider (ADR-0012) | M |
 | ✅ | Multi-source MERGER orchestration, key-collision planner, master-data dedup (done: `runtime/merge.py`, `catalog/dedup.py`) | L |
 | ✅ | OpenTelemetry traces/metrics/JSON logs (ADR-0011) | M |
 | ✅ | Property-graph backend adapter: Neo4j store behind `GraphStore` (ADR-0004) | M |

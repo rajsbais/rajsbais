@@ -22,7 +22,7 @@
 | Delta capture / continuous sync / NDT | PLANNED | design in docs/07 |
 | Cutover command center | PARTIAL | runbook, critical path, forecast, rollback gates, go/no-go; execution tracking planned |
 | AI agents (12) | IMPLEMENTED | heuristic reasoner; LLM reasoner planned |
-| Security: RBAC/ABAC, tenant segregation, masking, OIDC SSO (RS256/JWKS, group→role map) | IMPLEMENTED | dev users remain for local use |
+| Security: RBAC/ABAC, tenant segregation, masking, OIDC SSO (RS256/JWKS, group→role map), browser PKCE login with API-side code exchange, refresh and provider logout | IMPLEMENTED | verified end-to-end against the bundled test-only provider, not yet against a live Keycloak/Entra/Okta tenant; dev users remain for local use |
 | Multi-source merger: merge groups, key-collision planning, master-data dedup, group financial reconciliation | IMPLEMENTED | simulated runtime |
 | Frontend (19 applications incl. Merger & Consolidation) | IMPLEMENTED | all wired to live API |
 | Observability: OpenTelemetry traces, metrics, trace-correlated JSON logs | IMPLEMENTED | OTLP/HTTP export; verified with in-memory exporters, not against a live collector |

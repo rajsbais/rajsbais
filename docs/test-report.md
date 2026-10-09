@@ -14,6 +14,8 @@
 | Scale (scale 3 slice completes, timings recorded) | 1 | pass |
 | UI end-to-end (Playwright, 18 screens, graph traversal, scope preview, cutover risk) | 1 | pass when run with `SDTF_E2E=1` against a live stack (verified in this session); skipped otherwise |
 | OIDC (role mapping, expired/issuer/audience rejection, forged signature, API acceptance, tenant isolation) | 6 | pass |
+| OIDC PKCE login, API side (public config from discovery without secrets, disabled state, code exchange with verifier forwarded and ID token + nonce verified, mapped roles, bearer accepted by the API, code replay refused, LOGIN audited; wrong verifier / stale nonce / missing fields rejected; refresh grant; browser-side exchange verification and forged ID token rejected) | 5 | pass (fake authorization server over an httpx mock transport enforcing S256) |
+| OIDC PKCE login, browser (Playwright against `sdtf fake-idp`: SSO button from `/auth/oidc/config`, redirect with S256 challenge/state/nonce and no verifier in the URL, consent page, callback, API-side exchange with no browser call to the token endpoint, roles from directory groups, authenticated API calls, return to the originally requested page, RP-initiated logout, forged callback rejected) | 1 | pass when run with `SDTF_E2E=1 SDTF_E2E_OIDC=1` (verified in this session); skipped otherwise |
 | Merger (cross-source duplicate detection, collision plan blocks naive rulesets, resolved plan runs both sources into one company code with group financial PASS; API merge flow) | 3 | pass |
 | Staging & workers (columnar contract, slice on columnar staging, two in-process workers over EXTRACT/TRANSFORM/LOAD jobs, lease expiry + re-queue, two `sdtf worker` subprocesses with concurrent load jobs and zero conflicts, pipelined vs barrier overlap, crash-between-jobs self-healing, reconciliation as per-table/functional/financial jobs with summary equal to the inline path) | 7 | pass |
 | Object-store staging (fsspec `memory://` URL: contract + full slice; `file://` URL; clear error when the S3 driver is missing) | 2 | pass |
@@ -22,7 +24,9 @@
 | Graph store (Cypher adapter round-trip through a fake Cypher executor: batched parameterised MERGEs, per-type labels, attribute round trip, traversal parity, search, isolation; neighbourhood query shape; relational parity; missing-URI error) | 4 | pass |
 | Server-side traversal parity (five policy sets incl. REFERENCE/STOP/FLAG, depth limit, both directions, missing seed): identical inclusion ranks, stopped and missing sets to the in-process algorithm; bounded adjacency queries; scope evaluation streams nodes and delegates traversal | 6 | pass |
 | Neo4j live integration | 1 | skipped unless `SDTF_NEO4J_URI` is set |
-| **Total** | **97** | **95 passed, 2 skipped by default (e2e, Neo4j)** |
+| **Total** | **103** | **100 passed, 3 skipped by default (UI e2e, OIDC e2e, Neo4j)** |
+
+Frontend unit tests (`cd frontend && npm test`, vitest): PKCE S256 challenge against the RFC 7636 appendix B vector, verifier alphabet/entropy, base64url, authorization request contents (challenge, state, nonce; verifier never in the URL), refusal when unconfigured, callback validation (state mismatch, no pending login, provider error, missing code, expired attempt), unverified claim decoding, token/end-session request shapes: 8 pass.
 
 Lint: `ruff check backend/sdtf backend/tests` clean. Frontend: `tsc --noEmit` and `vite build` clean.
 

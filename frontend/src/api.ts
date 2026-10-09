@@ -6,6 +6,30 @@ export function getToken(): string | null {
   try { return localStorage.getItem("sdtf.token"); } catch { return null; }
 }
 
+export interface SessionUser { username: string; roles: string[]; display_name: string; tenant_id?: string; method: "dev" | "oidc" }
+export interface SessionInfo { user: SessionUser | null; expires_at: number | null; id_token: string | null; refresh_token: string | null }
+
+export function setSession(token: string, user: SessionUser, extra: Partial<Omit<SessionInfo, "user">> = {}) {
+  try {
+    localStorage.setItem("sdtf.token", token);
+    localStorage.setItem("sdtf.user", JSON.stringify(user));
+    localStorage.setItem("sdtf.session", JSON.stringify({ expires_at: extra.expires_at ?? null, id_token: extra.id_token ?? null, refresh_token: extra.refresh_token ?? null }));
+  } catch {}
+}
+
+export function sessionInfo(): SessionInfo | null {
+  try {
+    const u = localStorage.getItem("sdtf.user");
+    const s = localStorage.getItem("sdtf.session");
+    if (!u && !s) return null;
+    return { user: u ? JSON.parse(u) : null, ...{ expires_at: null, id_token: null, refresh_token: null }, ...(s ? JSON.parse(s) : {}) };
+  } catch { return null; }
+}
+
+export function clearSession() {
+  try { ["sdtf.token", "sdtf.user", "sdtf.session"].forEach((k) => localStorage.removeItem(k)); } catch {}
+}
+
 export class ApiError extends Error {
   status: number;
   constructor(status: number, message: string) { super(message); this.status = status; }
@@ -18,7 +42,7 @@ export async function api<T = Json>(path: string, opts: { method?: string; body?
   const tok = getToken();
   if (tok) headers.Authorization = `Bearer ${tok}`;
   const res = await fetch(url.toString(), { method: opts.method || (opts.body ? "POST" : "GET"), headers, body: opts.body ? JSON.stringify(opts.body) : undefined });
-  if (res.status === 401) { try { localStorage.removeItem("sdtf.token"); } catch {} }
+  if (res.status === 401 && tok) { clearSession(); window.dispatchEvent(new Event("sdtf.auth")); }
   const text = await res.text();
   let data: Json = null;
   try { data = text ? JSON.parse(text) : null; } catch { data = text; }
@@ -28,16 +52,15 @@ export async function api<T = Json>(path: string, opts: { method?: string; body?
 
 export async function login(username: string, password: string) {
   const r = await api<{ access_token: string; username: string; roles: string[]; display_name: string }>("/auth/token", { body: { username, password } });
-  localStorage.setItem("sdtf.token", r.access_token);
-  localStorage.setItem("sdtf.user", JSON.stringify({ username: r.username, roles: r.roles, display_name: r.display_name }));
+  setSession(r.access_token, { username: r.username, roles: r.roles, display_name: r.display_name, method: "dev" });
   return r;
 }
 
-export function currentUser(): { username: string; roles: string[]; display_name: string } | null {
+export function currentUser(): SessionUser | null {
   try { const s = localStorage.getItem("sdtf.user"); return s ? JSON.parse(s) : null; } catch { return null; }
 }
 
-export function logout() { localStorage.removeItem("sdtf.token"); localStorage.removeItem("sdtf.user"); }
+export function logout() { clearSession(); }
 
 export function fmtBytes(n: number | undefined): string {
   if (!n) return "0 B";
