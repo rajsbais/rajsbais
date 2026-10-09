@@ -12,6 +12,15 @@ export default function Landscape() {
   const [combos, setCombos] = useState<J[]>([]);
   const [fr, setFr] = useState<J>(null);
   const act = useAction();
+  const [f, setF] = useState({ kind: "rfc", sid: "", role: "SBX", client: "100", host: "", sysnr: "00", user: "", pwEnv: "", cd: false, maxRows: 500, cpm: 120, confirm: false });
+  const [smoke, setSmoke] = useState<J>(null);
+  const profileOf = () => ({
+    system: { sid: f.sid.toUpperCase(), client: f.client, role: f.role, owner: "onboarding" },
+    profile: f.kind === "rfc"
+      ? { name: `${f.sid} via RFC`, kind: "rfc", ashost: f.host, sysnr: f.sysnr, client: f.client, user: f.user, password_ref: `env:${f.pwEnv}`, calls_per_minute: f.cpm, options: f.cd ? { change_documents: true } : {} }
+      : { name: `${f.sid} via OData`, kind: "odata", base_url: f.host, client: f.client, user: f.user, password_ref: `env:${f.pwEnv}`, calls_per_minute: f.cpm, options: {} },
+  });
+  const formOk = !!(f.sid && f.host && f.user && f.pwEnv);
   useEffect(() => { if (systems.length) api.get("/api/landscape/combinations").then(setCombos).catch(() => undefined); }, [systems]);
   useEffect(() => {
     if (!sel) return;
@@ -63,6 +72,44 @@ export default function Landscape() {
               <ul className="checks">{ready.checks.map((c: J) => <li key={c.id}>{c.ok ? "✓" : "✗"} {c.name}</li>)}</ul></>}
           </Card>
         </div>)}
+      {can("system:write") && (
+        <Card title="Connect a real system (read-only)">
+          <p className="muted small">Test first, then register. Use a sandbox or a copy and a dedicated read-only SAP user. The password is never typed here: give the <strong>name</strong> of an environment variable on the machine that runs this API.
+            The test reads at most the number of rows below per table, never writes, and its report contains no row values. A registered system is a read-only source only.</p>
+          <div className="form-grid">
+            <label>Connection type<select value={f.kind} onChange={(e) => { setF({ ...f, kind: e.target.value }); setSmoke(null); }}><option value="rfc">RFC (ECC or S/4HANA)</option><option value="odata">OData (S/4HANA)</option></select></label>
+            <label>System ID (SID)<input value={f.sid} maxLength={8} onChange={(e) => setF({ ...f, sid: e.target.value })} /></label>
+            <label>Role<select value={f.role} onChange={(e) => setF({ ...f, role: e.target.value })}>{roles.map((r) => <option key={r}>{r}</option>)}</select></label>
+            <label>Client<input value={f.client} maxLength={3} onChange={(e) => setF({ ...f, client: e.target.value })} /></label>
+            <label>{f.kind === "rfc" ? "Application server host" : "Base URL (https)"}<input value={f.host} onChange={(e) => setF({ ...f, host: e.target.value })} /></label>
+            {f.kind === "rfc" && <label>Instance number<input value={f.sysnr} maxLength={2} onChange={(e) => setF({ ...f, sysnr: e.target.value })} /></label>}
+            <label>SAP user (read-only)<input value={f.user} autoComplete="off" onChange={(e) => setF({ ...f, user: e.target.value })} /></label>
+            <label>Password environment variable (name)<input value={f.pwEnv} autoComplete="off" onChange={(e) => setF({ ...f, pwEnv: e.target.value })} /></label>
+            <label>Rows read per table (max)<input type="number" min={1} max={5000} value={f.maxRows} onChange={(e) => setF({ ...f, maxRows: Number(e.target.value) })} /></label>
+            <label>Calls per minute (throttle)<input type="number" min={1} max={100000} value={f.cpm} onChange={(e) => setF({ ...f, cpm: Number(e.target.value) })} /></label>
+            {f.kind === "rfc" && <label className="check"><input type="checkbox" checked={f.cd} onChange={(e) => setF({ ...f, cd: e.target.checked })} />Probe the change-document reader (CDHDR)</label>}
+          </div>
+          {f.role === "PRD" && <p className="small"><Badge kind="warn">production</Badge> Production can only ever be a read-only source here, and a first test should not be against it.</p>}
+          <label className="check"><input type="checkbox" checked={f.confirm} onChange={(e) => setF({ ...f, confirm: e.target.checked })} />This is a sandbox or a copy, and the SAP user is read-only</label>
+          <div className="row">
+            <button className="primary" disabled={!formOk || !f.confirm || act.busy}
+              onClick={() => act.run(async () => setSmoke(await api.post("/api/systems/smoke", { ...profileOf(), max_rows: f.maxRows, confirm: f.confirm })))}>Run smoke test</button>
+            <button disabled={!smoke || !smoke.connection?.ok || smoke.verdict.some((v: J) => v.level === "BLOCKER") || act.busy}
+              onClick={() => act.run(async () => { const r = await api.post("/api/systems/connect", profileOf()); await reload(); setSel(r.id); setSmoke(null); })}>Register as read-only source</button>
+          </div>
+          <ErrorNote error={act.error} />
+          {smoke && (
+            <div aria-live="polite">
+              <h3>Smoke test result</h3>
+              <ul>{smoke.verdict.map((v: J, i: number) => <li key={i}><Badge kind={v.level === "BLOCKER" ? "bad" : v.level === "ATTENTION" ? "warn" : "ok"}>{v.level}</Badge> {v.text}</li>)}</ul>
+              {Object.keys(smoke.drift).length > 0 && <p className="small">Differences from the platform's model: {Object.entries(smoke.drift).map(([t, v]: J) => `${t}: ${v.slice(0, 2).join("; ")}`).join(" | ")}</p>}
+              <DataTable rows={Object.entries(smoke.tables).map(([t, e]: J) => ({ table: t, ...e }))} empty="Nothing was read." cols={[
+                { key: "table", title: "Table" }, { key: "status", title: "Status", render: (e: J) => <span>{e.status}{e.error_class ? ` (${e.error_class})` : ""}</span> },
+                { key: "rows_read", title: "Rows read", render: (e: J) => <span>{e.rows_read ?? ""}{e.capped ? "+" : ""}</span> }, { key: "seconds", title: "Seconds" },
+                { key: "note", title: "Note", render: (e: J) => <span className="muted small">{e.note || e.message || ""}</span> }]} />
+              <p className="muted small">The report contains no row values. {smoke.stats?.calls ?? 0} calls were made; nothing was written.</p>
+            </div>)}
+        </Card>)}
       {remote && (
         <Card title="Remote connection (read-only)">
           <p><Badge kind="warn">not validated against a real SAP system</Badge> <span className="muted small">{remote.capabilities.full_scan}; writes: {String(remote.capabilities.writes)}; change documents: {String(remote.capabilities.change_documents)}</span></p>

@@ -6,6 +6,7 @@ import time
 import copy
 import io
 import json
+import os
 import tempfile
 import uuid
 import zipfile
@@ -144,23 +145,10 @@ class RefreshService:
             profile.validate()
         except ProfileError as e:
             raise Conflict(str(e))
-        if transport is None:
-            try:
-                if profile.kind == "rfc":
-                    from .sap.connectors.rfc import PyRfcTransport
-                    transport = PyRfcTransport(profile)
-                else:
-                    from .sap.connectors.odata import HttpODataTransport
-                    transport = HttpODataTransport(profile)
-            except ImportError:
-                raise Conflict("pyrfc and the SAP NetWeaver RFC SDK are not installed: a real RFC connection is not possible here")
-            except Exception as e:  # noqa: BLE001 - credentials, network
-                raise Conflict(f"could not connect: {type(e).__name__}: {e}")
         system.id = system.id or f"sys-{uuid.uuid4().hex[:8]}"
         system.writable_target_allowed = False  # a remote source is never a write target
         system.adapter = profile.kind
-        kw = {"reference": reference} if reference else {}
-        adapter = RfcSourceAdapter(system, transport, profile, **kw) if profile.kind == "rfc" else ODataSourceAdapter(system, transport, profile, **kw)
+        adapter = self._remote_adapter(system, profile, transport, reference)
         try:
             if profile.kind == "rfc":
                 adapter._call("RFC_PING")
@@ -173,6 +161,60 @@ class RefreshService:
         self.remote_profiles[system.id] = profile
         self.audit.append(actor.id, "system.connected", system.id, {"label": system.label, "kind": profile.kind, "profile": profile.public(), "schema_drift": {k: v[:3] for k, v in drift.items()}})
         return system
+
+    def _remote_adapter(self, system: SapSystem, profile, transport=None, reference=None):
+        """Builds the read-only adapter for a connection profile (real transport unless one is given)."""
+        from .sap.connectors.odata import ODataSourceAdapter
+        from .sap.connectors.rfc import RfcSourceAdapter
+        if transport is None and os.environ.get("RFACTORY_ALLOW_FAKE_ENDPOINTS") == "1":
+            host = (profile.ashost if profile.kind == "rfc" else profile.base_url.split("//")[-1].split(":")[0].split("/")[0]) or ""
+            if host.endswith(".invalid"):  # demo and test hook: a host that cannot exist is served by a FAKE endpoint, never by the network
+                from .sap.connectors.fake_odata import FakeODataTransport
+                from .sap.connectors.fake_rfc import FakeRfcTransport
+                from .sap.synthetic import make_demo_pair
+                sim, _t = make_demo_pair()
+                transport = FakeRfcTransport(sim) if profile.kind == "rfc" else FakeODataTransport(sim)
+                reference = sim.reference_date
+        if transport is None:
+            try:
+                if profile.kind == "rfc":
+                    from .sap.connectors.rfc import PyRfcTransport
+                    transport = PyRfcTransport(profile)
+                else:
+                    from .sap.connectors.odata import HttpODataTransport
+                    transport = HttpODataTransport(profile)
+            except ImportError:
+                raise Conflict("pyrfc and the SAP NetWeaver RFC SDK are not installed: a real RFC connection is not possible here")
+            except Exception as e:  # noqa: BLE001 - credentials, network
+                raise Conflict(f"could not connect: {type(e).__name__}: {e}")
+        kw = {"reference": reference} if reference else {}
+        return RfcSourceAdapter(system, transport, profile, **kw) if profile.kind == "rfc" else ODataSourceAdapter(system, transport, profile, **kw)
+
+    def smoke_remote(self, actor: Principal, system: SapSystem, profile, tables: list[str] | None = None, max_rows: int = 500, transport=None) -> dict:
+        """Read-only first-contact test of a connection profile WITHOUT registering the system. The report holds no row values."""
+        from .sap.connectors.profile import ProfileError
+        from .sap.connectors.smoke import run_smoke
+        if actor.kind != "human" or not actor.can("system:write"):
+            raise Forbidden("a human with system:write is required to test a connection")
+        if not authz.system_ok(actor, system):
+            raise Forbidden(f"outside your scope: you may not test system {system.label}")
+        try:
+            profile.validate()
+            if profile.password_ref:
+                from .sap.connectors.profile import resolve_secret
+                resolve_secret(profile.password_ref)  # fails with a clear message if the variable / file is missing; the value is never shown
+        except ProfileError as e:
+            raise Conflict(str(e))
+        if not 1 <= max_rows <= 5000:
+            raise Conflict("max_rows must be between 1 and 5000 for a smoke test")
+        system.id = system.id or "smoke-" + uuid.uuid4().hex[:6]
+        system.adapter = profile.kind
+        adapter = self._remote_adapter(system, profile, transport)
+        rep = run_smoke(adapter, tables=tables or None, max_rows=max_rows, probe_change_documents=bool(profile.options.get("change_documents")))
+        levels = {lv: sum(1 for v in rep["verdict"] if v["level"] == lv) for lv in ("BLOCKER", "ATTENTION", "INFO")}
+        self.audit.append(actor.id, "system.smoke", system.label, {"kind": profile.kind, "profile": profile.public(), "connected": rep["connection"].get("ok"),
+                                                                    "verdict": levels, "max_rows": max_rows})
+        return rep
 
     def change_doc_info(self, sid: str) -> dict:
         """What the change-document reader of a remote system covers, and what it did last."""

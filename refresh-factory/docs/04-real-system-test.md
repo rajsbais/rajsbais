@@ -39,14 +39,12 @@ Read the **Verdict** first. `BLOCKER` = could not connect or unexpected failure;
   The entity and property names in `sap/connectors/odata.py` are written from memory: the **drift list in the report is exactly the list of names to correct**. Tables with no mapping show as `unmapped`; that is expected.
 
 ## 4. Then, and only then, connect it to the platform
-Start the API with the password available to *its* process (`export SAP_PW=...`), then register the system (read-only source):
-```
-curl -X POST localhost:8000/api/systems/connect -H 'X-Demo-User: root.admin' -H 'Content-Type: application/json' -d '{
-  "system": {"sid": "ECC", "client": "100", "role": "SBX", "owner": "me"},
-  "profile": {"name": "ecc-sandbox", "kind": "rfc", "ashost": "<host>", "sysnr": "00", "client": "100", "user": "RFREAD",
-              "password_ref": "env:SAP_PW", "max_scan_rows": 20000, "calls_per_minute": 120}}'
-```
-Use it as the **source** of a small selective refresh into a *simulated* target (e.g. materials of one plant) and look at the plan, the masking advice and the preview. Real targets cannot be written yet.
+Start the API with the password available to *its* process (`export SAP_PW=...`), open the UI, go to **Landscape → Connect a real system (read-only)**, fill in the form
+(host, instance number or base URL, client, user, and the *name* `SAP_PW` of the password variable), tick the sandbox confirmation, **Run smoke test**, read the findings, and only
+if there is no BLOCKER use **Register as read-only source**. The same is available over the API: `POST /api/systems/smoke` (test, registers nothing) and `POST /api/systems/connect`.
+
+Then use it as the **source** of a small selective refresh into a *simulated* target (e.g. materials of one plant) and look at the plan, the masking advice and the preview.
+Real targets cannot be written yet. Scopes the connection cannot supply completely (for OData: anything needing unmapped tables or fields) are blocked in the plan with the reason.
 
 ## What to send back
 The `.md` report from each run, and the exact error text of anything that failed. That is enough to correct the mapping, authorizations guidance and quirks, and is the first evidence this code has ever had from a real system.

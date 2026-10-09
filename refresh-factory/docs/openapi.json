@@ -364,6 +364,77 @@
     }
    }
   },
+  "/api/systems/smoke": {
+   "post": {
+    "summary": "Smoke Remote",
+    "description": "Read-only, bounded first-contact test of a connection profile (nothing is registered). The report has no row values.",
+    "operationId": "smoke_remote_api_systems_smoke_post",
+    "parameters": [
+     {
+      "name": "x-demo-user",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Demo-User"
+      }
+     },
+     {
+      "name": "authorization",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Authorization"
+      }
+     }
+    ],
+    "requestBody": {
+     "required": true,
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/SmokeIn"
+       }
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      }
+     },
+     "422": {
+      "description": "Validation Error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
   "/api/systems/{sid}/remote": {
    "get": {
     "summary": "Remote Info",
@@ -13197,6 +13268,43 @@
     },
     "type": "object",
     "title": "Scope"
+   },
+   "SmokeIn": {
+    "properties": {
+     "system": {
+      "additionalProperties": true,
+      "type": "object",
+      "title": "System"
+     },
+     "profile": {
+      "additionalProperties": true,
+      "type": "object",
+      "title": "Profile"
+     },
+     "tables": {
+      "items": {
+       "type": "string"
+      },
+      "type": "array",
+      "title": "Tables"
+     },
+     "max_rows": {
+      "type": "integer",
+      "title": "Max Rows",
+      "default": 500
+     },
+     "confirm": {
+      "type": "boolean",
+      "title": "Confirm",
+      "default": false
+     }
+    },
+    "type": "object",
+    "required": [
+     "system",
+     "profile"
+    ],
+    "title": "SmokeIn"
    },
    "StrategyIn": {
     "properties": {

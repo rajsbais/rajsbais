@@ -145,6 +145,14 @@ class ConnectIn(BaseModel):
     profile: dict
 
 
+class SmokeIn(BaseModel):
+    system: dict
+    profile: dict
+    tables: list[str] = Field(default_factory=list)
+    max_rows: int = 500
+    confirm: bool = False  # "this is a sandbox or a copy and the user is read-only"
+
+
 class AgentRunIn(BaseModel):
     params: dict = Field(default_factory=dict)
     narrate: bool = False
@@ -432,6 +440,19 @@ def create_app(data_dir: Path | None = None, persist: bool | None = None, auth: 
             raise HTTPException(422, f"invalid system or profile: {e}")
         s = svc.connect_remote(p, system, profile)
         return {**s.model_dump(mode="json"), "label": s.label, "remote": True, "writable_target": False}
+
+    @app.post("/api/systems/smoke")
+    def smoke_remote(b: SmokeIn, p: Principal = Depends(me)):
+        """Read-only, bounded first-contact test of a connection profile (nothing is registered). The report has no row values."""
+        from ..sap.adapter import SapSystem
+        from ..sap.connectors.profile import ConnectionProfile
+        if not b.confirm:
+            raise HTTPException(422, "confirm that this is a sandbox or a copy and that the SAP user is read-only")
+        try:
+            system, profile = SapSystem(**{"id": "", **b.system}), ConnectionProfile(**b.profile)
+        except (TypeError, ValueError) as e:
+            raise HTTPException(422, f"invalid system or profile: {e}")
+        return svc.smoke_remote(p, system, profile, b.tables, b.max_rows)
 
     @app.get("/api/systems/{sid}/remote")
     def remote_info(sid: str, _: Principal = Depends(need("view"))):
