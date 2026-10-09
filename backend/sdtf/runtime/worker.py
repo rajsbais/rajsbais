@@ -27,7 +27,6 @@ from sqlalchemy.orm import Session
 from .. import config
 from .. import observability as obs
 from ..audit.service import record_event
-from ..catalog.store import RecordStore
 from ..models import ExtractionJob, MigrationRun, RuleSet, SapSystem, ScopeManifest
 from ..reconciliation.service import reconcile_partition, reconcile_partitions, run_summary
 from ..rules.engine import parse_ruleset
@@ -214,7 +213,11 @@ def _process_job(session: Session, job: ExtractionJob, cache: dict | None = None
         elif job.stage == "RECONCILE":
             key = ("tgt", run.target_system_id, run.id)
             if cache is not None and key not in cache:
-                cache[key] = RecordStore.load(session, run.target_system_id)
+                from ..reconciliation.views import build_source_view, build_target_view, loaded_keys_of
+
+                m_ = session.get(ScopeManifest, run.manifest_id)
+                src_view = build_source_view(session, session.get(SapSystem, run.source_system_id), m_)
+                cache[key] = build_target_view(session, session.get(SapSystem, run.target_system_id), m_, loaded_keys_of(backend, run.id), src_view)
             metrics = reconcile_partition(session, run, job.partition_id, backend=backend, target=cache[key] if cache is not None else None)
             n = metrics["checks"]
         else:  # pragma: no cover

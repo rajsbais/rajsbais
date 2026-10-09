@@ -1,0 +1,389 @@
+"""Reconciliation through the adapters: source and target views read from the systems, not from the record store.
+
+`reconcile_run` works on two `RecordStore`-shaped views. Where they come from depends on the connector:
+
+* **Source over RFC** (`RfcSourceView`): the financial tables the reconciliation needs (T001K, BKPF, BSEG, BSID,
+  BSIK, ANLC, MBEW) are read through the add-on (`Z_SDTF_READ_PACKAGE`) with the scope's company codes pushed down
+  (valuation areas for MBEW), under one snapshot token. `Z_SDTF_AGGREGATE` gives the row count per table before
+  the read (a guard against reading a whole BSEG by mistake: `SDTF_RECON_MAX_ROWS`) and the debit/credit totals
+  per company code computed in the source database; both are compared with what arrived and reported as
+  TECHNICAL checks `source_read_integrity` / `source_read_amounts`, so a truncated or inconsistent read can never
+  pass as a reconciliation. On the simulated add-on the rows are the record store's, so results equal the former
+  direct read; on a real system this is the first path that reads the source for reconciliation at all.
+* **Target over the released APIs** (`ApiTargetView`): the loaded records are read back by key through the
+  entity bindings (`GET A_SalesOrder('...')`), tables with a company code property are read as filtered
+  collections (`$filter=CompanyCode eq ...`, paged), journal entries come from `API_JOURNALENTRYITEMBASIC_SRV`
+  (header, line and open-item images derived from the line items), referenced masters missing from the view are
+  fetched lazily. Tables no released read API covers in this build (T001, T001K, ANLC) are reported as
+  `unreadable`: checks that need them say so (WARN) instead of failing on an empty table.
+* Record-store systems (SYNTHETIC, simulated gateway) keep the direct read: the simulated gateway writes the
+  record store, so that is what "the API" holds.
+
+Nothing here is verified against a live SAP system; the property names of the journal item service are taken
+from the public API reference and must be checked against the target's `$metadata` (ADR-0016).
+"""
+from __future__ import annotations
+
+import os
+import re
+from collections import defaultdict
+from typing import Iterable
+
+from sqlalchemy.orm import Session
+
+from ..catalog.api_bindings import API_BINDINGS, EntityBinding
+from ..catalog.store import RecordStore
+from ..catalog.tables import TABLES, record_key
+from ..models import ReconciliationResult, SapSystem
+from ..runtime.rfc import AbapAddonClient, RfcError, make_transport, predicate
+from ..runtime.target_api import ApiError, TargetApiClient, make_target_transport
+
+SOURCE_TABLES = ("T001K", "BKPF", "BSEG", "BSID", "BSIK", "ANLC", "MBEW")
+JOURNAL_SERVICE = "API_JOURNALENTRYITEMBASIC_SRV"
+JOURNAL_ENTITY = "A_JournalEntryItemBasic"
+# A_JournalEntryItemBasic property -> table field (public API reference; unverified against a target's $metadata)
+JOURNAL_FIELDS = {"CompanyCode": "BUKRS", "AccountingDocument": "BELNR", "FiscalYear": "GJAHR", "AccountingDocumentItem": "BUZEI", "LedgerGLLineItem": "BUZEI", "FinancialAccountType": "KOART", "DebitCreditCode": "SHKZG", "GLAccount": "HKONT", "AmountInCompanyCodeCurrency": "DMBTR", "AmountInTransactionCurrency": "WRBTR", "Customer": "KUNNR", "Supplier": "LIFNR", "CostCenter": "KOSTL", "ProfitCenter": "PRCTR", "ClearingAccountingDocument": "AUGBL", "ClearingDate": "AUGDT", "PartnerCompany": "VBUND", "Material": "MATNR", "Plant": "WERKS", "SpecialGLCode": "UMSKZ", "AssignmentReference": "ZUONR"}
+JOURNAL_HEADER_FIELDS = {"AccountingDocumentType": "BLART", "DocumentDate": "BLDAT", "PostingDate": "BUDAT", "FiscalPeriod": "MONAT", "TransactionCurrency": "WAERS", "OriginalReferenceDocumentType": "AWTYP", "OriginalReferenceDocument": "AWKEY", "DocumentReferenceID": "XBLNR"}
+UNREADABLE_BY_API = ("T001", "T001K", "ANLC")  # no released read service bound in this build
+PAGE = 1000
+
+
+def max_rows() -> int:
+    return int(os.getenv("SDTF_RECON_MAX_ROWS", "5000000"))
+
+
+class ReconciliationViewError(Exception):
+    """The view could not be built (scope too large for a row read, adapter failure)."""
+
+
+def _r(run_id, layer, name, status, subject="", src="", tgt="", variance="", explanation="", evidence=None):
+    return ReconciliationResult(run_id=run_id, layer=layer, check_name=name, subject=subject, status=status, source_value=str(src), target_value=str(tgt), variance=str(variance), explanation=explanation, evidence=evidence or {})
+
+
+def normalise(value) -> str:
+    """Comparable form of a field value across the staging image and an API read (numbers as 2-decimal strings,
+    None as empty): the read services return typed JSON, the staging keeps the extracted strings."""
+    if value is None:
+        return ""
+    if isinstance(value, bool):
+        return "X" if value else ""
+    try:
+        return f"{float(value):.2f}"
+    except (TypeError, ValueError):
+        return str(value).strip()
+
+
+class ViewStore(RecordStore):
+    """A RecordStore filled through an adapter, with the tables it could not read, the tables it derives, the
+    fields a table can be compared on, and the integrity evidence."""
+
+    def __init__(self, system_id: str, origin: str):
+        super().__init__(system_id)
+        self.origin = origin
+        self.unreadable: set[str] = set()
+        self.derived_tables: set[str] = set()  # present as projections (open items from journal lines): totals, not rows
+        self.metrics: dict = {"origin": origin}
+        self._integrity: list[tuple] = []
+        self._comparable: dict[str, set[str]] = {}
+
+    def comparable_fields(self, table: str) -> set[str] | None:
+        """Fields a staged row can be compared with on this view (None: every field, as for a record store)."""
+        return self._comparable.get(table)
+
+    def integrity_results(self, run_id: str) -> list[ReconciliationResult]:
+        out = []
+        for name, subject, expected, actual, note in self._integrity:
+            ok = expected == actual
+            out.append(_r(run_id, "TECHNICAL", name, "PASS" if ok else "FAIL", subject, expected, actual, (expected - actual) if isinstance(expected, (int, float)) and isinstance(actual, (int, float)) else "", note if ok else f"{note}: the rows read through the adapter do not match the totals the source computed", {"origin": self.origin}))
+        return out
+
+
+def record_store_view(session: Session, system_id: str, origin: str = "record_store") -> ViewStore:
+    base = RecordStore.load(session, system_id)
+    v = ViewStore(system_id, origin)
+    v._tables, v._by_key = base._tables, base._by_key
+    v.metrics["rows"] = sum(len(r) for r in base._tables.values())
+    return v
+
+
+# ======================================================================================= source (RFC add-on)
+def _uses_record_store(system: SapSystem) -> bool:
+    if system.connector == "SYNTHETIC":
+        return True
+    if system.connector == "RFC":
+        return False  # the add-on path, simulated or pyrfc: one code path for both
+    if system.connector == "API":
+        return ((system.meta or {}).get("api") or {}).get("transport", os.getenv("SDTF_S4_API_TRANSPORT", "auto")).lower() == "simulated"
+    return True
+
+
+def build_source_view(session: Session, source: SapSystem, manifest, limit: int | None = None) -> ViewStore:
+    """The source side of the reconciliation for `manifest`'s company codes, read through the source's adapter."""
+    if _uses_record_store(source):
+        return record_store_view(session, source.id)
+    if source.connector != "RFC":
+        raise ReconciliationViewError(f"no reconciliation read path for connector {source.connector}")
+    transport = make_transport(source.sid, source.meta, store_loader=lambda: RecordStore.load(session, source.id))
+    client = AbapAddonClient(transport)
+    scope_ccs = sorted(set(manifest.definition["company_codes"]))
+    view = ViewStore(source.id, "rfc_addon")
+    limit = limit or max_rows()
+    client.open_snapshot(list(SOURCE_TABLES))
+    cc_preds = [predicate("BUKRS", "EQ", cc) for cc in scope_ccs]
+    aggregate_available = True
+    by_table: dict[str, int] = {}
+
+    def read(table: str, preds: list[dict]) -> None:
+        nonlocal aggregate_available
+        expected = None
+        if aggregate_available:
+            try:
+                expected = client.count(table, preds)
+            except RfcError as e:
+                if e.key not in ("FU_NOT_FOUND", "NOT_AUTHORIZED"):
+                    raise
+                aggregate_available = False  # add-on without Z_SDTF_AGGREGATE: rows only, no integrity evidence
+        if expected is not None and expected > limit:
+            raise ReconciliationViewError(f"{table} holds {expected} rows for company codes {', '.join(scope_ccs)}, above SDTF_RECON_MAX_ROWS={limit}; narrow the scope or raise the limit")
+        try:
+            n = view.add_rows(table, client.read_all(table, preds))
+        except RfcError as e:
+            if e.key in ("NOT_AUTHORIZED", "TABLE_UNKNOWN"):
+                view.unreadable.add(table)
+                view.metrics.setdefault("errors", {})[table] = str(e)
+                return
+            raise
+        by_table[table] = n
+        if expected is not None:
+            view._integrity.append(("source_read_integrity", table, expected, n, "row count computed in the source vs rows read"))
+
+    read("T001K", cc_preds)
+    areas = sorted({str(r["BWKEY"]) for r in view.rows("T001K")})
+    for t in ("BKPF", "BSEG", "BSID", "BSIK", "ANLC"):
+        read(t, cc_preds)
+    if areas:
+        read("MBEW", [predicate("BWKEY", "EQ", a) for a in areas])
+    if aggregate_available and "BSEG" not in view.unreadable:
+        try:
+            agg = client.aggregate("BSEG", cc_preds, ["BUKRS", "SHKZG"], ["DMBTR"])
+            got: dict[tuple[str, str], float] = defaultdict(float)
+            for l in view.rows("BSEG"):
+                got[(str(l["BUKRS"]), str(l["SHKZG"]))] += float(l["DMBTR"] or 0)
+            for a in agg:
+                k = (str(a["BUKRS"]), str(a["SHKZG"]))
+                view._integrity.append(("source_read_amounts", f"{k[0]}/{k[1]}", round(float(a["SUM_DMBTR"]), 2), round(got.get(k, 0.0), 2), "DMBTR total computed in the source vs rows read"))
+        except RfcError as e:
+            view.metrics.setdefault("errors", {})["aggregate"] = str(e)
+    view.metrics.update({"transport": getattr(transport, "name", "?"), "snapshot": client.snapshot, "company_codes": scope_ccs, "valuation_areas": areas, "rfc_calls": client.calls, "packages": client.packages, "rows": sum(by_table.values()), "by_table": by_table, "aggregate_available": aggregate_available, "unreadable": sorted(view.unreadable), "limit": limit})
+    return view
+
+
+# ===================================================================================== target (released APIs)
+_BOUND: dict[str, tuple[str, EntityBinding]] = {}
+for _b in API_BINDINGS.values():
+    if _b.protocol == "ODATA_V2":
+        _BOUND[_b.header.table] = (_b.service, _b.header)
+        for _it in _b.items.values():
+            _BOUND[_it.table] = (_b.service, _it)
+_FILTER_RE = re.compile(r"^\s*(?P<prop>[A-Za-z0-9_]+)\s+eq\s+'(?P<val>(?:[^']|'')*)'\s*$")
+
+
+def odata_filter(prop: str, values: Iterable[str]) -> str:
+    return " or ".join(f"{prop} eq '{str(v).replace(chr(39), chr(39) * 2)}'" for v in values)
+
+
+def eval_filter(expr: str, entity: dict) -> bool:
+    """Minimal OData V2 `$filter` evaluator for `Prop eq 'v'` terms joined by `and` / `or` (used by the simulated
+    gateway; a real target evaluates the same expressions)."""
+    expr = expr.strip()
+    if not expr:
+        return True
+    for part in re.split(r"\s+or\s+", expr):
+        ok = True
+        for term in re.split(r"\s+and\s+", part):
+            m = _FILTER_RE.match(term.strip("() "))
+            if not m:
+                raise ValueError(f"unsupported $filter term {term!r}")
+            if str(entity.get(m.group("prop"), "")) != m.group("val").replace("''", "'"):
+                ok = False
+                break
+        if ok:
+            return True
+    return False
+
+
+def journal_rows(items: list[dict]) -> dict[str, list[dict]]:
+    """BKPF headers, BSEG lines and BSID/BSIK open items derived from journal entry line items of the read service."""
+    bseg, bkpf, bsid, bsik = [], {}, [], []
+    for it in items:
+        line = {f: it.get(p) for p, f in JOURNAL_FIELDS.items() if p in it and it.get(p) is not None}
+        if "BUZEI" not in line and it.get("LedgerGLLineItem") is not None:
+            line["BUZEI"] = it["LedgerGLLineItem"]
+        for f in ("BUKRS", "BELNR", "BUZEI"):
+            line.setdefault(f, "")
+        line["GJAHR"] = str(line.get("GJAHR", ""))
+        amt = it.get("AmountInCompanyCodeCurrency")
+        if amt is not None and "SHKZG" not in line:
+            line["SHKZG"] = "S" if float(amt) >= 0 else "H"
+        if amt is not None:
+            line["DMBTR"] = abs(float(amt))
+        if it.get("AmountInTransactionCurrency") is not None:
+            line["WRBTR"] = abs(float(it["AmountInTransactionCurrency"]))
+        bseg.append(line)
+        hk = (line["BUKRS"], line["BELNR"], line["GJAHR"])
+        if hk not in bkpf:
+            bkpf[hk] = {"BUKRS": hk[0], "BELNR": hk[1], "GJAHR": hk[2], **{f: it.get(p) for p, f in JOURNAL_HEADER_FIELDS.items() if p in it}}
+        if line.get("KOART") in ("D", "K") and not line.get("AUGBL"):
+            oi = {"BUKRS": line["BUKRS"], "UMSKS": "", "UMSKZ": line.get("UMSKZ") or "", "AUGDT": "", "AUGBL": "", "ZUONR": line.get("ZUONR") or "", "GJAHR": line["GJAHR"], "BELNR": line["BELNR"], "BUZEI": line["BUZEI"], "DMBTR": line.get("DMBTR"), "SHKZG": line.get("SHKZG")}
+            if line["KOART"] == "D":
+                bsid.append({**oi, "KUNNR": line.get("KUNNR", "")})
+            else:
+                bsik.append({**oi, "LIFNR": line.get("LIFNR", "")})
+    return {"BKPF": list(bkpf.values()), "BSEG": bseg, "BSID": bsid, "BSIK": bsik}
+
+
+class ApiTargetView(ViewStore):
+    """The target as the released APIs show it. Built eagerly for the tables the checks scan; `by_key` fetches
+    a missing row lazily (a master the load did not create but the target already held)."""
+
+    def __init__(self, session: Session, target: SapSystem, company_codes: Iterable[str], loaded_keys: dict[str, set[str]], valuation_areas: Iterable[str] = (), fiscal_years: tuple[int | None, int | None] = (None, None)):
+        super().__init__(target.id, "api_readback")
+        self.transport = make_target_transport(session, target)
+        self.client = TargetApiClient(self.transport)
+        self.company_codes = sorted(set(company_codes))
+        self.loaded_keys = loaded_keys
+        self.valuation_areas = sorted(set(valuation_areas))
+        self.fiscal_years = fiscal_years
+        self._missing: set[tuple[str, str]] = set()
+        self.unreadable = set(UNREADABLE_BY_API) | {t for t in TABLES if t not in _BOUND and t not in ("BKPF", "BSEG", "BSID", "BSIK")}  # no released read service bound
+        self.derived_tables = {"BSID", "BSIK"}
+        for table, (_service, eb) in _BOUND.items():
+            self._comparable[table] = set(eb.fields) | set(eb.derived)
+        self._comparable["BSEG"] = set(JOURNAL_FIELDS.values()) - {"UMSKZ", "ZUONR"}
+        self._comparable["BKPF"] = {"BUKRS", "BELNR", "GJAHR"} | set(JOURNAL_HEADER_FIELDS.values())
+        self._load()
+
+    # -- reads
+    def _collection(self, service: str, entity_set: str, flt: str) -> list[dict]:
+        out: list[dict] = []
+        skip = 0
+        while True:
+            path = f"{entity_set}?$filter={flt}&$top={PAGE}&$skip={skip}" if flt else f"{entity_set}?$top={PAGE}&$skip={skip}"
+            r = self.client._call("GET", service, path)
+            d = r.body.get("d", {}) or {}
+            results = d.get("results", d if isinstance(d, list) else [])
+            out.extend(results)
+            if len(results) < PAGE:
+                return out
+            skip += len(results)
+
+    def _entity_rows(self, eb: EntityBinding, entities: list[dict]) -> list[dict]:
+        rows = []
+        for e in entities:
+            row = eb.to_row(e)
+            for f, p in eb.fields.items():
+                if f in eb.derived and p in e:
+                    row[f] = e[p]
+            rows.append(row)
+        return rows
+
+    def _load(self) -> None:
+        by_table: dict[str, int] = {}
+        cc_prop_tables = []
+        for table, (service, eb) in _BOUND.items():
+            cc_prop = eb.fields.get("BUKRS")
+            if cc_prop and "BUKRS" not in eb.derived:
+                cc_prop_tables.append(table)
+                try:
+                    ents = self._collection(service, eb.entity_set, odata_filter(cc_prop, self.company_codes))
+                    by_table[table] = self.add_rows(table, self._entity_rows(eb, ents))
+                except ApiError as e:
+                    self.unreadable.add(table)
+                    self.metrics.setdefault("errors", {})[table] = str(e)
+        if self.valuation_areas and "MBEW" in _BOUND:
+            service, eb = _BOUND["MBEW"]
+            try:
+                ents = self._collection(service, eb.entity_set, odata_filter(eb.fields["BWKEY"], self.valuation_areas))
+                by_table["MBEW"] = self.add_rows("MBEW", self._entity_rows(eb, ents))
+            except ApiError as e:
+                self.unreadable.add("MBEW")
+                self.metrics.setdefault("errors", {})["MBEW"] = str(e)
+        # loaded records read back by key (masters, documents without a company code property)
+        for table, keys in sorted(self.loaded_keys.items()):
+            if table in cc_prop_tables or table in ("BKPF", "BSEG", "BSID", "BSIK"):
+                continue
+            if table not in _BOUND:
+                self.unreadable.add(table)
+                continue
+            n = 0
+            for k in sorted(keys):
+                if self._fetch(table, k) is not None:
+                    n += 1
+            by_table[table] = n
+        # journal entries through the read service
+        flt = odata_filter("CompanyCode", self.company_codes)
+        yf, yt = self.fiscal_years
+        if yf or yt:
+            years = [str(y) for y in range(yf or yt, (yt or yf) + 1)]
+            flt = f"({flt}) and ({odata_filter('FiscalYear', years)})"
+        try:
+            items = self._collection(JOURNAL_SERVICE, JOURNAL_ENTITY, flt)
+            for t, rows in journal_rows(items).items():
+                by_table[t] = self.add_rows(t, rows)
+        except ApiError as e:
+            self.unreadable |= {"BKPF", "BSEG", "BSID", "BSIK"}
+            self.metrics.setdefault("errors", {})["journal"] = str(e)
+        self.metrics.update({"transport": getattr(self.transport, "name", "?"), "company_codes": self.company_codes, "valuation_areas": self.valuation_areas, "by_table": by_table, "rows": sum(by_table.values()), "unreadable": sorted(self.unreadable), **self.client.stats()})
+
+    def _fetch(self, table: str, key: str) -> dict | None:
+        if table not in _BOUND or (table, key) in self._missing:
+            return None
+        service, eb = _BOUND[table]
+        try:
+            ent, _etag = self.client.get(service, eb.entity_set, eb.key_props, key.split("|"))
+        except ApiError as e:
+            self.metrics.setdefault("errors", {})[f"{table}:{key}"] = str(e)
+            ent = None
+        if ent is None:
+            self._missing.add((table, key))
+            return None
+        row = self._entity_rows(eb, [ent])[0]
+        self.add_rows(table, [row])
+        return self.by_key(table, key)
+
+    def by_key(self, table: str, key: str) -> dict | None:
+        row = super().by_key(table, key)
+        if row is None and table in _BOUND:
+            row = self._fetch(table, key)
+        return row
+
+    def get(self, table: str, **key_fields) -> dict | None:
+        td = TABLES[table]
+        return self.by_key(table, "|".join(str(key_fields.get(k, "")) for k in td.key_fields))
+
+
+def build_target_view(session: Session, target: SapSystem, manifest, loaded_keys: dict[str, set[str]], source_view: RecordStore | None = None, force_api: bool = False) -> ViewStore:
+    """The target side of the reconciliation: the record store for simulated targets, the released APIs otherwise."""
+    if _uses_record_store(target) and not force_api:
+        return record_store_view(session, target.id)
+    if target.connector not in ("API", "SYNTHETIC"):  # SYNTHETIC only with force_api: the simulated gateway serves it
+        raise ReconciliationViewError(f"no reconciliation read path for connector {target.connector}")
+    defn = manifest.definition
+    cc_map = defn.get("target_ownership", {}).get("company_code_map") or {}
+    plant_map = defn.get("target_ownership", {}).get("plant_map") or {}
+    target_ccs = {cc_map.get(c, c) for c in defn["company_codes"]}
+    areas: set[str] = set()
+    if source_view is not None:
+        areas = {plant_map.get(str(r["BWKEY"]), str(r["BWKEY"])) for r in source_view.rows("T001K") if r["BUKRS"] in set(defn["company_codes"])}
+    return ApiTargetView(session, target, target_ccs, loaded_keys, areas, (defn.get("fiscal_year_from"), defn.get("fiscal_year_to")))
+
+
+def loaded_keys_of(backend, run_id: str) -> dict[str, set[str]]:
+    out: dict[str, set[str]] = defaultdict(set)
+    for s in backend.iter_records(run_id, status="LOADED"):
+        if s.target_key:
+            out[s.table_name].add(s.target_key)
+    return dict(out)
+
+
+__all__ = ["SOURCE_TABLES", "normalise", "ViewStore", "ApiTargetView", "ReconciliationViewError", "build_source_view", "build_target_view", "record_store_view", "loaded_keys_of", "journal_rows", "eval_filter", "odata_filter", "record_key"]

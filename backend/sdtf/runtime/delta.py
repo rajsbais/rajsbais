@@ -405,8 +405,10 @@ class DeltaEngine:
     def final_reconciliation(self) -> dict:
         """Stage 10: the baseline's full three-layer reconciliation against the current source and target, with the
         manifest's document statuses refreshed from the source (they legitimately moved during the delta window)."""
-        source = RecordStore.load(self.session, self.src.id)
-        target = RecordStore.load(self.session, self.tgt.id)
+        from ..reconciliation.views import build_source_view, build_target_view, loaded_keys_of
+
+        source = build_source_view(self.session, self.src, self.manifest)
+        target = build_target_view(self.session, self.tgt, self.manifest, loaded_keys_of(self.backend, self.base.id), source)
         cls = {}
         for n, c in self.cls.items():
             bo = BUSINESS_OBJECTS.get(c["type"])

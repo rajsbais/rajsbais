@@ -14,6 +14,9 @@ Alembic (`backend/alembic.ini`, `backend/sdtf/migrations`). `alembic upgrade hea
 * **Reconciliation not PASS**: Reconciliation Center → filter FAIL/WARN → *Explain variances* → act on
   root-cause category (SCOPE_POLICY / TRANSFORMATION / LOAD). Technical PASS does not clear financial sign-off.
 * **Manifest cannot be approved**: Carve-out Studio → Pending business dispositions → decide per object or bulk.
+* **Reconcile again after the systems moved** (or after switching to the other VM): `POST /runs/{id}/reconcile` or
+  `sdtf reconcile --run <id>` re-runs the three layers through the adapters and refreshes the report; the summary names
+  the read path per side (`record_store`, `rfc_addon`, `api_readback`) and the tables not verified.
 * **Cutover rehearsal**: Cutover Command Center → *New rehearsal* (mock / dress / go-live) → refresh the automatic
   items, tick the manual ones with notes, *Start* and time the runbook tasks, record lessons → an approver closes it
   with GO (refused while a blocking item is open) or NO-GO; the report is the cutover binder entry

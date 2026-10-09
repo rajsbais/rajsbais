@@ -28,6 +28,7 @@ Z_SDTF_READ_PACKAGE
 Z_SDTF_OPEN_SNAPSHOT   -> consistency token (DB snapshot / timestamp + last-change watermark per table)
 Z_SDTF_TABLE_METADATA  -> DDIC keys, fields, sizes, growth statistics (read-only)
 Z_SDTF_CDC_POLL        -> change events since watermark (CDHDR/CDPOS for masters, timestamp watermarks for documents, table log for deletes)
+Z_SDTF_AGGREGATE       -> COUNT / SUM per group computed in the database (reconciliation totals and read-integrity evidence)
 ```
 
 ## Precise semantics (what the adapter relies on, what the simulated add-on enforces)
@@ -52,10 +53,17 @@ Z_SDTF_CDC_POLL        -> change events since watermark (CDHDR/CDPOS for masters
   timestamp and user, and the current row image (`JSON`; empty for D). Delivered in sequence order, `IV_PACKAGE` per
   call with `EV_EOF`, `EV_CHECKSUM` over the serialised events; events the filter drops still advance the watermark.
   Sequences are never re-issued: the platform keeps an idempotency ledger keyed by baseline run and `SEQ`.
+* **Aggregates** (`Z_SDTF_AGGREGATE`, reference in `src/z_sdtf_aggregate.abap`): `IT_GROUP_BY` / `IT_SUM`
+  (`ZSDTF_T_FIELDNAME`) are validated against the nametab (`INVALID_FIELD`), the predicate and snapshot rules are
+  those of `Z_SDTF_READ_PACKAGE`; one `SELECT ... COUNT( * ), SUM( f ) ... GROUP BY` in the database; rows carry
+  the group fields, `COUNT` and `SUM_<FIELD>` (no group field: exactly one row, zeros for an empty result);
+  `EV_CHECKSUM` as for packages. The reconciliation reads the source through the add-on and uses the aggregates to
+  size its reads and to prove them complete (`backend/sdtf/reconciliation/views.py`). An add-on without this module
+  still works for reconciliation (rows only, no read-integrity evidence).
 * **No writes**: the function group contains read modules only.
 
 ## Reference sources (`src/`)
-`z_sdtf_read_package.abap`, `z_sdtf_open_snapshot.abap`, `z_sdtf_table_metadata.abap`, `z_sdtf_cdc_poll.abap`, and `DDIC.md` for the types,
+`z_sdtf_read_package.abap`, `z_sdtf_open_snapshot.abap`, `z_sdtf_table_metadata.abap`, `z_sdtf_cdc_poll.abap`, `z_sdtf_aggregate.abap`, and `DDIC.md` for the types,
 the `ZSDTF_SNAP` table and the helper classes. They are written for NW 7.50 (ECC 6.0 EHP8) syntax and have not been
 activated anywhere.
 
@@ -63,7 +71,8 @@ activated anywhere.
 * `SDTF_RFC_DEST_<SID>` (JSON `pyrfc.Connection` parameters; secrets as `env:NAME`) or `meta.rfc.dest` on the
   registered system; `SDTF_RFC_TRANSPORT=auto|pyrfc|simulated`, `SDTF_RFC_PACKAGE_SIZE`, `SDTF_RFC_KEY_CHUNK`,
   `SDTF_RFC_KEY_PUSHDOWN_LIMIT`.
-* `POST /systems/{id}/connector/test` opens a snapshot, reads T001 metadata and one 5-row package.
+* `POST /systems/{id}/connector/test` opens a snapshot, reads T001 metadata, one 5-row package and one aggregate (reports whether `Z_SDTF_AGGREGATE` exists).
+* `POST /runs/{id}/reconcile` / `sdtf reconcile --run` re-run the three-layer reconciliation of a completed run through the adapters (source over the add-on, target over the released APIs).
 * `python -m sdtf.cli demo --connector RFC` runs the whole vertical slice through the adapter on the simulated add-on.
 * Delta: `POST /systems/{id}/simulate-changes` plays business activity into the simulated source's change log;
   `POST /runs/{baseline}/delta/cycles` captures, transforms, applies and reconciles it (`runtime/delta.py`, ADR-0014).

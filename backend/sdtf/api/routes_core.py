@@ -250,7 +250,11 @@ def test_connector(s: SapSystem = Depends(get_system), db: Session = Depends(get
         snap = client.open_snapshot(["T001"])
         meta = client.table_metadata("T001")
         rows, cursor, eof = client.read_package("T001", [])
-        out = {"ok": True, "connector": "RFC", "transport": getattr(transport, "name", "?"), "snapshot": snap, "valid_until": client.valid_until, "table": meta, "sample_rows": len(rows), "eof": eof, "checksum_verified": True, "destination": rfcmod.mask_destination(rfcmod.resolve_destination(s.sid, s.meta)), "duration_ms": round((time.monotonic() - t0) * 1000, 1)}
+        try:
+            aggregate = {"available": True, "rows": client.count("T001", [])}
+        except rfcmod.RfcError as e:
+            aggregate = {"available": False, "error": e.key, "note": "Z_SDTF_AGGREGATE missing or not authorised: reconciliation reads rows without read-integrity evidence"}
+        out = {"ok": True, "connector": "RFC", "transport": getattr(transport, "name", "?"), "snapshot": snap, "valid_until": client.valid_until, "table": meta, "sample_rows": len(rows), "eof": eof, "checksum_verified": True, "aggregate": aggregate, "destination": rfcmod.mask_destination(rfcmod.resolve_destination(s.sid, s.meta)), "duration_ms": round((time.monotonic() - t0) * 1000, 1)}
     except rfcmod.RfcError as e:
         out = {"ok": False, "connector": "RFC", "error": e.key, "detail": e.message, "destination": rfcmod.mask_destination(rfcmod.resolve_destination(s.sid, s.meta)), "duration_ms": round((time.monotonic() - t0) * 1000, 1)}
     record_event(db, p.username, "CONNECTOR_TESTED", "SYSTEM", s.id, {k: v for k, v in out.items() if k in ("ok", "transport", "error", "snapshot")})

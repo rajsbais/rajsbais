@@ -33,11 +33,13 @@ So the honest plan is not "ECC first, S/4HANA second" but:
 A run that needs the other VM fails at that stage with a connection error (EXTRACT needs the source, LOAD the target);
 switch VMs and *Resume from checkpoint*: completed stages and completed extraction partitions are skipped.
 
-> **Reconciliation on real systems is not wired yet.** The RECONCILE stage reads source and target through the platform's
-> record store, i.e. the simulated systems. With a pyrfc source and an HTTPS target it has no data: expect FAIL / zero
-> totals there, and treat the extraction metrics (rows, partitions, checksums, snapshot id) and the cockpit simulation log as
-> the real evidence of these steps. Reconciliation through the adapters (aggregates over `Z_SDTF_READ_PACKAGE`, OData reads
-> on the target) is the next increment and is listed in the backlog.
+> **Reconciliation reads through the adapters** (ADR-0016): the source side over the add-on (company-code pushdown;
+> `Z_SDTF_AGGREGATE` proves the read complete, so create it with the other modules), the target side back through the
+> released APIs (entities by key, filtered collections, `API_JOURNALENTRYITEMBASIC_SRV` for journal entries). Tables with
+> no read path (T001, T001K, ANLC) are reported as *not verified* (WARN), never as a false FAIL. The journal item property
+> names are unverified against A4H's `$metadata`: send the first `$metadata` of that service if the read fails. After
+> switching VMs, `POST /runs/{id}/reconcile` (or `sdtf reconcile --run`) re-runs the reconciliation without repeating the
+> load.
 
 Networking: the platform runs on the Windows host (Python, the SAP NW RFC SDK for Windows, `pyrfc`; if no `pyrfc` wheel
 exists for your Python, use a 3.12 virtual environment for the API process) or inside the `docker-host` VM through
@@ -94,6 +96,8 @@ ECC, in this order, and what you should see:
 1. `Z_SDTF_OPEN_SNAPSHOT`: a consistency token comes back (`snapshot` in the result).
 2. `Z_SDTF_TABLE_METADATA` for `T001`: key fields and field list match the catalogue.
 3. `Z_SDTF_READ_PACKAGE` for `T001`, package of 5 rows: rows come back and their checksum matches.
+4. `Z_SDTF_AGGREGATE` for `T001`: the row count computed in the database (`aggregate.available`); when the module is
+   missing the test still passes and says so, and the reconciliation reads rows without integrity evidence.
 
 A failure names the step and the RFC error (`RFC_COMMUNICATION_FAILURE`, missing function module, missing
 authorisation). Fix it on the SAP side and test again; nothing was written.
@@ -111,8 +115,9 @@ from the real ECC over RFC, transforms, loads into the simulated gateway and rec
 
 * EXTRACT metrics: `adapter=RFC`, partitions, records per second, `snapshot_id` equal to the one the connector test
   returned;
-* RECONCILE: on the simulated target this is the three layers PASS or explained; **on a pyrfc source the source side is
-  not read through RFC yet** (see the note above), so do not expect a meaningful result there until that increment lands;
+* RECONCILE: the three layers PASS or explained; the source side now comes through RFC (watch the `source_read_integrity` /
+  `source_read_amounts` rows, which compare the rows read with totals computed in the source), the simulated target side
+  from the gateway;
 * the cockpit export: the staging files for the cockpit objects, now carrying real data.
 
 Start with a small company code or a date-bounded scope: the first extraction measures the real throughput.

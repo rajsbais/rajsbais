@@ -29,6 +29,7 @@ from ..models import SapRecord
 SapRecordTable = SapRecord.__table__
 SOURCE_REF = "SDTF_SOURCE_REF"  # idempotency reference kept on journal entries (extension property YY1_SDTF_SOURCE_REF)
 COCKPIT_SERVICE = "MIGRATION_COCKPIT"
+JOURNAL_READ_SERVICE = "API_JOURNALENTRYITEMBASIC_SRV"
 
 
 class ApiError(Exception):
@@ -220,6 +221,8 @@ class SimulatedS4Gateway:
     def _dispatch(self, method: str, service: str, path: str, payload: dict | None, headers: dict) -> ApiResponse:
         if service == COCKPIT_SERVICE:
             return self._cockpit(method, path, payload or {})
+        if service == JOURNAL_READ_SERVICE:
+            return self._journal_items(method, path, headers)
         if service not in _SERVICE_ENTITIES:
             return self._err(404, "SERVICE_NOT_FOUND", f"service {service} is not activated on this target")
         if method == "GET" and headers.get("x-csrf-token") == "fetch":
@@ -230,13 +233,13 @@ class SimulatedS4Gateway:
             return self._journal(method, path, payload or {})
         if (e := self._check_csrf(method, headers)) is not None:
             return e
-        entity_set, key = parse_path(path)
+        entity_set, key = parse_path(path.split("?", 1)[0])
         if entity_set not in _SERVICE_ENTITIES[service]:
             return self._err(404, "ENTITY_NOT_FOUND", f"entity set {entity_set} does not exist in {service}")
         b, eb = _SERVICE_ENTITIES[service][entity_set]
         if method == "GET":
             if key is None:
-                return self._err(400, "UNSUPPORTED", "collection queries are not needed by the loaders; read by key")
+                return self._collection(eb, path)
             row = self.row(eb.table, "|".join(self._key_values(eb, key, None)))
             if row is None:
                 return self._err(404, "NOT_FOUND", f"{entity_set}{path[len(entity_set):]} not found")
@@ -248,6 +251,60 @@ class SimulatedS4Gateway:
         if method == "DELETE":
             return self._remove(b, eb, key, headers)
         return self._err(405, "METHOD_NOT_ALLOWED", method)
+
+    @staticmethod
+    def _query(path: str) -> dict:
+        from urllib.parse import parse_qs, unquote, urlsplit
+
+        q = parse_qs(urlsplit(path).query, keep_blank_values=True)
+        return {k: unquote(v[0]) for k, v in q.items()}
+
+    def _page(self, entities: list[dict], path: str) -> ApiResponse:
+        """OData V2 collection answer: `$filter` (Prop eq 'v' with and/or), `$top`, `$skip`; `$select` ignored."""
+        from ..reconciliation.views import eval_filter
+
+        q = self._query(path)
+        try:
+            flt = q.get("$filter", "")
+            rows = [e for e in entities if eval_filter(flt, e)]
+        except ValueError as e:
+            return self._err(400, "BAD_FILTER", str(e))
+        skip, top = int(q.get("$skip", 0) or 0), int(q.get("$top", 0) or 0)
+        rows = rows[skip:]
+        if top:
+            rows = rows[:top]
+        return ApiResponse(200, {"d": {"results": rows}})
+
+    def _collection(self, eb: EntityBinding, path: str) -> ApiResponse:
+        ents = [eb.to_entity(r) | {p: r.get(f) for f, p in eb.fields.items() if f in eb.derived} for r in self.rows(eb.table)]
+        return self._page(ents, path)
+
+    def _journal_items(self, method: str, path: str, headers: dict) -> ApiResponse:
+        """API_JOURNALENTRYITEMBASIC_SRV / A_JournalEntryItemBasic read service over BSEG + BKPF (read-only)."""
+        from ..reconciliation.views import JOURNAL_ENTITY, JOURNAL_FIELDS, JOURNAL_HEADER_FIELDS
+
+        if method == "GET" and headers.get("x-csrf-token") == "fetch":
+            tok = secrets.token_hex(8)
+            self._tokens.add(tok)
+            return ApiResponse(200, {"d": {"EntitySets": [JOURNAL_ENTITY]}}, {"x-csrf-token": tok})
+        if method != "GET":
+            return self._err(405, "METHOD_NOT_ALLOWED", "the journal entry item service is read-only")
+        entity_set, key = parse_path(path.split("?", 1)[0])
+        if entity_set != JOURNAL_ENTITY:
+            return self._err(404, "ENTITY_NOT_FOUND", f"entity set {entity_set} does not exist in {JOURNAL_READ_SERVICE}")
+        inv = {f: p for p, f in JOURNAL_FIELDS.items() if p != "LedgerGLLineItem"}
+        ents = []
+        for l in self.rows("BSEG"):
+            h = self.row("BKPF", f"{l['BUKRS']}|{l['BELNR']}|{l['GJAHR']}") or {}
+            e = {p: l.get(f) for f, p in inv.items() if f in l}
+            amt = float(l.get("DMBTR") or 0)
+            e["AmountInCompanyCodeCurrency"] = amt if l.get("SHKZG") == "S" else -amt
+            e["AmountInTransactionCurrency"] = (float(l.get("WRBTR") or 0) if l.get("SHKZG") == "S" else -float(l.get("WRBTR") or 0)) if l.get("WRBTR") is not None else None
+            e["LedgerGLLineItem"] = l.get("BUZEI")
+            e["FiscalYear"] = str(l.get("GJAHR"))
+            e.update({p: h.get(f) for p, f in JOURNAL_HEADER_FIELDS.items() if f in h})
+            ents.append(e)
+        return self._page(ents, path)
 
     def _create(self, b: ApiBinding, eb: EntityBinding, entity: dict) -> ApiResponse:
         row = eb.to_row(entity)

@@ -16,6 +16,11 @@ export default function Reconciliation() {
   const [expl, setExpl] = useState<any>(null);
   const signoff = async (kind: string, decision: string) => { setErr(null); try { await api(`/runs/${id}/signoff`, { body: { kind, decision, comment } }); appr.reload(); } catch (e: any) { setErr(e.message); } };
   const explain = async () => { setErr(null); try { setExpl(await api(`/projects/${projectId}/agents/reconciliation_explanation/run`, { body: { context: { run_id: id } } })); } catch (e: any) { setErr(e.message); } };
+  const [busy, setBusy] = useState(false);
+  const reconcileAgain = async () => { setErr(null); setBusy(true); try { await api(`/runs/${id}/reconcile`, { body: {} }); rep.reload(); rows.reload(); runs.reload(); } catch (e: any) { setErr(e.message); } finally { setBusy(false); } };
+  const stage = (run?.stages || []).find((s: any) => s.name === "RECONCILE");
+  const viewsInfo = stage?.metrics?.views || {};
+  const readPath = (side: string) => { const v = viewsInfo[side]; if (!v) return "record store"; return `${v.origin}${v.transport ? ` via ${v.transport}` : ""}${v.rows !== undefined ? ` · ${v.rows} rows read` : ""}${v.unreadable?.length ? ` · not readable: ${v.unreadable.join(", ")}` : ""}`; };
   if (!projectId) return <Banner>Select a project.</Banner>;
   if (!runs.data?.length) return <Banner>No runs yet.</Banner>;
   const by = rep.data?.reconciliation?.by_layer || {};
@@ -24,6 +29,12 @@ export default function Reconciliation() {
       <div className="row"><Select value={id} onChange={setSel} options={(runs.data || []).map((r) => ({ value: r.id, label: `${r.id.slice(0, 8)} ${r.status} ${r.started_at?.slice(0, 16)}` }))} /><Select value={layer} onChange={setLayer} options={["TECHNICAL", "FUNCTIONAL", "FINANCIAL"].map((l) => ({ value: l, label: l }))} placeholder="all layers" /><Select value={status} onChange={setStatus} options={["PASS", "WARN", "FAIL"].map((l) => ({ value: l, label: l }))} placeholder="all statuses" /><button className="secondary" onClick={explain}>Explain variances (agent)</button></div>
       <ErrorBox error={err || rows.error} />
       <div className="stats"><Stat label="Overall" value={<Pill value={rep.data?.reconciliation?.overall} />} sub={`${rep.data?.reconciliation?.checks ?? 0} checks`} />{["TECHNICAL", "FUNCTIONAL", "FINANCIAL"].map((l) => <Stat key={l} label={l} value={`${by[l]?.PASS || 0} pass`} sub={`${by[l]?.WARN || 0} warn · ${by[l]?.FAIL || 0} fail`} />)}<Stat label="Technical load ≠ financial sign-off" value={run?.status === "COMPLETED" ? "load OK" : run?.status} sub="financial & functional layers are independent" /></div>
+      <Card title="Read path" actions={<button className="secondary" disabled={busy || run?.status !== "COMPLETED"} onClick={reconcileAgain}>{busy ? "Reconciling…" : "Reconcile again through the adapters"}</button>}>
+        <p className="muted">Where the reconciliation read each side: the platform's record store for simulated systems, the RFC add-on for a real source (company-code pushdown; counts and totals computed in the source prove the read complete), the released APIs for a real target (entities by key, filtered collections, journal entry items). Tables without a read path are listed as not verified and their checks carry WARN, never a false FAIL.</p>
+        <Table cols={[{ k: "side", h: "Side" }, { k: "path", h: "Read through" }]} rows={[{ side: "source", path: readPath("source") }, { side: "target", path: readPath("target") }]} />
+        {stage?.metrics?.not_verified?.length > 0 && <p className="muted">Not verified (no read path): {stage.metrics.not_verified.join(", ")}</p>}
+        {stage?.metrics?.reconciled_again_at && <p className="muted">Last reconciled again by {stage.metrics.reconciled_again_by} at {String(stage.metrics.reconciled_again_at).slice(0, 16)}.</p>}
+      </Card>
       <Card title="Checks" actions={<><input placeholder="sign-off comment" value={comment} onChange={(e) => setComment(e.target.value)} /><button onClick={() => signoff("TECHNICAL", "APPROVED")}>Technical sign-off</button> <button onClick={() => signoff("BUSINESS", "APPROVED")}>Business sign-off</button> <button className="danger" onClick={() => signoff("BUSINESS", "REJECTED")}>Reject</button></>}>
         <Table cols={[{ k: "layer", h: "Layer" }, { k: "check", h: "Check" }, { k: "subject", h: "Subject" }, { k: "status", h: "Status", r: (r) => <Pill value={r.status} /> }, { k: "source", h: "Source" }, { k: "target", h: "Target" }, { k: "variance", h: "Variance" }, { k: "explanation", h: "Explanation / evidence" }]} rows={rows.data || []} />
       </Card>

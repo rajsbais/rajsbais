@@ -16,10 +16,11 @@ from sqlalchemy.orm import Session
 from .. import observability as obs
 from ..catalog.business_objects import BUSINESS_OBJECTS, instance_status
 from ..catalog.store import RecordStore
-from ..models import MigrationRun, ReconciliationResult, ScopeManifest, TransformationException
+from ..models import MigrationRun, ReconciliationResult, SapSystem, ScopeManifest, TransformationException
 from ..staging import get_backend
 
 TRANSFER = ("FULLY_TRANSFERRED", "PARTIALLY_TRANSFERRED", "SHARED_DUPLICATED")
+STATUS_DEPENDS = {"SD.Delivery": ("VBFA",), "MM.PurchaseOrder": ("EKPO", "EKBE"), "FI.AccountingDocument": ("BSEG",), "PP.ProductionOrder": ("AFPO",)}  # tables instance_status reads on the target
 
 
 def _r(run_id, layer, name, status, subject="", src="", tgt="", variance="", explanation="", evidence=None):
@@ -34,6 +35,17 @@ def _sum_lines(rows, cc_field="BUKRS"):
     return bal
 
 
+def _normalise(value) -> str:
+    from .views import normalise
+
+    return normalise(value)
+
+
+def _unreadable(store) -> set[str]:
+    """Tables a view could not read through its adapter (empty for record-store views)."""
+    return set(getattr(store, "unreadable", ()) or ())
+
+
 def _item_tables_of(table: str):
     """(business object, header table) pairs for which `table` is an item table."""
     return [(bo, bo.header_table) for bo in BUSINESS_OBJECTS.values() if table in bo.item_tables]
@@ -44,6 +56,18 @@ def technical_checks_for_table(rid: str, table: str, recs: list, target: RecordS
     comparison and, for item tables, item -> header referential integrity in the target."""
     results: list[ReconciliationResult] = []
     loaded = [s for s in recs if s.load_status == "LOADED"]
+    if table in _unreadable(target):
+        results.append(_r(rid, "TECHNICAL", "record_count", "WARN", table, len(recs), "not readable", "", f"{table} cannot be read back through the released APIs in this build: load accepted by the target, content not verified", {"loaded": len(loaded), "unreadable": True}))
+        return results, 0
+    if table in (getattr(target, "derived_tables", None) or ()):
+        results.append(_r(rid, "TECHNICAL", "record_count", "WARN", table, len(recs), "derived", "", f"{table} is a projection on the target (open items derived from journal entry lines): not compared row by row; the open-item totals are compared in the financial layer", {"loaded": len(loaded), "derived": True}))
+        return results, 0
+    fields = target.comparable_fields(table) if hasattr(target, "comparable_fields") else None
+    norm = _normalise if fields is not None else (lambda v: v)
+
+    def image(row: dict) -> dict:
+        return {k: norm(v) for k, v in row.items() if fields is None or k in fields}
+
     present = [s for s in loaded if target.by_key(table, s.target_key) is not None]
     missing = len(loaded) - len(present)
     rejected = sum(1 for s in recs if s.load_status in ("REJECTED", "CONFLICT", "UNSUPPORTED"))
@@ -52,14 +76,15 @@ def technical_checks_for_table(rid: str, table: str, recs: list, target: RecordS
     tkeys = Counter(s.target_key for s in {x.record_key: x for x in loaded}.values())  # identical copies staged by two partitions are one record
     dups = sum(1 for k, n in tkeys.items() if n > 1)
     results.append(_r(rid, "TECHNICAL", "key_uniqueness", "PASS" if dups == 0 else "FAIL", table, len(tkeys), len(loaded), dups, "Several source records map to the same target key" if dups else ""))
-    exp = hashlib.sha256("".join(sorted(json.dumps(s.target_payload, sort_keys=True, default=str) for s in loaded)).encode()).hexdigest()
-    act = hashlib.sha256("".join(sorted(json.dumps(target.by_key(table, s.target_key), sort_keys=True, default=str) for s in present)).encode()).hexdigest()
-    results.append(_r(rid, "TECHNICAL", "checksum", "PASS" if exp == act else "FAIL", table, exp[:16], act[:16], "", "" if exp == act else "Target content differs from transformed staging content"))
+    exp = hashlib.sha256("".join(sorted(json.dumps(image(s.target_payload), sort_keys=True, default=str) for s in loaded)).encode()).hexdigest()
+    act = hashlib.sha256("".join(sorted(json.dumps(image(target.by_key(table, s.target_key)), sort_keys=True, default=str) for s in present)).encode()).hexdigest()
+    scope_note = f" (on the {len(fields)} fields the read service exposes)" if fields is not None else ""
+    results.append(_r(rid, "TECHNICAL", "checksum", "PASS" if exp == act else "FAIL", table, exp[:16], act[:16], "", ("" if exp == act else "Target content differs from transformed staging content") + scope_note, {"compared_fields": sorted(fields)} if fields is not None else None))
     mism = 0
     for s in present[:200]:
-        t = target.by_key(table, s.target_key)
-        mism += sum(1 for k, v in s.target_payload.items() if t.get(k) != v)
-    results.append(_r(rid, "TECHNICAL", "field_comparison", "PASS" if mism == 0 else "FAIL", table, min(len(present), 200), mism, mism, "Field-level sample comparison of staged vs loaded"))
+        t = image(target.by_key(table, s.target_key))
+        mism += sum(1 for k, v in image(s.target_payload).items() if t.get(k) != v)
+    results.append(_r(rid, "TECHNICAL", "field_comparison", "PASS" if mism == 0 else "FAIL", table, min(len(present), 200), mism, mism, "Field-level sample comparison of staged vs loaded" + scope_note))
     for bo, header in _item_tables_of(table):
         rows = target.rows(table)
         if not rows or not target.rows(header):
@@ -100,7 +125,7 @@ def functional_checks(rid: str, manifest: ScopeManifest, hdr_map: dict, loaded_t
         if not rows:
             return
         keys = {r[ref_fld] for r in target.rows(ref_table)}
-        dangling = [r[fld] for r in rows if r.get(fld) and r[fld] not in keys]
+        dangling = [r[fld] for r in rows if r.get(fld) and r[fld] not in keys and target.by_key(ref_table, str(r[fld])) is None]  # by_key lets an API view fetch a master the load did not create
         results.append(_r(rid, "FUNCTIONAL", name, "PASS" if not dangling else "FAIL", f"{table}.{fld}->{ref_table}", len(rows), len(rows) - len(dangling), len(dangling), "Dangling references in target" if dangling else "", {"samples": dangling[:10]}))
 
     ref_check("business_partner_reference", "VBAK", "KUNNR", "KNA1", "KUNNR")
@@ -110,8 +135,14 @@ def functional_checks(rid: str, manifest: ScopeManifest, hdr_map: dict, loaded_t
     ref_check("material_reference", "VBAP", "MATNR", "MARA", "MATNR")
     ref_check("material_reference", "EKPO", "MATNR", "MARA", "MATNR")
     ref_check("material_reference", "MARC", "MATNR", "MARA", "MATNR")
+    unreadable = _unreadable(target)
     for bo_id in ("SD.SalesOrder", "MM.PurchaseOrder", "FI.AccountingDocument"):
         bo = BUSINESS_OBJECTS[bo_id]
+        deps = [t for t in STATUS_DEPENDS.get(bo_id, ()) if t in unreadable]
+        if deps:
+            n = sum(1 for c in cls.values() if c["type"] == bo_id and c["classification"] in TRANSFER)
+            results.append(_r(rid, "FUNCTIONAL", "open_document_validity", "WARN", bo_id, n, "not verifiable", "", f"document status of {bo_id} derives from {', '.join(deps)}, not readable through the target's adapter in this build", {"unreadable": deps}))
+            continue
         checked, mism, partial = 0, [], 0
         for n, c in cls.items():
             if c["type"] != bo_id or c["classification"] not in TRANSFER:
@@ -174,12 +205,19 @@ def reconcile_run(session: Session, run: MigrationRun, manifest: ScopeManifest, 
         ctx = source_context(manifest, source, cls, exceptions, [s.target_payload for s in by_table.get("BSEG", []) if s.load_status == "LOADED"])
         fin, gl_fail = financial_checks(out_rid, [ctx], target)
         results.extend(fin)
+    for view in (source, target):  # adapter views prove their own reads (counts and totals computed in the system)
+        if hasattr(view, "integrity_results"):
+            results.extend(view.integrity_results(out_rid))
 
     session.add_all(results)
     session.flush()
     summary = summarize(results)
     summary["key_collisions"] = key_collisions
     summary["gl_failures"] = gl_fail
+    views = {name: dict(getattr(v, "metrics", {}) or {}) for name, v in (("source", source), ("target", target)) if getattr(v, "metrics", None)}
+    if views:
+        summary["views"] = views
+        summary["not_verified"] = sorted(set().union(*(_unreadable(v) for v in (source, target))))
     return summary
 
 
@@ -221,6 +259,9 @@ def financial_checks(rid: str, sources: list[dict], target: RecordStore) -> tupl
         for cc in sorted(c["scope_ccs"]):
             src_label[c["tcc_of"](cc)].append(cc)
     tgt_bseg = [l for l in target.rows("BSEG") if l["BUKRS"] in target_ccs]
+    if "BSEG" in _unreadable(target):
+        results.append(_r(rid, "FINANCIAL", "trial_balance", "WARN", "+".join(sorted(target_ccs)), "", "not readable", "", "journal entries are not readable through the target's adapter: the financial layer could not be verified", {"unreadable": True}))
+        return results, 0
     # trial balance per target company code and per document
     for tcc in sorted(target_ccs):
         lines = [l for l in tgt_bseg if l["BUKRS"] == tcc]
@@ -289,10 +330,14 @@ def financial_checks(rid: str, sources: list[dict], target: RecordStore) -> tupl
         t_amt = round(sum(_amt(r) for r in t_rows), 2)
         ok = len(s_rows) == len(t_rows) and abs(s_amt - t_amt) < 0.005
         results.append(_r(rid, "FINANCIAL", name, "PASS" if ok else "WARN", "open_items", f"{len(s_rows)} / {s_amt}", f"{len(t_rows)} / {t_amt}", round(s_amt - t_amt, 2), "" if ok else "Open-item differences are explained by retained/excluded documents (see gl_balance rows)"))
+    unreadable = _unreadable(target) | set().union(*(_unreadable(c["store"]) for c in sources))
     # asset balances
     s_assets = round(sum(float(r["KANSW"]) for c in sources for r in c["store"].rows("ANLC") if r["BUKRS"] in c["scope_ccs"]), 2)
     t_assets = round(sum(float(r["KANSW"]) for r in target.rows("ANLC") if r["BUKRS"] in target_ccs), 2)
-    results.append(_r(rid, "FINANCIAL", "asset_balances", "PASS" if abs(s_assets - t_assets) < 0.005 else "FAIL", "acquisition_values", s_assets, t_assets, round(s_assets - t_assets, 2)))
+    if "ANLC" in unreadable:
+        results.append(_r(rid, "FINANCIAL", "asset_balances", "WARN", "acquisition_values", s_assets, "not readable", "", "asset values (ANLC) are not readable through the adapters in this build; verify the asset balances in the target by report", {"unreadable": True}))
+    else:
+        results.append(_r(rid, "FINANCIAL", "asset_balances", "PASS" if abs(s_assets - t_assets) < 0.005 else "FAIL", "acquisition_values", s_assets, t_assets, round(s_assets - t_assets, 2)))
     # inventory valuation by valuation area
     s_inv, held, tgt_val_areas = 0.0, 0.0, set()
     for c in sources:
@@ -309,7 +354,10 @@ def financial_checks(rid: str, sources: list[dict], target: RecordStore) -> tupl
     t_inv = round(sum(float(r["SALK3"]) for r in target.rows("MBEW") if r["BWKEY"] in tgt_val_areas), 2)
     inv_var = round(s_inv - t_inv, 2)
     inv_expl = "" if abs(inv_var) < 0.005 else f"{held} held by materials not transferred (manual disposition / excluded); unexplained {round(inv_var - held, 2)}"
-    results.append(_r(rid, "FINANCIAL", "inventory_valuation", "PASS" if abs(inv_var) < 0.005 else ("WARN" if abs(inv_var - held) < 0.005 else "FAIL"), "valuation_areas", s_inv, t_inv, inv_var, inv_expl))
+    if "MBEW" in unreadable or "T001K" in unreadable:
+        results.append(_r(rid, "FINANCIAL", "inventory_valuation", "WARN", "valuation_areas", s_inv, "not readable", "", "material valuation (MBEW / T001K) is not readable through the adapters in this build; verify the inventory values in the target by report", {"unreadable": True}))
+    else:
+        results.append(_r(rid, "FINANCIAL", "inventory_valuation", "PASS" if abs(inv_var) < 0.005 else ("WARN" if abs(inv_var - held) < 0.005 else "FAIL"), "valuation_areas", s_inv, t_inv, inv_var, inv_expl))
     # intercompany balances (open), aggregated on target company codes
     s_ic: dict[tuple, float] = defaultdict(float)
     for c in sources:
@@ -405,8 +453,10 @@ def reconcile_partition(session: Session, run: MigrationRun, partition: str, bac
         results = functional_checks(rid, m, hdr_map, tables, target)
         extra = {}
     elif partition == "financial":
+        from .views import build_source_view
+
         session.query(ReconciliationResult).filter(ReconciliationResult.run_id == rid, ReconciliationResult.layer == "FINANCIAL").delete(synchronize_session=False)
-        source = RecordStore.load(session, run.source_system_id)
+        source = build_source_view(session, session.get(SapSystem, run.source_system_id), m)
         exceptions = session.execute(select(TransformationException).where(TransformationException.run_id == rid)).scalars().all()
         ctx = source_context(m, source, m.selection.get("classification", {}), exceptions, [s.target_payload for s in backend.iter_records(rid, table="BSEG", status="LOADED")])
         results, gl_fail = financial_checks(rid, [ctx], target)

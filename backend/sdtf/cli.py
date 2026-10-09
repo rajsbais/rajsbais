@@ -123,6 +123,9 @@ def main(argv=None):
     crre = crsub.add_parser("report", help="write the checklist report (Markdown)")
     crre.add_argument("--id", required=True)
     crre.add_argument("--out", default=None)
+    rc = sub.add_parser("reconcile", help="re-run the three-layer reconciliation of a completed run through the adapters (source over the RFC add-on, target over the released APIs)")
+    rc.add_argument("--run", required=True)
+    rc.add_argument("--json", action="store_true")
     mo = sub.add_parser("migration-objects", help="migration object lookup per S/4HANA release: list the catalogue, resolve a business object, import the target's object list for a project")
     mosub = mo.add_subparsers(dest="mcmd", required=True)
     ml = mosub.add_parser("list", help="catalogue (or the project's resolution table) for a release")
@@ -349,6 +352,30 @@ def main(argv=None):
                     print(f"  {ot}: {o['instances']} instances, {o['with_messages']} in log, {o['rejected']} rejected, {o['errors']} E / {o['warnings']} W; categories {o['categories'] or '-'}")
                 for reason, n in summ["unmatched_reasons"].items():
                     print(f"  unmatched x{n}: {reason}")
+        return 0
+    if a.cmd == "reconcile":
+        from .runtime.pipeline import RunPrecondition, reconcile_again
+
+        with session_scope() as session:
+            try:
+                summ = reconcile_again(session, a.run, "cli")
+            except RunPrecondition as e:
+                print(str(e), file=sys.stderr)
+                return 2
+            except Exception as e:  # noqa: BLE001
+                print(f"reconciliation read failed: {e}", file=sys.stderr)
+                return 3
+            session.commit()
+        if a.json:
+            print(json.dumps(summ, indent=2, default=str))
+        else:
+            views = summ.get("views", {})
+            print(f"run {a.run}: reconciliation {summ['overall']} ({summ['checks']} checks; " + ", ".join(f"{k} {v}" for k, v in summ["by_layer"].items()) + ")")
+            for side in ("source", "target"):
+                v = views.get(side) or {}
+                print(f"  {side}: {v.get('origin', 'record_store')}" + (f" via {v['transport']}" if v.get("transport") else "") + (f", {v['rows']} rows read" if v.get("rows") is not None else "") + (f", not readable: {', '.join(v['unreadable'])}" if v.get("unreadable") else ""))
+            if summ.get("not_verified"):
+                print(f"  not verified (no read path): {', '.join(summ['not_verified'])}")
         return 0
     if a.cmd == "cutover-rehearsal":
         from .cutover import rehearsal as reh

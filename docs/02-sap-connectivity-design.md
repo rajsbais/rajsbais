@@ -72,3 +72,13 @@ Load strategies are chosen from the release-specific registry (`catalog/business
 Hybrid connectivity: the platform runs in the customer's Kubernetes (on-prem or private cloud); SAP systems are
 reached through SAP Cloud Connector / VPN; secrets (RFC credentials, API client certificates) come from the
 cluster secret store (Vault / External Secrets). TLS 1.2+ everywhere; SNC for RFC.
+
+
+## Reconciliation reads (ADR-0016)
+The RECONCILE stage reads both sides through the same adapters the run used: the source's financial tables
+through the add-on with the scope's company codes pushed down and `Z_SDTF_AGGREGATE` counts / totals as
+read-integrity evidence (`source_read_integrity`, `source_read_amounts`), the target back through the released
+APIs (entities by key through the bindings, `$filter`ed collections for tables with a company code property,
+`API_JOURNALENTRYITEMBASIC_SRV` for journal entries, lazy fetch of referenced masters). Tables with no read path
+(T001, T001K, ANLC, anything without a binding) are reported as *not verified* and their checks carry WARN.
+`SDTF_RECON_MAX_ROWS` (default 5 000 000) bounds a single table read. See `backend/sdtf/reconciliation/views.py`.

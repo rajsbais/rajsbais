@@ -43,6 +43,20 @@ class RecordStore:
                 store._by_key[t][record_key(t, r)] = r
         return store
 
+    def add_rows(self, table: str, rows: Iterable[dict]) -> int:
+        """Append rows of one table (a view filled through an adapter); later rows with the same key win."""
+        n = 0
+        for r in rows:
+            k = record_key(table, r) if table in TABLES else "|".join(str(v) for v in r.values())
+            old = self._by_key[table].get(k)
+            if old is not None:
+                self._tables[table] = [x for x in self._tables[table] if x is not old]
+            self._tables[table].append(r)
+            self._by_key[table][k] = r
+            n += 1
+        self._indexes = {k: v for k, v in self._indexes.items() if k[0] != table}
+        return n
+
     def tables(self) -> list[str]:
         return sorted(t for t, rows in self._tables.items() if rows)
 

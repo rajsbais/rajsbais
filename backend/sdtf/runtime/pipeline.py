@@ -86,6 +86,44 @@ def start_run(session: Session, project_id: str, manifest_id: str, ruleset_id: s
     return execute_run(session, run, actor)
 
 
+def reconcile_again(session: Session, run_id: str, actor: str) -> dict:
+    """Re-run the RECONCILE and REPORT stages of a completed run through the adapters (source over its add-on,
+    target over its APIs) and replace the results: the way to reconcile after the systems moved, or after the
+    other VM came up. The run's load is not repeated."""
+    from ..reconciliation.service import reconcile_run
+    from ..reconciliation.views import build_source_view, build_target_view, loaded_keys_of
+
+    run = session.get(MigrationRun, run_id)
+    if run is None:
+        raise RunPrecondition("run not found")
+    if run.status != "COMPLETED" or (run.metrics or {}).get("kind") == "DELTA":
+        raise RunPrecondition(f"run is {run.status}; only completed migration runs are reconciled again")
+    m = session.get(ScopeManifest, run.manifest_id)
+    rs_row = session.get(RuleSet, run.ruleset_id)
+    src, tgt = session.get(SapSystem, run.source_system_id), session.get(SapSystem, run.target_system_id)
+    backend = get_backend(run.metrics.get("staging_backend"), session=session)
+    st = _stage(run, "RECONCILE")
+    t0 = time.monotonic()
+    st.status, st.started_at = "RUNNING", _now()
+    try:
+        session.query(ReconciliationResult).filter(ReconciliationResult.run_id == run.id).delete()
+        source_view = build_source_view(session, src, m)
+        target_view = build_target_view(session, tgt, m, loaded_keys_of(backend, run.id), source_view)
+        st.metrics = {**reconcile_run(session, run, m, source_view, target_view, financial=not run.metrics.get("merge_group"), backend=backend), "reconciled_again_by": actor, "reconciled_again_at": _now().isoformat()}
+    except Exception as e:  # noqa: BLE001
+        st.status, st.metrics = "FAILED", {**(st.metrics or {}), "error": f"{type(e).__name__}: {e}"}
+        st.finished_at, st.duration_ms = _now(), round((time.monotonic() - t0) * 1000, 1)
+        run.status = "FAILED"
+        session.flush()
+        record_event(session, actor, "RUN_RECONCILED_AGAIN", "RUN", run.id, {"ok": False, "error": str(e)[:300]})
+        raise
+    st.status, st.finished_at, st.duration_ms = "DONE", _now(), round((time.monotonic() - t0) * 1000, 1)
+    run.report = build_report(session, run, m, rs_row)
+    session.flush()
+    record_event(session, actor, "RUN_RECONCILED_AGAIN", "RUN", run.id, {"ok": True, "overall": st.metrics.get("overall"), "views": {k: v.get("origin") for k, v in (st.metrics.get("views") or {}).items()}})
+    return st.metrics
+
+
 def resume_run(session: Session, run_id: str, actor: str) -> MigrationRun:
     run = session.get(MigrationRun, run_id)
     if run is None:
@@ -148,10 +186,12 @@ def execute_run(session: Session, run: MigrationRun, actor: str) -> MigrationRun
             elif name == "LOAD":
                 st.metrics = build_loader(session, tgt, run.id, backend=backend, load_mode=run.metrics.get("load_mode")).load()
             elif name == "RECONCILE":
-                source_store = source_store or RecordStore.load(session, src.id)
+                from ..reconciliation.views import build_source_view, build_target_view, loaded_keys_of
+
                 session.query(ReconciliationResult).filter(ReconciliationResult.run_id == run.id).delete()
-                target_store = RecordStore.load(session, tgt.id)
-                st.metrics = reconcile_run(session, run, m, source_store, target_store, financial=not run.metrics.get("merge_group"), backend=backend)
+                source_view = build_source_view(session, src, m)
+                target_view = build_target_view(session, tgt, m, loaded_keys_of(backend, run.id), source_view)
+                st.metrics = reconcile_run(session, run, m, source_view, target_view, financial=not run.metrics.get("merge_group"), backend=backend)
             elif name == "REPORT":
                 # the report stage is marked complete before rendering so the report reflects final stage states
                 st.status, st.finished_at = "DONE", _now()

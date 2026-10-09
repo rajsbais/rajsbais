@@ -34,6 +34,7 @@ FM_OPEN_SNAPSHOT = "Z_SDTF_OPEN_SNAPSHOT"
 FM_TABLE_METADATA = "Z_SDTF_TABLE_METADATA"
 FM_READ_PACKAGE = "Z_SDTF_READ_PACKAGE"
 FM_CDC_POLL = "Z_SDTF_CDC_POLL"
+FM_AGGREGATE = "Z_SDTF_AGGREGATE"
 ABAP_TRUE, ABAP_FALSE = "X", ""
 POSITIVE_OPS = ("EQ", "BT", "GE", "GT", "LE", "LT", "CP")
 NEGATIVE_OPS = ("NE", "NB", "NP")
@@ -195,7 +196,7 @@ class SimulatedAbapAddon:
     def call(self, function_name: str, **params: Any) -> dict:
         with self._lock:
             self.stats.calls += 1
-        fm = {FM_OPEN_SNAPSHOT: self._open_snapshot, FM_TABLE_METADATA: self._table_metadata, FM_READ_PACKAGE: self._read_package, FM_CDC_POLL: self._cdc_poll}.get(function_name)
+        fm = {FM_OPEN_SNAPSHOT: self._open_snapshot, FM_TABLE_METADATA: self._table_metadata, FM_READ_PACKAGE: self._read_package, FM_CDC_POLL: self._cdc_poll, FM_AGGREGATE: self._aggregate}.get(function_name)
         if fm is None:
             raise RfcError("FU_NOT_FOUND", f"function module {function_name} does not exist")
         return fm(**{k.upper(): v for k, v in params.items()})
@@ -255,6 +256,46 @@ class SimulatedAbapAddon:
             if not preds:
                 self.stats.full_scans += 1
         return {"ET_ROWS": [{"ROWNO": i + 1, "JSON": j} for i, j in enumerate(json_rows)], "EV_CURSOR": self._encode_cursor(table, phash, last, IV_SNAPSHOT) if (last is not None and not eof) else "", "EV_EOF": ABAP_TRUE if eof else ABAP_FALSE, "EV_CHECKSUM": package_checksum(json_rows), "EV_ROWS": len(out)}
+
+    def _aggregate(self, IV_TABLE: str = "", IT_PREDICATE: list | None = None, IT_GROUP_BY: list | None = None, IT_SUM: list | None = None, IV_SNAPSHOT: str = "", **_: Any) -> dict:
+        """COUNT and SUM per group computed in the source (one SELECT ... GROUP BY on the ABAP side): the
+        reconciliation reads totals without transferring rows and checks that its row reads were complete."""
+        table = IV_TABLE.upper()
+        self._authorize(table)
+        self._check_snapshot(IV_SNAPSHOT)
+        preds = [{"FIELD": p["FIELD"].upper(), "OP": p["OP"].upper(), "LOW": str(p.get("LOW", "")), "HIGH": str(p.get("HIGH", ""))} for p in (IT_PREDICATE or [])]
+        for p in preds:
+            if p["OP"] not in POSITIVE_OPS + NEGATIVE_OPS:
+                raise RfcError("INVALID_PREDICATE", f"op {p['OP']} on {p['FIELD']}")
+        group = [str(g["FIELDNAME"] if isinstance(g, dict) else g).upper() for g in (IT_GROUP_BY or [])]
+        sums = [str(f["FIELDNAME"] if isinstance(f, dict) else f).upper() for f in (IT_SUM or [])]
+        td = TABLES.get(table)
+        known = set(td.fields) | set(td.key_fields) if td else None
+        for f in group + sums:
+            if known is not None and f not in known:
+                raise RfcError("INVALID_FIELD", f"{f} is not a field of {table}")
+        acc: dict[tuple, dict] = {}
+        for _key, row in self._rows_sorted(table):
+            if not predicates_match(row, preds):
+                continue
+            g = tuple("" if row.get(f) is None else str(row.get(f)) for f in group)
+            a = acc.get(g)
+            if a is None:
+                a = acc[g] = {**{f: v for f, v in zip(group, g, strict=True)}, "COUNT": 0, **{f"SUM_{f}": 0.0 for f in sums}}
+            a["COUNT"] += 1
+            for f in sums:
+                try:
+                    a[f"SUM_{f}"] += float(row.get(f) or 0)
+                except (TypeError, ValueError) as e:
+                    raise RfcError("INVALID_FIELD", f"{f} of {table} is not numeric") from e
+        out = [{**a, **{f"SUM_{f}": round(a[f"SUM_{f}"], 2) for f in sums}} for _g, a in sorted(acc.items())]
+        if not group and not out:
+            out = [{"COUNT": 0, **{f"SUM_{f}": 0.0 for f in sums}}]
+        json_rows = [row_json(r) for r in out]
+        with self._lock:
+            self.stats.calls += 0
+            self.stats.packages += 1
+        return {"ET_ROWS": [{"ROWNO": i + 1, "JSON": j} for i, j in enumerate(json_rows)], "EV_CHECKSUM": package_checksum(json_rows), "EV_ROWS": len(out)}
 
     def _cdc_poll(self, IV_WATERMARK: str = "0", IT_OBJECTS: list | None = None, IV_PACKAGE: int = 1000, **_: Any) -> dict:
         """Change events after the watermark for the listed tables (range-table predicates per table, evaluated on the
@@ -449,6 +490,24 @@ class AbapAddonClient:
             self.last_watermark = watermark
             n += 1
             yield from events
+
+    def aggregate(self, table: str, preds: list[dict], group_by: list[str], sums: list[str]) -> list[dict]:
+        """Z_SDTF_AGGREGATE: one row per group with the group fields, COUNT and SUM_<field> per summed field;
+        computed in the source database. Checksum verified like a package."""
+        if not self.snapshot:
+            self.open_snapshot()
+        self.calls += 1
+        r = self.t.call(FM_AGGREGATE, IV_TABLE=table.upper(), IT_PREDICATE=preds, IT_GROUP_BY=[{"FIELDNAME": g.upper()} for g in group_by], IT_SUM=[{"FIELDNAME": f.upper()} for f in sums], IV_SNAPSHOT=self.snapshot)
+        json_rows = [e["JSON"] for e in r.get("ET_ROWS", [])]
+        expected, actual = r.get("EV_CHECKSUM", ""), package_checksum(json_rows)
+        if expected != actual:
+            raise RfcIntegrityError(f"aggregate of {table} failed checksum verification (expected {expected[:12]}…, got {actual[:12]}…)")
+        self.packages += 1
+        return [json.loads(j) for j in json_rows]
+
+    def count(self, table: str, preds: list[dict]) -> int:
+        rows = self.aggregate(table, preds, [], [])
+        return int(rows[0]["COUNT"]) if rows else 0
 
     def read_keyed(self, table: str, preds: list[dict]) -> dict[str, dict]:
         return {record_key(table, r): r for r in self.read_all(table, preds)} if table in TABLES else {row_json(r): r for r in self.read_all(table, preds)}

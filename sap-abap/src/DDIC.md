@@ -11,6 +11,8 @@
 | `ZSDTF_S_WATERMARK` | structure | `TABNAME TYPE TABNAME`, `WATERMARK TYPE STRING` |
 | `ZSDTF_T_WATERMARK` | table type | standard table of `ZSDTF_S_WATERMARK` |
 | `ZSDTF_T_TABNAME` | table type | standard table of `TABNAME` |
+| `ZSDTF_S_FIELDNAME` | structure | `FIELDNAME TYPE FIELDNAME` (group-by / sum field of `Z_SDTF_AGGREGATE`) |
+| `ZSDTF_T_FIELDNAME` | table type | standard table of `ZSDTF_S_FIELDNAME` |
 | `ZSDTF_S_CDC_OBJECT` | structure | `OBJECT_TYPE TYPE CHAR48`, `TABNAME TYPE TABNAME`, `FIELD TYPE FIELDNAME`, `OP TYPE CHAR2`, `LOW TYPE STRING`, `HIGH TYPE STRING` (one row per table or per predicate range; empty FIELD = subscribe without predicate) |
 | `ZSDTF_T_CDC_OBJECT` | table type | standard table of `ZSDTF_S_CDC_OBJECT` |
 | `ZSDTF_S_CDC_EVENT` | structure | `SEQ TYPE I`, `CHANGENR TYPE CHAR32`, `OBJECT_TYPE TYPE CHAR48`, `TABNAME TYPE TABNAME`, `KEY TYPE STRING` (primary key values joined by `\|`, without MANDT), `OP TYPE CHAR1` (I/U/D), `CHANGED_AT TYPE CHAR14` (UTC YYYYMMDDHHMMSS), `CHANGED_BY TYPE SYUNAME`, `JSON TYPE STRING` (current row image; empty for D) |
@@ -25,6 +27,9 @@ Helper classes referenced by the function modules (to be implemented in the same
   escapes values with `cl_abap_dyn_prg=>quote`, groups predicates per field (positives joined by `OR`, negatives by
   `AND NOT`, fields by `AND`), maps `CP`/`NP` to `LIKE` with `*`→`%`, `+`→`_`; returns the WHERE string and a hash of
   the normalised predicate list used to bind cursors.
+* `ZCL_SDTF_PREDICATE=>VALIDATE_FIELDS( iv_table, it_group_by, it_sum )` — every field against the nametab, summed
+  fields numeric; returns the component table of the result structure (group fields, `COUNT` as INT8, `SUM_<F>` typed
+  like `F`), the SELECT list (`COUNT( * ) AS count`, `SUM( f ) AS sum_f`) and the GROUP BY list.
 * `ZCL_SDTF_PREDICATE=>KEY_FIELDS( iv_table )` — primary key fields without `MANDT`, in key order.
 * `ZCL_SDTF_PREDICATE=>BUILD_KEYSET_AFTER( it_keyfields, it_lastkey )` — `(k1 > a) OR (k1 = a AND k2 > b) OR …`.
 * `ZCL_SDTF_CDC` — `DECODE_WATERMARK` / `ENCODE_WATERMARK`, `COLLECT_DOCUMENT_CHANGES` (timestamp-watermarked header tables, items re-read with their header under the header's CHANGENR), `SEQUENCE_OF` (monotonic sequence derived from timestamp + change number), `OBJECT_TYPE_OF`, `KEY_STRING_OF` (CDPOS TABKEY → key string without MANDT), `ROW_IMAGE_JSON` (current row, predicates applied).
