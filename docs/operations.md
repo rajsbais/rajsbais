@@ -22,8 +22,9 @@ Alembic (`backend/alembic.ini`, `backend/sdtf/migrations`). `alembic upgrade hea
 Start runs with `execution=DISTRIBUTED`; scale `sdtf worker` processes/pods as needed. Monitor `/runs/{id}/jobs`
 and `/platform/workers`. A worker crash leaves a CLAIMED job whose lease expires (`SDTF_JOB_LEASE_SECONDS`); any
 worker re-queues it on its next poll. `POST /runs/{id}/jobs/requeue` re-queues FAILED jobs after fixing the cause.
-The run finalises automatically when the last job completes; a run stuck in FINALIZING means the finalising worker
-died mid-stage: resume it with `POST /runs/{id}/resume` after setting it to FAILED.
+Extraction, transformation and load each run as one job per partition; a stage advances automatically when its last
+job completes. A run stuck in ADVANCING means the advancing worker died mid-transition: `POST /runs/{id}/resume`
+re-queues the open stage's failed or orphaned jobs and the workers continue.
 
 ## Backups
 PostgreSQL (metadata, manifests, audit) and the evidence directory/bucket are the two stateful components. Evidence

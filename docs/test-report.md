@@ -15,7 +15,7 @@
 | UI end-to-end (Playwright, 18 screens, graph traversal, scope preview, cutover risk) | 1 | pass when run with `SDTF_E2E=1` against a live stack (verified in this session); skipped otherwise |
 | OIDC (role mapping, expired/issuer/audience rejection, forged signature, API acceptance, tenant isolation) | 6 | pass |
 | Merger (cross-source duplicate detection, collision plan blocks naive rulesets, resolved plan runs both sources into one company code with group financial PASS; API merge flow) | 3 | pass |
-| Staging & workers (columnar contract, slice on columnar staging, two in-process workers, lease expiry + re-queue, two `sdtf worker` subprocesses) | 5 | pass |
+| Staging & workers (columnar contract, slice on columnar staging, two in-process workers over EXTRACT/TRANSFORM/LOAD jobs, lease expiry + re-queue, two `sdtf worker` subprocesses with concurrent load jobs and zero conflicts) | 5 | pass |
 | **Total** | **75** | **74 passed, 1 skipped by default (e2e)** |
 
 Lint: `ruff check backend/sdtf backend/tests` clean. Frontend: `tsc --noEmit` and `vite build` clean.

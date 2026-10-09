@@ -11,7 +11,14 @@ from sdtf import config
 from sdtf.demo import run_vertical_slice
 from sdtf.models import MigrationRun
 from sdtf.runtime.pipeline import start_run
-from sdtf.runtime.worker import Worker, claim_job, finalize_if_complete, job_summary, requeue_stale
+from sdtf.runtime.worker import (
+    JOB_STAGES,
+    Worker,
+    advance_run_if_stage_complete,
+    claim_job,
+    job_summary,
+    requeue_stale,
+)
 from sdtf.staging import StagedRow
 from sdtf.staging.columnar import ColumnarStaging
 
@@ -68,7 +75,8 @@ def test_distributed_run_is_processed_by_in_process_workers(session, slice_resul
     session.commit()
     assert run.status == "RUNNING" and next(st for st in run.stages if st.name == "EXTRACT").status == "RUNNING"
     summary = job_summary(session, run.id)
-    assert summary["total"] > 10 and summary["by_status"] == {"QUEUED": summary["total"]}
+    partitions = summary["total"]
+    assert partitions > 10 and summary["by_status"] == {"QUEUED": partitions} and set(summary["by_stage"]) == {"EXTRACT"}
     from sdtf.db import get_session_factory
 
     w1, w2 = Worker(get_session_factory(), "w1"), Worker(get_session_factory(), "w2")
@@ -79,13 +87,20 @@ def test_distributed_run_is_processed_by_in_process_workers(session, slice_resul
             break
     session.expire_all()
     summary = job_summary(session, run.id)
-    assert summary["by_status"] == {"DONE": summary["total"]} and set(summary["workers"]) == {"w1", "w2"}
-    assert all(j["attempts"] == 1 for j in summary["jobs"])
+    # every stage ran as one job per partition, each claimed exactly once
+    assert summary["total"] == 3 * partitions and summary["by_status"] == {"DONE": summary["total"]}
+    assert {st: {"DONE": partitions} for st in JOB_STAGES} == summary["by_stage"]
+    assert set(summary["workers"]) == {"w1", "w2"} and all(j["attempts"] == 1 for j in summary["jobs"])
     run = session.get(MigrationRun, run.id)
     assert run.status == "COMPLETED", run.status
-    assert run.report["reconciliation"]["overall"] == "PASS"
-    ex = next(st for st in run.stages if st.name == "EXTRACT").metrics
-    assert ex["execution"] == "DISTRIBUTED" and ex["partitions_total"] == summary["total"] and sorted(ex["workers"]) == ["w1", "w2"]
+    assert run.report["reconciliation"]["overall"] == "PASS", run.report["reconciliation"]["failures"][:5]
+    assert run.report["exceptions"]["count"] == 0
+    stages = {st.name: st.metrics for st in run.stages}
+    for name in JOB_STAGES:
+        assert stages[name]["execution"] == "DISTRIBUTED" and stages[name]["partitions_total"] == partitions and sorted(stages[name]["workers"]) == ["w1", "w2"], name
+    assert stages["TRANSFORM"]["records"] == stages["EXTRACT"]["records"] and stages["TRANSFORM"]["transformed"] > 0
+    assert stages["LOAD"]["loaded"] + stages["LOAD"]["skipped_duplicate"] + stages["LOAD"]["matched_config"] == stages["TRANSFORM"]["records"] - stages["TRANSFORM"]["rejected"]
+    assert stages["LOAD"]["conflicts"] == 0
 
 
 def test_expired_lease_is_requeued_and_only_one_worker_finalizes(session, slice_result):
@@ -93,7 +108,7 @@ def test_expired_lease_is_requeued_and_only_one_worker_finalizes(session, slice_
     session.commit()
     job = claim_job(session, "crashed-worker", lease_seconds=1)
     assert job is not None and job.status == "CLAIMED" and job.attempts == 1
-    assert finalize_if_complete(session, run.id, "test") is None, "cannot finalise with jobs outstanding"
+    assert advance_run_if_stage_complete(session, run.id, "test") is None, "cannot advance with jobs outstanding"
     time.sleep(1.2)
     assert requeue_stale(session) >= 1
     session.commit()
@@ -105,7 +120,7 @@ def test_expired_lease_is_requeued_and_only_one_worker_finalizes(session, slice_
     w.run(until_idle=True)
     session.expire_all()
     summary = job_summary(session, run.id)
-    assert summary["by_status"] == {"DONE": summary["total"]}
+    assert summary["by_status"] == {"DONE": summary["total"]} and set(summary["by_stage"]) == set(JOB_STAGES)
     assert max(j["attempts"] for j in summary["jobs"]) == 2, "the re-queued job was attempted twice"
     assert session.get(MigrationRun, run.id).status == "COMPLETED"
 
@@ -121,6 +136,9 @@ def test_separate_worker_processes_share_the_queue(session, slice_result, db_url
     session.expire_all()
     summary = job_summary(session, run.id)
     assert summary["by_status"] == {"DONE": summary["total"]}, summary["by_status"]
-    assert len(summary["workers"]) == 2, summary["workers"]
+    assert set(summary["by_stage"]) == set(JOB_STAGES) and len(summary["workers"]) == 2, summary["workers"]
     run = session.get(MigrationRun, run.id)
-    assert run.status == "COMPLETED" and run.report["reconciliation"]["overall"] == "PASS"
+    assert run.status == "COMPLETED" and run.report["reconciliation"]["overall"] == "PASS", run.report["reconciliation"]["failures"][:5]
+    # concurrent load jobs from two processes produced no duplicate or conflicting target records
+    load = next(st for st in run.stages if st.name == "LOAD").metrics
+    assert load["conflicts"] == 0 and run.report["exceptions"]["count"] == 0

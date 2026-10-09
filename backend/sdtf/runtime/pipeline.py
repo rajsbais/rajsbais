@@ -89,18 +89,20 @@ def resume_run(session: Session, run_id: str, actor: str) -> MigrationRun:
     run = session.get(MigrationRun, run_id)
     if run is None:
         raise RunPrecondition("run not found")
-    if run.status not in ("FAILED", "RUNNING"):
+    if run.status not in ("FAILED", "RUNNING", "ADVANCING"):
         raise RunPrecondition(f"run is {run.status}; only FAILED runs can be resumed")
     record_event(session, actor, "RUN_RESUMED", "RUN", run.id, {})
     run.status = "RUNNING"
-    if run.metrics.get("execution") == "DISTRIBUTED" and _stage(run, "EXTRACT").status != "DONE":
-        from .worker import requeue_jobs
+    if run.metrics.get("execution") == "DISTRIBUTED":
+        from .worker import JOB_STAGES, requeue_jobs
 
-        st = _stage(run, "EXTRACT")
-        st.status = "RUNNING"
-        st.metrics = {**(st.metrics or {}), "requeued": requeue_jobs(session, run.id, statuses=("FAILED", "CLAIMED"))}
-        session.flush()
-        return run
+        current = next((s for s in JOB_STAGES if _stage(run, s).status != "DONE"), None)
+        if current is not None:  # a job stage is still open: re-queue its failed / orphaned jobs for the workers
+            st = _stage(run, current)
+            st.status = "RUNNING"
+            st.metrics = {**(st.metrics or {}), "requeued": requeue_jobs(session, run.id, statuses=("FAILED", "CLAIMED"))}
+            session.flush()
+            return run
     return execute_run(session, run, actor)
 
 

@@ -10,13 +10,13 @@ from ..rules.engine import CompiledRuleSet, RuleError, SkipRecord, target_key, t
 from ..staging import get_backend
 
 
-def run_transformation(session: Session, run_id: str, rs: CompiledRuleSet, batch: int = 500, backend=None) -> dict:
+def run_transformation(session: Session, run_id: str, rs: CompiledRuleSet, batch: int = 500, backend=None, partition: str | None = None) -> dict:
     backend = backend or get_backend(session=session)
     t0 = time.monotonic()
     metrics = {"records": 0, "transformed": 0, "rejected": 0, "skipped": 0, "unchanged": 0, "by_rule": defaultdict(int)}
     exceptions = []
     buf = []
-    for rec in backend.iter_records(run_id, status="STAGED"):
+    for rec in backend.iter_records(run_id, status="STAGED", partition=partition):
         metrics["records"] += 1
         try:
             out, lineage = transform_record(rs, rec.table_name, rec.source_payload)

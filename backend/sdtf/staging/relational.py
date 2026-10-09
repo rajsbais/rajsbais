@@ -42,10 +42,12 @@ class RelationalStaging:
         self.session.flush()
         return n
 
-    def iter_records(self, run_id: str, table: str | None = None, status: str | None = None) -> Iterator[StagedRow]:
+    def iter_records(self, run_id: str, table: str | None = None, status: str | None = None, partition: str | None = None) -> Iterator[StagedRow]:
         stmt = select(StagedRecord).where(StagedRecord.run_id == run_id)
         if table:
             stmt = stmt.where(StagedRecord.table_name == table)
+        if partition:
+            stmt = stmt.where(StagedRecord.partition == partition)
         if status:
             stmt = stmt.where(StagedRecord.load_status == status)
         for r in self.session.execute(stmt.order_by(StagedRecord.id).execution_options(yield_per=1000, populate_existing=True)).scalars():

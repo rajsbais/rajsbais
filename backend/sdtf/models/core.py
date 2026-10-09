@@ -311,6 +311,7 @@ class ExtractionJob(IdMixin, Base):
 
     __tablename__ = "extraction_jobs"
     run_id: Mapped[str] = mapped_column(ForeignKey("migration_runs.id"), nullable=False, index=True)
+    stage: Mapped[str] = mapped_column(String(16), default="EXTRACT", nullable=False)  # EXTRACT / TRANSFORM / LOAD
     partition_id: Mapped[str] = mapped_column(String(64), nullable=False)
     object_type: Mapped[str] = mapped_column(String(48), nullable=False)
     est_rows: Mapped[int] = mapped_column(Integer, default=0)
@@ -321,5 +322,6 @@ class ExtractionJob(IdMixin, Base):
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     attempts: Mapped[int] = mapped_column(Integer, default=0)
     records: Mapped[int] = mapped_column(Integer, default=0)
+    metrics: Mapped[dict] = mapped_column(JSON, default=dict)
     error: Mapped[str] = mapped_column(Text, default="")
-    __table_args__ = (UniqueConstraint("run_id", "partition_id", name="uq_extraction_job"), Index("ix_jobs_status", "status", "lease_until"))
+    __table_args__ = (UniqueConstraint("run_id", "stage", "partition_id", name="uq_extraction_job"), Index("ix_jobs_status", "status", "lease_until"))

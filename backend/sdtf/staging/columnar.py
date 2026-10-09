@@ -104,8 +104,10 @@ class ColumnarStaging:
                 n += len(fresh)
         return n
 
-    def iter_records(self, run_id: str, table: str | None = None, status: str | None = None) -> Iterator[StagedRow]:
+    def iter_records(self, run_id: str, table: str | None = None, status: str | None = None, partition: str | None = None) -> Iterator[StagedRow]:
         for t, p, path in self._files(run_id, table):
+            if partition and p != _safe(partition):
+                continue
             for r in self._read(path, t, p):
                 if status and r.load_status != status:
                     continue

@@ -7,7 +7,8 @@ Legend: P0 next increment · P1 following · P2 later. Sizes are relative (S/M/L
 |---|---|---|
 | ✅ | Distributed extraction workers: claim-based jobs with leases, `sdtf worker` pods + HPA (ADR-0010) | M |
 | ✅ | Columnar staging backend: Parquet per run/table/partition on an object-storage mount (ADR-0009) | L |
-| P0 | Transform/load as distributed jobs per partition (today finalisation runs in one worker) | M |
+| ✅ | Transform/load as distributed jobs per partition with stage barriers (ADR-0010) | M |
+| P1 | Per-partition pipelining across stages; reconciliation as distributed per-table jobs | M |
 | P1 | S3/GCS staging via fsspec; per-file key-range manifests for random access | M |
 | ✅ | OIDC SSO + group→role mapping (done: `security/oidc.py`); UI PKCE login flow pending | M |
 | ✅ | Multi-source MERGER orchestration, key-collision planner, master-data dedup (done: `runtime/merge.py`, `catalog/dedup.py`) | L |
