@@ -8,6 +8,7 @@ from .core import (  # noqa: F401
     CockpitAttempt,
     CockpitFeedback,
     CockpitTemplate,
+    CutoverRehearsal,
     DeltaEvent,
     DiscoverySnapshot,
     ExtractionJob,

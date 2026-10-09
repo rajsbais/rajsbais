@@ -80,6 +80,49 @@ def main(argv=None):
     tc.add_argument("--file", required=True)
     tc.add_argument("--object", default=None, help="business object: also print the automatic mapping report")
     tc.add_argument("--json", action="store_true")
+    cr = sub.add_parser("cutover-rehearsal", help="cutover rehearsal checklist: create a mock cutover / dress rehearsal / go-live checklist for a manifest, refresh the automatic items, tick manual items, time runbook tasks, record lessons, complete with GO / NO_GO, export the report")
+    crsub = cr.add_subparsers(dest="rcmd", required=True)
+    crc = crsub.add_parser("create", help="create a rehearsal for a manifest (automatic items evaluated now)")
+    crc.add_argument("--manifest", required=True)
+    crc.add_argument("--name", default="")
+    crc.add_argument("--kind", choices=["MOCK", "DRESS", "FINAL"], default="MOCK")
+    crc.add_argument("--json", action="store_true")
+    crl = crsub.add_parser("list", help="rehearsals of a manifest")
+    crl.add_argument("--manifest", required=True)
+    crl.add_argument("--json", action="store_true")
+    crs = crsub.add_parser("show", help="checklist, timings and lessons of a rehearsal")
+    crs.add_argument("--id", required=True)
+    crs.add_argument("--json", action="store_true")
+    crr = crsub.add_parser("refresh", help="re-evaluate the automatic items from the platform state")
+    crr.add_argument("--id", required=True)
+    crr.add_argument("--json", action="store_true")
+    crst = crsub.add_parser("start", help="start the rehearsal (tasks can then be timed)")
+    crst.add_argument("--id", required=True)
+    crst.add_argument("--note", default="")
+    crm = crsub.add_parser("mark", help="tick a manual item (or waive an automatic one with NOT_APPLICABLE and a note)")
+    crm.add_argument("--id", required=True)
+    crm.add_argument("--item", required=True)
+    crm.add_argument("--status", required=True, choices=["PENDING", "PASS", "FAIL", "NOT_APPLICABLE"])
+    crm.add_argument("--note", default="")
+    crt = crsub.add_parser("task", help="record that a runbook task started or finished")
+    crt.add_argument("--id", required=True)
+    crt.add_argument("--task", required=True)
+    crt.add_argument("--action", required=True, choices=["start", "finish"])
+    crt.add_argument("--note", default="")
+    crle = crsub.add_parser("lesson", help="record a lesson learned")
+    crle.add_argument("--id", required=True)
+    crle.add_argument("--text", required=True)
+    crle.add_argument("--task", default="")
+    crco = crsub.add_parser("complete", help="the approver's verdict (GO is refused while a blocking item is open)")
+    crco.add_argument("--id", required=True)
+    crco.add_argument("--verdict", required=True, choices=["GO", "NO_GO"])
+    crco.add_argument("--note", default="")
+    crab = crsub.add_parser("abort", help="abort the rehearsal")
+    crab.add_argument("--id", required=True)
+    crab.add_argument("--note", default="")
+    crre = crsub.add_parser("report", help="write the checklist report (Markdown)")
+    crre.add_argument("--id", required=True)
+    crre.add_argument("--out", default=None)
     mo = sub.add_parser("migration-objects", help="migration object lookup per S/4HANA release: list the catalogue, resolve a business object, import the target's object list for a project")
     mosub = mo.add_subparsers(dest="mcmd", required=True)
     ml = mosub.add_parser("list", help="catalogue (or the project's resolution table) for a release")
@@ -306,6 +349,84 @@ def main(argv=None):
                     print(f"  {ot}: {o['instances']} instances, {o['with_messages']} in log, {o['rejected']} rejected, {o['errors']} E / {o['warnings']} W; categories {o['categories'] or '-'}")
                 for reason, n in summ["unmatched_reasons"].items():
                     print(f"  unmatched x{n}: {reason}")
+        return 0
+    if a.cmd == "cutover-rehearsal":
+        from .cutover import rehearsal as reh
+        from .models import CutoverRehearsal, ScopeManifest
+
+        with session_scope() as session:
+            try:
+                if a.rcmd in ("create", "list"):
+                    m = session.get(ScopeManifest, a.manifest)
+                    if m is None:
+                        print(f"manifest {a.manifest} not found", file=sys.stderr)
+                        return 2
+                    if a.rcmd == "create":
+                        r = reh.create_rehearsal(session, m, a.name, a.kind, "cli")
+                        session.commit()
+                        rows = [r]
+                    else:
+                        rows = reh.rehearsals(session, m.id)
+                    if a.json:
+                        print(json.dumps([reh.rehearsal_out(x, full=(a.rcmd == "create")) for x in rows], indent=2, default=str))
+                    else:
+                        for x in rows:
+                            s_ = x.summary or {}
+                            print(f"rehearsal {x.sequence} [{x.kind}] {x.id}: {x.name} -- {x.status}{' ' + x.verdict if x.verdict else ''}; {s_.get('pass', 0)} PASS / {s_.get('fail', 0)} FAIL / {s_.get('not_applicable', 0)} N/A / {s_.get('pending', 0)} pending; blocking open: {', '.join(s_.get('blocking_open', [])) or 'none'}")
+                    return 0
+                r = session.get(CutoverRehearsal, a.id)
+                if r is None:
+                    print(f"rehearsal {a.id} not found", file=sys.stderr)
+                    return 2
+                if a.rcmd == "refresh":
+                    res = reh.refresh_auto_items(session, r, "cli")
+                    session.commit()
+                    if a.json:
+                        print(json.dumps({**reh.rehearsal_out(r), "changed": res["changed"]}, indent=2, default=str))
+                    else:
+                        print(f"refreshed: {len(res['changed'])} item(s) changed; blocking open: {', '.join(res['summary']['blocking_open']) or 'none'}")
+                    return 0
+                if a.rcmd == "start":
+                    reh.start_rehearsal(session, r, "cli", a.note)
+                elif a.rcmd == "mark":
+                    it = reh.mark_item(session, r, a.item, a.status, "cli", a.note)
+                    print(f"{it['id']} {it['title']}: {it['status']}")
+                elif a.rcmd == "task":
+                    t = reh.time_task(session, r, a.task, a.action, "cli", a.note)
+                    print(f"{a.task} {a.action}ed" + (f": {t['actual_minutes']} min" if t.get("actual_minutes") is not None else ""))
+                elif a.rcmd == "lesson":
+                    reh.add_lesson(session, r, a.text, "cli", a.task)
+                elif a.rcmd == "complete":
+                    reh.complete_rehearsal(session, r, a.verdict, "cli", a.note)
+                elif a.rcmd == "abort":
+                    reh.abort_rehearsal(session, r, "cli", a.note)
+                elif a.rcmd == "report":
+                    md = reh.rehearsal_markdown(r)
+                    if a.out:
+                        with open(a.out, "w", encoding="utf-8") as fh:
+                            fh.write(md)
+                        print(f"report written to {a.out}")
+                    else:
+                        print(md)
+                    return 0
+                session.commit()
+                if a.rcmd == "show":
+                    if a.json:
+                        print(json.dumps(reh.rehearsal_out(r), indent=2, default=str))
+                    else:
+                        s_ = r.summary or {}
+                        print(f"rehearsal {r.sequence} [{r.kind}] {r.name}: {r.status}{' ' + r.verdict if r.verdict else ''}; blocking open: {', '.join(s_.get('blocking_open', [])) or 'none'}")
+                        for it in r.items:
+                            print(f"  {it['id']} {it['status']:<14} {'B' if it['blocking'] else ' '} {it['kind']:<6} {it['title']}" + (f" -- {it['detail'] or it['note']}" if it.get("detail") or it.get("note") else ""))
+                        for k, t in sorted((r.timings or {}).items()):
+                            print(f"  task {k}: {t.get('actual_minutes') if t.get('actual_minutes') is not None else 'running' if t.get('started_at') else '-'} min")
+                        for lesson in r.lessons or []:
+                            print(f"  lesson: {lesson['text']} ({lesson['by']})")
+                else:
+                    print(f"rehearsal {r.sequence} is now {r.status}{' ' + r.verdict if r.verdict else ''}")
+            except ValueError as e:
+                print(str(e), file=sys.stderr)
+                return 2
         return 0
     if a.cmd == "cockpit-export":
         from .runtime.cockpit_export import export_cockpit_files

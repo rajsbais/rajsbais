@@ -45,6 +45,9 @@ operator, auditor, viewer; passwords equal the names), select the demo project a
 8. **Package rounds** (`cockpit-13-package-rounds.png`, same card): each export is a round; mark uploads and migrations by hand, and follow the
    burn-down of the still-rejected instances across retry rounds.
 9. **Delta monitor** (`cockpit-10-delta-monitor.png`): delta cycles through the same loaders, for context.
+10. **Cutover rehearsal checklist** (`cutover-14-rehearsal-checklist.png`, Cutover Command Center): a mock cutover
+    created from the runbook; automatic items evaluated from the platform state, manual items ticked by hand, task
+    timings and the approver's GO / NO-GO.
 
 The full-page capture of the cockpit card is `cockpit-04-cockpit-export.png`; the other images are viewport
 captures at 1440x900.

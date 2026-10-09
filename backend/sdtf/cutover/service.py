@@ -35,12 +35,19 @@ def generate_runbook(session: Session, m: ScopeManifest) -> dict:
     for r in runs:
         for st in r.stages:
             measured[st.name] = max(measured.get(st.name, 0), st.duration_ms / 60000.0)
+    from .rehearsal import rehearsal_actuals
+
+    actuals = rehearsal_actuals(session, m.id)
     tasks = []
     for tid, name, phase, deps, base, per1k, downtime, owner, irreversible in TEMPLATE:
         est = base + per1k * objects / 1000.0
+        basis = "template"
         if tid == "T04" and measured:
             est = max(est, (measured.get("EXTRACT", 0) + measured.get("TRANSFORM", 0) + measured.get("LOAD", 0)) * 20)  # simulated timings scaled by a conservative factor
-        tasks.append({"id": tid, "name": name, "phase": phase, "depends_on": deps, "est_minutes": round(est, 1), "downtime": downtime, "owner": owner, "irreversible": irreversible, "status": "PLANNED", "sign_off": "BUSINESS" if owner.startswith("Business") or owner == "Steering" else "TECHNICAL"})
+            basis = "simulated run x20"
+        if tid in actuals:  # a completed rehearsal timed the task by hand: measured beats the template
+            est, basis = max(actuals[tid]["actual_minutes"], 1.0), f"rehearsal {actuals[tid]['rehearsal']}"
+        tasks.append({"id": tid, "name": name, "phase": phase, "depends_on": deps, "est_minutes": round(est, 1), "basis": basis, "downtime": downtime, "owner": owner, "irreversible": irreversible, "status": "PLANNED", "sign_off": "BUSINESS" if owner.startswith("Business") or owner == "Steering" else "TECHNICAL"})
     # critical path (longest path in DAG)
     finish: dict[str, float] = {}
     pred: dict[str, str | None] = {}
@@ -71,5 +78,6 @@ def generate_runbook(session: Session, m: ScopeManifest) -> dict:
         "point_of_no_return": point_of_no_return,
         "rollback": {"before_point_of_no_return": "Discard target load, unfreeze source, re-plan", "after_point_of_no_return": "Forward recovery only: fix in target, replay delta, re-reconcile", "irreversible_tasks": [t["id"] for t in tasks if t["irreversible"]]},
         "sign_offs": {"technical": [t["id"] for t in tasks if t["sign_off"] == "TECHNICAL"], "business": [t["id"] for t in tasks if t["sign_off"] == "BUSINESS"]},
-        "basis": "Template durations scaled by scope volume; measured simulated stage timings are used with a conservative factor where available. Not a measured downtime guarantee.",
+        "rehearsal_timed_tasks": sorted(actuals),
+        "basis": "Template durations scaled by scope volume; measured simulated stage timings are used with a conservative factor where available; tasks timed by hand in a completed cutover rehearsal use the rehearsal's minutes. Not a measured downtime guarantee.",
     }

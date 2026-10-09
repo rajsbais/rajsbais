@@ -38,7 +38,7 @@ Reviewed against the master build prompt (sections A–S) on the current branch.
 | Object packages FI/SD/MM/PP incl. tests | **Built (simulated)**; QM/PM/PS/EWM/TM/MDG/industry **pending** |
 | S/4 conversion intelligence: CVI, Universal Journal, MATDOC, new Asset Accounting, ML, MATNR length, custom fields | **Built** (registry + mapping); credit management and CO-PA **pending**; **released-API loaders cannot be exercised here** (no S/4 system, no API client certificates) |
 | Reconciliation technical/functional/financial, variance explanations, evidence packages, sign-offs | **Built** (233 checks on demo; tamper and rule-rejection detection tested) |
-| Cutover runbook, critical path, downtime forecast, go/no-go, rollback gates, point of no return | **Built (planning)**; live execution tracking, incidents, resources **pending**; mock cutover on a real landscape **cannot be done here** |
+| Cutover runbook, critical path, downtime forecast, go/no-go, rollback gates, point of no return, cutover rehearsal checklist (automatic + manual items, task timings into the forecast, lessons, approver verdict) | **Built (planning and rehearsal tracking)**; live execution tracking, incidents, resources **pending**; mock cutover on a real landscape **cannot be done here** (the checklist tracks it once people run it) |
 
 ## M–Q. Agents, security, architecture, frontend, NFRs
 | Capability | Status |

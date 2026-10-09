@@ -843,6 +843,149 @@ def cutover_runbook(m: ScopeManifest = Depends(get_manifest), db: Session = Depe
     return generate_runbook(db, m)
 
 
+class RehearsalCreate(BaseModel):
+    name: str = ""
+    kind: str = Field("MOCK", pattern="^(MOCK|DRESS|FINAL|mock|dress|final)$", description="MOCK: mock cutover; DRESS: dress rehearsal; FINAL: the go-live checklist")
+
+
+class RehearsalItemMark(BaseModel):
+    status: str = Field(pattern="^(PENDING|PASS|FAIL|NOT_APPLICABLE)$")
+    note: str = ""
+
+
+class RehearsalTaskTiming(BaseModel):
+    action: str = Field(pattern="^(start|finish)$")
+    note: str = ""
+
+
+class RehearsalNote(BaseModel):
+    note: str = ""
+
+
+class RehearsalLesson(BaseModel):
+    text: str
+    task: str = ""
+
+
+class RehearsalVerdict(BaseModel):
+    verdict: str = Field(pattern="^(GO|NO_GO)$")
+    note: str = ""
+
+
+def _get_rehearsal(rehearsal_id: str, db: Session = Depends(get_db), p: Principal = Depends(current_principal)):
+    from ..models import CutoverRehearsal
+
+    r = db.get(CutoverRehearsal, rehearsal_id)
+    if r is None:
+        raise HTTPException(404, "rehearsal not found")
+    assert_project_access(db, p, r.project_id)
+    return r
+
+
+def _rehearsal_call(fn, *args, **kwargs):
+    try:
+        return fn(*args, **kwargs)
+    except ValueError as e:
+        raise HTTPException(409, str(e)) from None
+
+
+@router.get("/cutover/checklist-template", tags=["cutover"])
+def cutover_checklist_template(p: Principal = Depends(current_principal)):
+    """The checklist every rehearsal starts from: the automatic items the platform evaluates and the manual
+    items recorded by hand."""
+    from ..cutover.rehearsal import checklist_template
+
+    return checklist_template()
+
+
+@router.post("/manifests/{manifest_id}/cutover/rehearsals", tags=["cutover"], status_code=201)
+def rehearsal_create(req: RehearsalCreate | None = None, m: ScopeManifest = Depends(get_manifest), db: Session = Depends(get_db), p: Principal = Depends(require("run:start"))):
+    """Create a cutover rehearsal (mock cutover, dress rehearsal or the go-live checklist) for the manifest: the
+    checklist with the automatic items evaluated now, and the runbook snapshot to time tasks against."""
+    from ..cutover.rehearsal import create_rehearsal, rehearsal_out
+
+    req = req or RehearsalCreate()
+    return rehearsal_out(_rehearsal_call(create_rehearsal, db, m, req.name, req.kind, p.username))
+
+
+@router.get("/manifests/{manifest_id}/cutover/rehearsals", tags=["cutover"])
+def rehearsal_list(m: ScopeManifest = Depends(get_manifest), db: Session = Depends(get_db), p: Principal = Depends(require("project:read"))):
+    from ..cutover.rehearsal import rehearsal_out, rehearsals
+
+    return [rehearsal_out(r, full=False) for r in rehearsals(db, m.id)]
+
+
+@router.get("/cutover/rehearsals/{rehearsal_id}", tags=["cutover"])
+def rehearsal_get(r=Depends(_get_rehearsal), p: Principal = Depends(require("project:read"))):
+    from ..cutover.rehearsal import rehearsal_out
+
+    return rehearsal_out(r)
+
+
+@router.get("/cutover/rehearsals/{rehearsal_id}/report", tags=["cutover"])
+def rehearsal_report(r=Depends(_get_rehearsal), p: Principal = Depends(require("project:read"))):
+    """The checklist as a Markdown report (for the evidence package / the cutover binder)."""
+    from ..cutover.rehearsal import rehearsal_markdown, rehearsal_out
+
+    return {"markdown": rehearsal_markdown(r), "rehearsal": rehearsal_out(r, full=False)}
+
+
+@router.post("/cutover/rehearsals/{rehearsal_id}/refresh", tags=["cutover"])
+def rehearsal_refresh(r=Depends(_get_rehearsal), db: Session = Depends(get_db), p: Principal = Depends(require("run:start"))):
+    """Re-evaluate the automatic items from the platform state."""
+    from ..cutover.rehearsal import refresh_auto_items, rehearsal_out
+
+    res = _rehearsal_call(refresh_auto_items, db, r, p.username)
+    return {**rehearsal_out(r), "changed": res["changed"]}
+
+
+@router.post("/cutover/rehearsals/{rehearsal_id}/start", tags=["cutover"])
+def rehearsal_start(req: RehearsalNote | None = None, r=Depends(_get_rehearsal), db: Session = Depends(get_db), p: Principal = Depends(require("run:start"))):
+    from ..cutover.rehearsal import rehearsal_out, start_rehearsal
+
+    return rehearsal_out(_rehearsal_call(start_rehearsal, db, r, p.username, (req or RehearsalNote()).note))
+
+
+@router.post("/cutover/rehearsals/{rehearsal_id}/items/{item_id}", tags=["cutover"])
+def rehearsal_mark_item(item_id: str, req: RehearsalItemMark, r=Depends(_get_rehearsal), db: Session = Depends(get_db), p: Principal = Depends(require("run:start"))):
+    """Tick a manual item by hand (PASS, FAIL with a note, NOT_APPLICABLE, or back to PENDING); an automatic
+    item can only be waived to NOT_APPLICABLE with a note, or un-waived."""
+    from ..cutover.rehearsal import mark_item, rehearsal_out
+
+    item = _rehearsal_call(mark_item, db, r, item_id, req.status, p.username, req.note)
+    return {"item": item, "summary": r.summary, "rehearsal": rehearsal_out(r, full=False)}
+
+
+@router.post("/cutover/rehearsals/{rehearsal_id}/tasks/{task_id}", tags=["cutover"])
+def rehearsal_time_task(task_id: str, req: RehearsalTaskTiming, r=Depends(_get_rehearsal), db: Session = Depends(get_db), p: Principal = Depends(require("run:start"))):
+    """Record by hand that a runbook task started or finished; the measured minutes feed the next runbook."""
+    from ..cutover.rehearsal import time_task
+
+    return {"task": task_id, **_rehearsal_call(time_task, db, r, task_id, req.action, p.username, req.note), "summary": r.summary}
+
+
+@router.post("/cutover/rehearsals/{rehearsal_id}/lessons", tags=["cutover"], status_code=201)
+def rehearsal_add_lesson(req: RehearsalLesson, r=Depends(_get_rehearsal), db: Session = Depends(get_db), p: Principal = Depends(require("run:start"))):
+    from ..cutover.rehearsal import add_lesson
+
+    return _rehearsal_call(add_lesson, db, r, req.text, p.username, req.task)
+
+
+@router.post("/cutover/rehearsals/{rehearsal_id}/complete", tags=["cutover"])
+def rehearsal_complete(req: RehearsalVerdict, r=Depends(_get_rehearsal), db: Session = Depends(get_db), p: Principal = Depends(require("approve:run"))):
+    """The approver's verdict: GO (refused while a blocking item is not PASS / NOT_APPLICABLE) or NO_GO."""
+    from ..cutover.rehearsal import complete_rehearsal, rehearsal_out
+
+    return rehearsal_out(_rehearsal_call(complete_rehearsal, db, r, req.verdict, p.username, req.note))
+
+
+@router.post("/cutover/rehearsals/{rehearsal_id}/abort", tags=["cutover"])
+def rehearsal_abort(req: RehearsalNote | None = None, r=Depends(_get_rehearsal), db: Session = Depends(get_db), p: Principal = Depends(require("run:start"))):
+    from ..cutover.rehearsal import abort_rehearsal, rehearsal_out
+
+    return rehearsal_out(_rehearsal_call(abort_rehearsal, db, r, p.username, (req or RehearsalNote()).note))
+
+
 # ------------------------------------------------------------------------------------------ platform
 CAPABILITIES = [
     {"area": "Synthetic ECC landscape", "status": "IMPLEMENTED", "note": "Deterministic generator with shared masters, cross-company documents, balanced FI"},
@@ -863,7 +1006,7 @@ CAPABILITIES = [
     {"area": "AI agents", "status": "IMPLEMENTED", "note": "12 bounded heuristic agents; LLM reasoner planned"},
     {"area": "Multi-source merger / consolidation", "status": "IMPLEMENTED", "note": "Merge groups, cross-system key collision planning, master-data dedup, group-level financial reconciliation (simulated runtime)"},
     {"area": "Delta capture / near-zero downtime", "status": "SIMULATED", "note": "CDC through the SAP add-on contract (Z_SDTF_CDC_POLL) over RFC, ordered idempotent replay, freeze, final delta + full reconciliation; verified on the simulated add-on only, no downtime figure claimed (ADR-0014)"},
-    {"area": "Cutover command center", "status": "PARTIAL", "note": "Runbook generation, critical path, forecast; execution tracking planned"},
+    {"area": "Cutover command center", "status": "PARTIAL", "note": "Runbook generation, critical path, forecast; cutover rehearsal checklist (mock cutover / dress rehearsal / go-live): automatic readiness items evaluated from the platform state, manual items ticked by hand with audit, runbook task timings measured by hand and fed back into the forecast, lessons, approver GO / NO_GO refused while a blocking item is open; live execution tracking of the production cutover, incident escalation and resource assignment planned"},
     {"area": "SSO / enterprise identity", "status": "IMPLEMENTED", "note": "OIDC RS256 bearer tokens verified against JWKS with group-to-role mapping; dev users remain for local use"},
     {"area": "Production SAP migration", "status": "UNSUPPORTED", "note": "This build never connects to or writes into an SAP system"},
 ]

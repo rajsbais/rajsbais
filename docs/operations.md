@@ -14,6 +14,10 @@ Alembic (`backend/alembic.ini`, `backend/sdtf/migrations`). `alembic upgrade hea
 * **Reconciliation not PASS**: Reconciliation Center → filter FAIL/WARN → *Explain variances* → act on
   root-cause category (SCOPE_POLICY / TRANSFORMATION / LOAD). Technical PASS does not clear financial sign-off.
 * **Manifest cannot be approved**: Carve-out Studio → Pending business dispositions → decide per object or bulk.
+* **Cutover rehearsal**: Cutover Command Center → *New rehearsal* (mock / dress / go-live) → refresh the automatic
+  items, tick the manual ones with notes, *Start* and time the runbook tasks, record lessons → an approver closes it
+  with GO (refused while a blocking item is open) or NO-GO; the report is the cutover binder entry
+  (`sdtf cutover-rehearsal`, docs/cutover-rehearsal.md).
 * **Audit chain broken** (`/audit/verify` ok=false): treat as a security incident; the event id in `broken_at`
   identifies the first inconsistent record; restore from backup and investigate write access to `audit_events`.
 * **Rotate auth secret**: change `SDTF_AUTH_SECRET`; all tokens are invalidated (users re-login).

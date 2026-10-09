@@ -1,7 +1,7 @@
 """UI end-to-end smoke (Playwright). Runs only when SDTF_E2E=1 and the UI + API are up:
    SDTF_E2E=1 SDTF_E2E_URL=http://localhost:5173 pytest tests/e2e -q
 It signs in, opens all 18 applications, asserts no page errors and no failed API calls apart from
-role-restricted audit endpoints, and exercises graph traversal, scope preview, the cockpit staging-file export with a registered template, and cutover risk."""
+role-restricted audit endpoints, and exercises graph traversal, scope preview, the cockpit staging-file export with a registered template, cutover risk and the cutover rehearsal checklist."""
 import os
 
 import pytest
@@ -70,5 +70,27 @@ def test_all_screens_render_against_live_api():
         pg.click("text=Assess cutover risk")
         pg.wait_for_timeout(2500)
         assert "Go / no-go" in pg.inner_text("main")
+        # cutover rehearsal checklist: create a mock cutover through the prompt, tick a manual item, time a task
+        pg.once("dialog", lambda d: d.accept("Mock cutover 1"))
+        pg.click("button:has-text('New rehearsal')")
+        pg.wait_for_timeout(3000)
+        txt = pg.inner_text("main")
+        assert "Rehearsal 1: Mock cutover 1" in txt and "Scope manifest approved" in txt and "Change freeze and transport lock" in txt and "Blocking open" in txt
+        pg.once("dialog", lambda d: d.accept("transport lock set"))
+        pg.click("tr:has-text('Change freeze and transport lock') button:has-text('Pass')")
+        pg.wait_for_timeout(2000)
+        pg.once("dialog", lambda d: d.accept(""))
+        pg.click("button:has-text('Start rehearsal')")
+        pg.wait_for_timeout(2000)
+        pg.click("tr:has-text('Freeze change management') button:has-text('Start')")
+        pg.wait_for_timeout(1500)
+        pg.once("dialog", lambda d: d.accept("done"))
+        pg.click("tr:has-text('Freeze change management') button:has-text('Finish')")
+        pg.wait_for_timeout(2000)
+        txt = pg.inner_text("main")
+        assert "IN_PROGRESS" in txt and "transport lock set" in txt and "Tasks timed" in txt
+        pg.click("button:has-text('Report (Markdown)')")
+        pg.wait_for_timeout(1500)
+        assert "# Cutover rehearsal 1: Mock cutover 1 (MOCK)" in pg.inner_text("main")
         b.close()
     assert not problems, problems

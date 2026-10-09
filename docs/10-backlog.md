@@ -55,7 +55,8 @@ Legend: P0 next increment · P1 following · P2 later. Sizes are relative (S/M/L
 | ✅ | Retry package re-upload tracking: every export is a round with manual upload/migration marks, feedback attached per round with per-instance outcomes, released instances back to LOADED, superseded rounds, burn-down and convergence across rounds; API, CLI, Runs page | M |
 | P3 | Run `sdtf cockpit-template check` on templates downloaded from a target release, confirm the aliases their Field Lists propose, import the release's object list, and import a real simulation log so the column recognition is confirmed (needs system access; none available here) | S |
 | P0 | Benchmark harness and benchmark report (docs/benchmarks.md) | M |
-| P1 | Cutover execution tracking, incident escalation, resource assignment, mock cutover management | M |
+| ✅ | Mock cutover management: cutover rehearsal checklist (automatic readiness items, manual items, waivers, task timings fed into the forecast, lessons, approver verdict, report); API, CLI, Cutover page | M |
+| P1 | Live cutover execution tracking (task status fed by the systems), incident escalation, resource assignment | M |
 
 ## Phase 7 — AI & factory
 | P | Item | Size |

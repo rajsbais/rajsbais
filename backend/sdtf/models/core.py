@@ -482,3 +482,31 @@ class CockpitAttempt(IdMixin, Base):
     migrated_by: Mapped[str] = mapped_column(String(64), default="")
     migration_note: Mapped[str] = mapped_column(String(400), default="")
     __table_args__ = (UniqueConstraint("run_id", "sequence", name="uq_cockpit_attempt"),)
+
+
+class CutoverRehearsal(IdMixin, Base):
+    """One rehearsal of a manifest's cutover (mock cutover, dress rehearsal or the go-live checklist): the
+    checklist of automatic and manual items, the runbook snapshot with hand-recorded task timings, lessons and
+    the approver's GO / NO_GO verdict."""
+
+    __tablename__ = "cutover_rehearsals"
+    project_id: Mapped[str] = mapped_column(ForeignKey("projects.id"), nullable=False, index=True)
+    manifest_id: Mapped[str] = mapped_column(ForeignKey("scope_manifests.id"), nullable=False, index=True)
+    sequence: Mapped[int] = mapped_column(Integer, nullable=False)
+    name: Mapped[str] = mapped_column(String(128), nullable=False)
+    kind: Mapped[str] = mapped_column(String(8), default="MOCK")  # MOCK | DRESS | FINAL
+    status: Mapped[str] = mapped_column(String(12), default="PLANNED")  # PLANNED | IN_PROGRESS | COMPLETED | ABORTED
+    verdict: Mapped[str] = mapped_column(String(8), default="")  # "" | GO | NO_GO
+    items: Mapped[list] = mapped_column(JSON, default=list)
+    runbook: Mapped[list] = mapped_column(JSON, default=list)
+    timings: Mapped[dict] = mapped_column(JSON, default=dict)  # {task_id: {started_at, finished_at, actual_minutes, by, note}}
+    lessons: Mapped[list] = mapped_column(JSON, default=list)
+    summary: Mapped[dict] = mapped_column(JSON, default=dict)
+    created_by: Mapped[str] = mapped_column(String(64), default="")
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    started_by: Mapped[str] = mapped_column(String(64), default="")
+    start_note: Mapped[str] = mapped_column(String(400), default="")
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    completed_by: Mapped[str] = mapped_column(String(64), default="")
+    completion_note: Mapped[str] = mapped_column(String(400), default="")
+    __table_args__ = (UniqueConstraint("manifest_id", "sequence", name="uq_cutover_rehearsal"),)

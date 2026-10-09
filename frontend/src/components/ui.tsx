@@ -11,7 +11,7 @@ export function Card({ title, children, actions, className }: { title?: React.Re
 
 export function Pill({ value }: { value: string | undefined | null }) {
   const v = String(value || "-");
-  const cls = /PASS|APPROVED|COMPLETED|DONE|IMPLEMENTED|ACCEPTED|LOADED|OPEN$/.test(v) ? "ok" : /FAIL|REJECTED|ERROR|UNSUPPORTED|CONFLICT|HIGH/.test(v) ? "bad" : /WARN|DRAFT|PENDING|RUNNING|SIMULATED|PARTIAL|PLANNED|MEDIUM|PROPOSED|MANUAL/.test(v) ? "warn" : "neutral";
+  const cls = /NO_GO/.test(v) ? "bad" : /PASS|APPROVED|COMPLETED|DONE|IMPLEMENTED|ACCEPTED|LOADED|OPEN$|^GO$/.test(v) ? "ok" : /FAIL|REJECTED|ERROR|UNSUPPORTED|CONFLICT|HIGH|ABORTED/.test(v) ? "bad" : /WARN|DRAFT|PENDING|RUNNING|SIMULATED|PARTIAL|PLANNED|MEDIUM|PROPOSED|MANUAL|IN_PROGRESS/.test(v) ? "warn" : "neutral";
   return <span className={`pill ${cls}`}>{v}</span>;
 }
 
