@@ -234,17 +234,37 @@ class DeltaService:
             raise Conflict("at least one scope is required")
         return pol
 
-    def _authorise(self, actor: Principal, source_id: str, target_id: str, scopes: list) -> None:
+    def _authorise(self, actor: Principal, source_id: str, target_id: str, scopes: list, include_downstream=(), ) -> None:
         from ..security import authz
         authz.require_systems(self.svc, actor, source_id, target_id)
         if authz.restricted(actor):
             for s in scopes:
                 sc = s["scope"] if isinstance(s["scope"], Scope) else Scope(**s["scope"])
-                authz.require_companies(actor, sc.company_codes, "every delta scope")
+                if actor.attrs.get("company_codes") is not None:
+                    authz.require_companies(actor, sc.company_codes, "every delta scope")
+                authz.require_named(actor, sc, "every delta scope")
+            if actor.attrs.get("plants") is not None or actor.attrs.get("sales_orgs") is not None:
+                self._dry_plan(actor, source_id, target_id, scopes, list(include_downstream))
+
+    def _dry_plan(self, actor: Principal, source_id: str, target_id: str, scopes: list, downstream: list) -> None:
+        """Plans every scope once and checks the closure against a plant / sales-organisation restricted principal (the scheduler that
+        runs the scenario later is a service account, so the human's scope is enforced here, when the scenario is created or changed)."""
+        from ..security import authz
+        svc = self.svc
+        src = svc.source_view(source_id)
+        reg = svc.registries[svc.system(source_id).family]
+        ref = src.reference_date()
+        plant_company = {r["WERKS"]: r["BUKRS"] for r in src.select("T001W")}
+        for s in scopes:
+            scope = s["scope"] if isinstance(s["scope"], Scope) else Scope(**s["scope"])
+            if s.get("rolling_days"):
+                scope = scope.model_copy(update={"date_from": ref - timedelta(days=s["rolling_days"]), "date_to": ref})
+            plan = Planner(src, reg).build(Manifest(name="dry-plan", source_system_id=source_id, target_system_id=target_id, scope=scope, include_downstream=downstream))
+            authz.require_plan(actor, plan, plant_company)
 
     def create(self, actor: Principal, spec: dict) -> Scenario:
         src, tgt = self.svc.system(spec["source_id"]), self.svc.system(spec["target_id"])
-        self._authorise(actor, src.id, tgt.id, spec.get("scopes", []))
+        self._authorise(actor, src.id, tgt.id, spec.get("scopes", []), spec.get("include_downstream", []))
         pol = self._validate(spec, src, tgt)
         sc = Scenario(f"dlt-{uuid.uuid4().hex[:8]}", spec["name"], src.id, tgt.id,
                       [{"scope": s["scope"] if isinstance(s["scope"], Scope) else Scope(**s["scope"]),
@@ -261,7 +281,7 @@ class DeltaService:
         if sc.status == "RUNNING" or sc.pending:
             raise Conflict("scenario has a run in progress or an unresolved failed run")
         src, tgt = self.svc.system(sc.source_id), self.svc.system(sc.target_id)
-        self._authorise(actor, src.id, tgt.id, spec.get("scopes", []))
+        self._authorise(actor, src.id, tgt.id, spec.get("scopes", []), spec.get("include_downstream", []))
         merged = {"name": sc.name, "scopes": sc.scopes, "include_downstream": sc.include_downstream,
                   "conflict_policy": sc.conflict_policy, "masking_policy_id": sc.masking_policy.id,
                   "schedule": sc.schedule, "source_id": sc.source_id, "target_id": sc.target_id, **spec}

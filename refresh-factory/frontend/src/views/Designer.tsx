@@ -14,7 +14,7 @@ export default function Designer() {
   const act = useAction();
   const [name, setName] = useState("CC1000 sales orders, last 90 days");
   const [src, setSrc] = useState(""); const [tgt, setTgt] = useState("");
-  const [otype, setOtype] = useState("SALES_ORDER"); const [cc, setCc] = useState("1000"); const [days, setDays] = useState(90);
+  const [otype, setOtype] = useState("SALES_ORDER"); const [cc, setCc] = useState("1000"); const [pl, setPl] = useState(""); const [days, setDays] = useState(90);
   const [down, setDown] = useState<string[]>(["DELIVERY", "BILLING", "FI_DOCUMENT"]); const [tmpl, setTmpl] = useState("gdpr-standard");
   const [plan, setPlan] = useState<J>(null); const [conf, setConf] = useState<J>(null); const [mask, setMask] = useState<J>(null);
   const [dupPolicy, setDupPolicy] = useState("SKIP");
@@ -64,6 +64,7 @@ export default function Designer() {
               <div className="form">
                 <label>Root business object<select value={otype} onChange={(e) => setOtype(e.target.value)}>{TYPES.map((t) => <option key={t}>{t}</option>)}</select></label>
                 <label>Company codes (comma separated)<input value={cc} onChange={(e) => setCc(e.target.value)} /></label>
+                <label>Plants (comma separated, optional)<input value={pl} onChange={(e) => setPl(e.target.value)} /></label>
                 <label>Created in the last N days (0 = no date filter)<input type="number" min={0} value={days} onChange={(e) => setDays(Number(e.target.value))} /></label>
                 <label>Masking template<select value={tmpl} onChange={(e) => setTmpl(e.target.value)}>
                   <option value="gdpr-standard">GDPR standard — pseudonymization</option><option value="gdpr-strict">GDPR strict — per-run anonymization</option></select></label>
@@ -74,7 +75,7 @@ export default function Designer() {
               <button className="primary" disabled={act.busy || !app.can("plan:write")}
                 onClick={() => refresh(async () => {
                   await api.put(`/api/projects/${pid}/manifest`, {
-                    scope: { object_type: otype, company_codes: cc.split(",").map((x) => x.trim()).filter(Boolean) },
+                    scope: { object_type: otype, company_codes: cc.split(",").map((x) => x.trim()).filter(Boolean), plants: pl.split(",").map((x) => x.trim()).filter(Boolean) },
                     last_days: days || null, include_downstream: down, masking_policy_id: tmpl,
                     conflict_policy: p.manifest?.conflict_policy ?? {}, instance_overrides: p.manifest?.instance_overrides ?? {} });
                   setTab(2); })}>

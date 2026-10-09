@@ -469,8 +469,8 @@ def create_app(data_dir: Path | None = None, persist: bool | None = None, auth: 
         return {**s.model_dump(mode="json"), "label": s.label, "remote": True, "simulated_transport": True}
 
     @app.get("/api/systems/{sid}/discovery")
-    def discovery(sid: str, _: Principal = Depends(need("view"))):
-        return svc.discover(sid)
+    def discovery(sid: str, a: Principal = Depends(need("view"))):
+        return authz.filter_discovery(a, svc.discover(sid))
 
     @app.get("/api/systems/{sid}/readiness")
     def readiness(sid: str, _: Principal = Depends(need("view"))):

@@ -113,3 +113,25 @@ test("OIDC mode: no demo user switcher, token sign-in, scope shown, sign-out, ba
     await be.stop();
   }
 });
+
+test("a plant-scoped steward is refused plants and plans outside their scope, and the discovery lists are filtered", async ({ app }) => {
+  const { page } = app;
+  await app.loadLandscape();
+  await app.as("pete.plant");
+  await expect(page.getByTestId("scope")).toHaveText(/all companies · EP1, EQ1 · plants 1000 · sales orgs 1000/);
+  await app.nav("Selective designer");
+  await page.getByLabel(/^Source/).selectOption({ label: "EP1/100 (PRD)" });
+  await page.getByLabel(/^Target/).selectOption({ label: "EQ1/200 (QAS)" });
+  await app.click("Create project");
+  await page.getByLabel("Plants (comma separated, optional)").fill("1010");
+  await app.click(/Save manifest/);
+  await expect(page.getByRole("alert")).toContainText(/plants \['1010'\]/);
+  await page.getByLabel("Plants (comma separated, optional)").fill("1000");
+  await app.click(/Save manifest/);
+  await app.click("Build plan");
+  await expect(page.getByRole("alert")).toContainText(/contain plant\(s\) \['1010'\]/); // sales orders in the demo data mix plants: refused, never partially copied
+  await expectAccessible(page, "plant-scoped steward: refused plan");
+  const src = ((await app.api("alice.basis").get("/api/systems")).body as { id: string; sid: string }[]).find((s) => s.sid === "EP1")!;
+  const d = (await app.api("pete.plant").get(`/api/systems/${src.id}/discovery`)).body as { plants: { plant: string }[] };
+  expect(d.plants.map((p) => p.plant)).toEqual(["1000"]);
+});

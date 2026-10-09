@@ -111,7 +111,7 @@ export default function App() {
                 </select>
                 <div className="muted small">{me?.roles?.join(", ")}</div>
               </>)}
-            {me?.scope && <div className="muted small" data-testid="scope">Scope: {me.scope.company_codes ? `company ${me.scope.company_codes.join(", ")}` : "all companies"} · {me.scope.systems ? me.scope.systems.join(", ") : "all systems"}</div>}
+            {me?.scope && <div className="muted small" data-testid="scope">Scope: {me.scope.company_codes ? `company ${me.scope.company_codes.join(", ")}` : "all companies"} · {me.scope.systems ? me.scope.systems.join(", ") : "all systems"}{me.scope.plants ? ` · plants ${me.scope.plants.join(", ")}` : ""}{me.scope.sales_orgs ? ` · sales orgs ${me.scope.sales_orgs.join(", ")}` : ""}</div>}
           </div>
         </aside>
         <main id="main" tabIndex={-1}>

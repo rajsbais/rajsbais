@@ -310,7 +310,9 @@ class RefreshService:
         prev = p.manifest
         authz.require_systems(self, actor, p.source_id, p.target_id)
         if authz.restricted(actor):
-            authz.require_companies(actor, scope.company_codes, "the manifest scope")
+            if actor.attrs.get("company_codes") is not None:
+                authz.require_companies(actor, scope.company_codes, "the manifest scope")
+            authz.require_named(actor, scope, "the manifest scope")
         m = Manifest(name=p.name, version=(prev.version + 1) if prev else 1, source_system_id=p.source_id,
                      target_system_id=p.target_id, scope=scope, include_downstream=include_downstream,
                      masking_policy_id=masking_policy_id, conflict_policy=conflict_policy,

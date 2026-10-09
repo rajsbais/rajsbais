@@ -5,7 +5,7 @@ What is verified: signature (RS256 or ES256 only; `none` and HMAC algorithms are
 re-read when an unknown `kid` appears, which is how a key rotation reaches the platform.
 
 Claims -> principal: roles from the role claim (unknown roles are ignored: least privilege), `rf_kind` (human | agent | service; anything else is
-refused), and the ABAC attributes `rf_systems` / `rf_company_codes` (lists of strings; see authz.py). An agent token never gets the permissions
+refused), and the ABAC attributes `rf_systems` / `rf_company_codes` / `rf_plants` / `rf_sales_orgs` (lists of strings; see authz.py). An agent token never gets the permissions
 agents are denied, whatever roles it carries.
 
 NOT provided: the browser login flow (Authorization Code + PKCE) and token refresh; the UI takes a pasted bearer token. Token revocation lists and
@@ -133,7 +133,7 @@ class OidcVerifier:
         if kind not in KINDS:
             raise AuthError("claims", "unknown principal kind")
         attrs: dict = {}
-        for claim, attr in (("rf_systems", "systems"), ("rf_company_codes", "company_codes")):
+        for claim, attr in (("rf_systems", "systems"), ("rf_company_codes", "company_codes"), ("rf_plants", "plants"), ("rf_sales_orgs", "sales_orgs")):
             if claim in claims:
                 v = claims[claim]
                 if not isinstance(v, list) or not all(isinstance(x, str) for x in v):

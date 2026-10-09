@@ -4,17 +4,40 @@ A principal may carry attributes: `systems` (SIDs, SID/client or system ids it m
 it may select). A missing attribute means no restriction; an empty list means nothing is allowed. Roles say WHAT a person may do; these say
 ON WHAT. Checks live where systems and company codes are introduced (creation) and at the API for every path that names an existing object.
 
+Two more attributes, `plants` and `sales_orgs`, work like company codes for what a scope NAMES (a named plant must be allowed) but are
+enforced on the DATA of the plan: every row of the plan's dependency closure that carries a plant or a sales organisation (VBAP-WERKS,
+MARC-WERKS, VBAK-VKORG, ...) must be inside the allowed set. The platform does not prune out-of-scope rows (a document with a missing
+item is not a faithful copy): a plan that contains one is REFUSED with the documents named, and the person narrows the scope.
+
 Covered: systems everywhere a system or an object bound to a system is named; company codes for selective manifests (and the plan's
-dependency closure), delta scopes and test-data requests. NOT covered: company-code scoping of lean-client builds, post-copy and full
-refresh (they act on whole systems, so only the system scope applies), plant/sales-org scoping, row-level scoping inside a system.
+dependency closure), delta scopes and test-data requests; plants and sales organisations for selective manifests and delta scopes (a delta
+scope is dry-planned when it is created or changed); the discovery lists (company codes, plants) are filtered to the principal's scope.
+NOT covered: scoping of lean-client builds, post-copy and full refresh (they act on whole systems, so only the system scope applies),
+plant/sales-org scoping of test-data requests and of delta runs after approval (the scheduler runs as a service account), row-level
+scoping beyond the plant and sales-organisation fields listed here, and hiding which plants exist in the system from `/api/systems/*/readiness`.
 """
 from __future__ import annotations
 
 from .auth import Forbidden, Principal
 
 
+ATTRS = ("systems", "company_codes", "plants", "sales_orgs")
+# the plan rows that carry a plant / a sales organisation (table -> field); the closure of a plan is checked against the allowed sets
+PLANT_FIELDS = {"VBAP": "WERKS", "LIPS": "WERKS", "LIKP": "WERKS", "MARC": "WERKS", "EKPO": "WERKS", "AUFK": "WERKS", "STKO": "WERKS", "MSEG": "WERKS", "MATDOC": "WERKS"}
+SALES_ORG_FIELDS = {"VBAK": "VKORG", "KNVV": "VKORG"}
+
+
 def restricted(p: Principal) -> bool:
-    return p.attrs.get("systems") is not None or p.attrs.get("company_codes") is not None
+    return any(p.attrs.get(a) is not None for a in ATTRS)
+
+
+def require_named(p: Principal, scope, what: str) -> None:
+    """Plants and sales organisations a scope NAMES must be allowed. (What it does not name is decided by the plan's closure.)"""
+    for attr, field_ in (("plants", "plants"), ("sales_orgs", "sales_orgs")):
+        allowed = p.attrs.get(attr)
+        named = list(getattr(scope, field_, []) or [])
+        if allowed is not None and any(v not in allowed for v in named):
+            raise Forbidden(f"outside your scope: {what} names {field_.replace('_', ' ')} {sorted(set(named) - set(allowed))} but you may only use {sorted(allowed)}")
 
 
 def system_ok(p: Principal, s) -> bool:
@@ -42,8 +65,33 @@ def require_companies(p: Principal, codes, what: str) -> None:
         raise Forbidden(f"outside your scope: {what} must name company code(s) within {sorted(allowed)}; got {sorted(codes) if codes else 'none (unbounded)'}")
 
 
+def _closure_rows(p: Principal, plan) -> None:
+    """Every plan row that carries a plant or a sales organisation must be inside the principal's allowed sets; offenders are named."""
+    for attr, fields, noun in (("plants", PLANT_FIELDS, "plant"), ("sales_orgs", SALES_ORG_FIELDS, "sales organisation")):
+        allowed = p.attrs.get(attr)
+        if allowed is None:
+            continue
+        bad: dict[str, set] = {}
+        for iid, inst in plan.instances.items():
+            for table, field_ in fields.items():
+                for r in inst.rows.get(table, []):
+                    if r.get(field_) not in allowed:
+                        bad.setdefault(iid, set()).add(r.get(field_))
+        if bad:
+            vals = sorted({v for vs in bad.values() for v in vs if v})
+            raise Forbidden(f"outside your scope: {len(bad)} object(s) in the plan contain {noun}(s) {vals} which you may not select "
+                            f"(you may use {sorted(allowed)}), for example {sorted(bad)[:3]}. The platform does not copy partial documents: narrow the scope")
+
+
 def require_plan(p: Principal, plan, plant_company: dict | None = None) -> None:
-    """A plan pulls in dependencies (partner documents, plants and their customizing): none may belong to a company outside the scope."""
+    """A plan pulls in dependencies (partner documents, plants and their customizing): none may belong to a company, plant or sales
+    organisation outside the scope."""
+    _closure_rows(p, plan)
+    allowed_plants = p.attrs.get("plants")
+    if allowed_plants is not None:
+        stray = sorted(set(plan.config_refs.get("PLANT", set())) - set(allowed_plants))
+        if stray:
+            raise Forbidden(f"outside your scope: the plan depends on plant(s) {stray} which you may not select")
     allowed = p.attrs.get("company_codes")
     if allowed is None:
         return
@@ -116,3 +164,15 @@ def check_path(svc, p: Principal, path: str, query=None) -> None:
             if key and key not in ("demo", "templates", "catalog"):
                 require_systems(svc, p, *_ids(svc, prefix, key))
             return
+
+
+def filter_discovery(p: Principal, d: dict) -> dict:
+    """Company codes and plants a restricted principal may not select are not listed."""
+    cc, pl = p.attrs.get("company_codes"), p.attrs.get("plants")
+    if cc is not None:
+        d["company_codes"] = [c for c in d.get("company_codes", []) if c["code"] in cc]
+    if pl is not None or cc is not None:
+        d["plants"] = [x for x in d.get("plants", []) if (pl is None or x["plant"] in pl) and (cc is None or x.get("company_code") in cc)]
+    if cc is not None or pl is not None:
+        d["custom_fields"] = d.get("custom_fields", [])
+    return d

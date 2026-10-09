@@ -32,7 +32,7 @@ class Principal:
     name: str
     roles: tuple[str, ...]
     kind: str = "human"  # human | agent | service
-    attrs: dict = field(default_factory=dict)  # ABAC: {"systems": [...], "company_codes": [...]}; absent key = unrestricted (see authz.py)
+    attrs: dict = field(default_factory=dict)  # ABAC: {"systems", "company_codes", "plants", "sales_orgs": [...]}; absent key = unrestricted (see authz.py)
 
     def permissions(self) -> set[str]:
         p: set[str] = set()
@@ -66,6 +66,8 @@ DEMO_USERS = {
     "svc.ci": Principal("svc.ci", "CI/CD pipeline (service)", ("tester",), kind="service"),
     "cora.regional": Principal("cora.regional", "Cora (Regional steward: company 2000, EP1/EQ1 only)", ("data_steward",),
                                attrs={"company_codes": ["2000"], "systems": ["EP1", "EQ1"]}),
+    "pete.plant": Principal("pete.plant", "Pete (Plant steward: plant 1000 and sales org 1000, EP1/EQ1 only)", ("data_steward",),
+                            attrs={"plants": ["1000"], "sales_orgs": ["1000"], "systems": ["EP1", "EQ1"]}),
     "refresh.copilot": Principal("refresh.copilot", "AI Refresh Copilot", ("admin", "approver", "basis"), kind="agent"),
 }
 
