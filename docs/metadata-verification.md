@@ -42,8 +42,19 @@ Sources used (reachable through search): [JournalEntryItemBasic (SAP Cloud SDK)]
 
 ## On A4H
 
-1. Register A4H as an API target (`docs/connect-real-systems.md`, step 3) and run **Metadata check** on the
-   Landscape page or `sdtf metadata check --system <id> --out a4h-metadata.md`.
+0. No registration needed for the first run. On the PC that reaches the VM (A4H up, the platform installed:
+   `cd backend && pip install -e ".[dev]"`):
+
+   ```powershell
+   $env:A4H_PW = "<password of DEVELOPER>"
+   sdtf metadata check --url https://vhcala4hci.dummy.nodomain:44300 --user DEVELOPER --passwd-env A4H_PW --no-verify --out a4h-metadata.md
+   ```
+   (`--no-verify` only because the appliance ships a self-signed certificate; `--services A,B` limits the
+   check; the password is read from the environment, never from the command line.) The gateway catalogue
+   (`/sap/opu/odata/iwfnd/catalogservice;v=2`) tells which services are activated; a service that is not
+   activated shows as UNAVAILABLE and is activated in `/IWFND/MAINT_SERVICE`.
+1. Later, with A4H registered as an API target (`docs/connect-real-systems.md`, step 3), the same check runs as
+   **Metadata check** on the Landscape page or `sdtf metadata check --system <id> --out a4h-metadata.md`.
 2. Send back `a4h-metadata.md`. Every DEVIATIONS row names the property the platform expects and the closest
    names the service has; the correction is a one-line change in `catalog/api_bindings.py` or
    `reconciliation/views.py` (`JOURNAL_FIELDS`), after which the same check passes.

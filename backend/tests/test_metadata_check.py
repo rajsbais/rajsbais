@@ -167,3 +167,26 @@ def test_metadata_api_and_cli(client, tokens, session, slice_result, tmp_path, c
     assert cli_main(["metadata", "check", "--system", "nope"]) == 2 and cli_main(["metadata", "expectations", "--service", "API_FIXEDASSET"]) == 0
     assert "FixedAssetValuation" in capsys.readouterr().out
     assert cli_main(["metadata", "expectations", "--json"]) == 0 and "A_SalesOrder" in capsys.readouterr().out
+
+
+def test_metadata_cli_against_a_url(monkeypatch, tmp_path, capsys):
+    """`sdtf metadata check --url` needs no registered system: the way to run it on the PC against A4H."""
+    fake = FakeS4Metadata()
+    real_client = httpx.Client
+
+    def mock_client(**kw):
+        kw.pop("transport", None)
+        return real_client(transport=httpx.MockTransport(fake.handler), **{k: v for k, v in kw.items() if k in ("timeout",)})
+
+    monkeypatch.setattr(httpx, "Client", mock_client)
+    monkeypatch.delenv("SDTF_METADATA_PASSWD", raising=False)
+    assert cli_main(["metadata", "check", "--url", "https://s4.example.com", "--user", "DEVELOPER"]) == 2  # password must come from the environment
+    assert "SDTF_METADATA_PASSWD" in capsys.readouterr().err
+    monkeypatch.setenv("A4H_PW", "secret")
+    out_md = tmp_path / "a4h.md"
+    assert cli_main(["metadata", "check", "--url", "https://s4.example.com", "--user", "DEVELOPER", "--passwd-env", "A4H_PW", "--no-verify", "--services", "API_PRODUCT_SRV,API_JOURNALENTRYITEMBASIC_SRV", "--out", str(out_md), "--json"]) == 0
+    cap = capsys.readouterr()
+    res = json.loads(cap.out)
+    assert "certificate verification disabled" in cap.err and res["catalog_available"] and [s["service"] for s in res["services"]] == ["API_PRODUCT_SRV", "API_JOURNALENTRYITEMBASIC_SRV"]
+    assert res["summary"]["VERIFIED"] == 1 and res["summary"]["ENTITY_SETS_MISSING"] == 1 and "## API_PRODUCT_SRV: ENTITY_SETS_MISSING (activated)" in out_md.read_text()
+    assert all(r.headers.get("authorization", "").startswith("Basic ") for r in fake.requests)

@@ -129,6 +129,11 @@ def main(argv=None):
     mdc.add_argument("--file", default=None, help="EDMX ($metadata) file")
     mdc.add_argument("--service", default=None, help="service name the file belongs to (e.g. API_JOURNALENTRYITEMBASIC_SRV)")
     mdc.add_argument("--system", default=None, help="registered API target to fetch the catalogue and $metadata from")
+    mdc.add_argument("--url", default=None, help="base URL of an S/4HANA system to check directly, no registration needed (e.g. https://vhcala4hci.dummy.nodomain:44300)")
+    mdc.add_argument("--user", default=None, help="user for --url (basic authentication)")
+    mdc.add_argument("--passwd-env", default="SDTF_METADATA_PASSWD", help="environment variable holding the password for --url (never passed on the command line)")
+    mdc.add_argument("--no-verify", action="store_true", help="do not verify the TLS certificate (lab systems with self-signed certificates only)")
+    mdc.add_argument("--services", default=None, help="comma-separated services to check (default: every bound service)")
     mdc.add_argument("--out", default=None, help="write the Markdown report here")
     mdc.add_argument("--json", action="store_true")
     mde = mdsub.add_parser("expectations", help="list the entity sets and properties the platform relies on per service")
@@ -390,6 +395,26 @@ def main(argv=None):
             except ValueError as e:
                 print(str(e), file=sys.stderr)
                 return 2
+        elif a.url:
+            import os as _os
+
+            from .runtime import target_api as tapi
+
+            pw = _os.getenv(a.passwd_env, "")
+            if a.user and not pw:
+                print(f"set {a.passwd_env} in the environment (the password is never given on the command line)", file=sys.stderr)
+                return 2
+            dest = {"base_url": a.url, "user": a.user or "", "passwd": pw, "verify": not a.no_verify}
+            if a.no_verify:
+                print("warning: TLS certificate verification disabled", file=sys.stderr)
+            try:
+                res = mc.check_target(tapi.S4ApiHttpTransport(dest), [x.strip() for x in a.services.split(",")] if a.services else None)
+            except tapi.ApiError as e:
+                print(f"{e.code}: {e.message}", file=sys.stderr)
+                return 3
+            except Exception as e:  # noqa: BLE001 - connection errors from httpx
+                print(f"could not reach {a.url}: {e}", file=sys.stderr)
+                return 3
         elif a.system:
             from .models import SapSystem
             from .runtime import target_api as tapi
@@ -400,12 +425,12 @@ def main(argv=None):
                     print("system not found or not an API target", file=sys.stderr)
                     return 2
                 try:
-                    res = mc.check_target(tapi.make_target_transport(session, s_))
+                    res = mc.check_target(tapi.make_target_transport(session, s_), [x.strip() for x in a.services.split(",")] if a.services else None)
                 except tapi.ApiError as e:
                     print(f"{e.code}: {e.message}", file=sys.stderr)
                     return 3
         else:
-            print("give --file with --service, or --system", file=sys.stderr)
+            print("give --file with --service, --system, or --url", file=sys.stderr)
             return 2
         md = mc.report_markdown(res)
         if a.out:
