@@ -9,7 +9,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with: { python-version: "3.12" }
-      - run: pip install -e "backend[dev]"
+      - run: pip install -e "backend[dev,columnar]"
       - run: ruff check backend/sdtf
       - run: cd backend && pytest -q -p no:warnings
       - name: Vertical slice smoke (CLI)

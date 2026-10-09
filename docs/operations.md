@@ -18,6 +18,13 @@ Alembic (`backend/alembic.ini`, `backend/sdtf/migrations`). `alembic upgrade hea
   identifies the first inconsistent record; restore from backup and investigate write access to `audit_events`.
 * **Rotate auth secret**: change `SDTF_AUTH_SECRET`; all tokens are invalidated (users re-login).
 
+## Distributed runs
+Start runs with `execution=DISTRIBUTED`; scale `sdtf worker` processes/pods as needed. Monitor `/runs/{id}/jobs`
+and `/platform/workers`. A worker crash leaves a CLAIMED job whose lease expires (`SDTF_JOB_LEASE_SECONDS`); any
+worker re-queues it on its next poll. `POST /runs/{id}/jobs/requeue` re-queues FAILED jobs after fixing the cause.
+The run finalises automatically when the last job completes; a run stuck in FINALIZING means the finalising worker
+died mid-stage: resume it with `POST /runs/{id}/resume` after setting it to FAILED.
+
 ## Backups
 PostgreSQL (metadata, manifests, audit) and the evidence directory/bucket are the two stateful components. Evidence
 files are content-addressed via `evidence_index.json`; verify hashes after restore.

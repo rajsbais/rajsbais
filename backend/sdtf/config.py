@@ -16,6 +16,10 @@ class Settings:
     extraction_workers: int = field(default_factory=lambda: int(os.getenv("SDTF_EXTRACTION_WORKERS", "4")))
     evidence_dir: str = field(default_factory=lambda: os.getenv("SDTF_EVIDENCE_DIR", "./data/evidence"))
     environment: str = field(default_factory=lambda: os.getenv("SDTF_ENV", "development"))
+    staging_backend: str = field(default_factory=lambda: os.getenv("SDTF_STAGING_BACKEND", "relational"))  # relational | columnar
+    staging_dir: str = field(default_factory=lambda: os.getenv("SDTF_STAGING_DIR", "./data/staging"))  # object-storage mount for columnar staging
+    job_lease_seconds: int = field(default_factory=lambda: int(os.getenv("SDTF_JOB_LEASE_SECONDS", "300")))
+    worker_poll_seconds: float = field(default_factory=lambda: float(os.getenv("SDTF_WORKER_POLL_SECONDS", "1.0")))
     cors_origins: tuple[str, ...] = field(
         default_factory=lambda: tuple(o for o in os.getenv("SDTF_CORS_ORIGINS", "http://localhost:5173").split(",") if o)
     )

@@ -5,6 +5,9 @@ data:
   SDTF_ENV: "kubernetes"
   SDTF_EVIDENCE_DIR: "/app/data/evidence"
   SDTF_EXTRACTION_WORKERS: "8"
+  SDTF_STAGING_BACKEND: "columnar"
+  SDTF_STAGING_DIR: "/app/data/staging"
+  SDTF_JOB_LEASE_SECONDS: "600"
   SDTF_DEV_USERS: "0"
   SDTF_CORS_ORIGINS: "https://sdtf.example.internal"
 ---

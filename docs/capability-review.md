@@ -47,7 +47,7 @@ Reviewed against the master build prompt (sections A–S) on the current branch.
 | Export-control and cross-border controls | **Built** as classification + compliance findings; **legal determinations cannot be made by the platform** |
 | 18 frontend applications on live APIs | **Built** (Playwright e2e verified) |
 | Containers, Kubernetes, CI/CD, IaC | **Built** manifests/workflow; **not exercised on a real cluster here** (no cluster); Terraform/Helm **pending** |
-| Multi-terabyte scale, HA, horizontal workers, observability | **Pending**: distributed workers, columnar staging, OpenTelemetry. Measured only to scale 3 synthetic (≈33k rows) |
+| Multi-terabyte scale, HA, horizontal workers, observability | **Built**: distributed workers (ADR-0010) and columnar staging (ADR-0009). **Pending**: transform/load as distributed jobs, S3/GCS via fsspec, OpenTelemetry. Measured only to scale 3 synthetic (≈33k rows); real-volume benchmarks need a real source |
 
 ## What Claude cannot deliver from this environment, explicitly
 1. **Any connection to a real SAP system** (read or write): no SAP instance, RFC SDK, SAP Cloud Connector, or credentials exist here, and none should be supplied to a development sandbox.

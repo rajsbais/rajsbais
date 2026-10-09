@@ -5,6 +5,7 @@ from .core import (  # noqa: F401
     AuditEvent,
     BusinessObjectInstance,
     DiscoverySnapshot,
+    ExtractionJob,
     GraphEdge,
     GraphNode,
     MigrationRun,

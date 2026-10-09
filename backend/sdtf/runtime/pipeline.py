@@ -26,6 +26,7 @@ from ..models import (
 from ..reconciliation.service import reconcile_run
 from ..rules.engine import parse_ruleset
 from ..scope.service import verify_manifest_integrity
+from ..staging import get_backend
 from .extraction import SyntheticStoreExtractor, run_extraction
 from .load import SimulatedTargetLoader
 from .transform import run_transformation
@@ -42,7 +43,7 @@ def _now():
     return datetime.now(timezone.utc)
 
 
-def start_run(session: Session, project_id: str, manifest_id: str, ruleset_id: str, actor: str, mode: str = "SIMULATED", workers: int | None = None, merge_group: str | None = None) -> MigrationRun:
+def start_run(session: Session, project_id: str, manifest_id: str, ruleset_id: str, actor: str, mode: str = "SIMULATED", workers: int | None = None, merge_group: str | None = None, execution: str = "INLINE", staging_backend: str | None = None) -> MigrationRun:
     if mode not in SUPPORTED_MODES:
         raise RunPrecondition(f"mode {mode} is not supported by this build; only SIMULATED runs exist (no production SAP connectivity)")
     m = session.get(ScopeManifest, manifest_id)
@@ -61,13 +62,26 @@ def start_run(session: Session, project_id: str, manifest_id: str, ruleset_id: s
     tgt = session.get(SapSystem, m.definition["target_system_id"])
     if src is None or tgt is None or src.project_id != project_id or tgt.project_id != project_id:
         raise RunPrecondition("source/target systems not found in project")
-    run = MigrationRun(project_id=project_id, manifest_id=m.id, ruleset_id=rs.id, source_system_id=src.id, target_system_id=tgt.id, mode=mode, status="RUNNING", started_by=actor, started_at=_now(), metrics={"workers": workers or config.settings.extraction_workers, **({"merge_group": merge_group} if merge_group else {})})
+    if execution not in ("INLINE", "DISTRIBUTED"):
+        raise RunPrecondition(f"unknown execution mode {execution}")
+    backend_name = staging_backend or config.settings.staging_backend
+    run = MigrationRun(project_id=project_id, manifest_id=m.id, ruleset_id=rs.id, source_system_id=src.id, target_system_id=tgt.id, mode=mode, status="RUNNING", started_by=actor, started_at=_now(), metrics={"workers": workers or config.settings.extraction_workers, "execution": execution, "staging_backend": backend_name, **({"merge_group": merge_group} if merge_group else {})})
     session.add(run)
     session.flush()
     for i, name in enumerate(STAGES):
         session.add(RunStage(run_id=run.id, sequence=i, name=name))
     session.flush()
-    record_event(session, actor, "RUN_STARTED", "RUN", run.id, {"manifest": m.id, "ruleset": rs.id, "mode": mode})
+    record_event(session, actor, "RUN_STARTED", "RUN", run.id, {"manifest": m.id, "ruleset": rs.id, "mode": mode, "execution": execution, "staging": backend_name})
+    if execution == "DISTRIBUTED":
+        from .worker import enqueue_extraction_jobs
+
+        _stage(run, "PRECHECK").status = "DONE"
+        _stage(run, "PRECHECK").metrics = {"manifest_hash": m.content_hash, "ruleset_hash": rs.content_hash, "objects_in_scope": m.impact.get("objects_total", 0)}
+        st = _stage(run, "EXTRACT")
+        st.status, st.started_at = "RUNNING", _now()
+        st.metrics = {"jobs": enqueue_extraction_jobs(session, run), "execution": "DISTRIBUTED"}
+        session.flush()
+        return run
     return execute_run(session, run, actor)
 
 
@@ -79,6 +93,14 @@ def resume_run(session: Session, run_id: str, actor: str) -> MigrationRun:
         raise RunPrecondition(f"run is {run.status}; only FAILED runs can be resumed")
     record_event(session, actor, "RUN_RESUMED", "RUN", run.id, {})
     run.status = "RUNNING"
+    if run.metrics.get("execution") == "DISTRIBUTED" and _stage(run, "EXTRACT").status != "DONE":
+        from .worker import requeue_jobs
+
+        st = _stage(run, "EXTRACT")
+        st.status = "RUNNING"
+        st.metrics = {**(st.metrics or {}), "requeued": requeue_jobs(session, run.id, statuses=("FAILED", "CLAIMED"))}
+        session.flush()
+        return run
     return execute_run(session, run, actor)
 
 
@@ -95,6 +117,7 @@ def execute_run(session: Session, run: MigrationRun, actor: str) -> MigrationRun
     cls = m.selection.get("classification", {})
     scope_ccs = set(m.definition["company_codes"])
     source_store = None
+    backend = get_backend(run.metrics.get("staging_backend"), session=session)
     try:
         for name in STAGES:
             st = _stage(run, name)
@@ -108,17 +131,17 @@ def execute_run(session: Session, run: MigrationRun, actor: str) -> MigrationRun
             elif name == "EXTRACT":
                 source_store = source_store or RecordStore.load(session, src.id)
                 ex = SyntheticStoreExtractor(source_store, cls, scope_ccs)
-                st.metrics = run_extraction(session, run.id, ex, st.checkpoint, workers=run.metrics.get("workers", config.settings.extraction_workers))
+                st.metrics = run_extraction(session, run.id, ex, st.checkpoint, workers=run.metrics.get("workers", config.settings.extraction_workers), backend=backend)
                 run.snapshot_id = st.metrics["snapshot_id"]
             elif name == "TRANSFORM":
-                st.metrics = run_transformation(session, run.id, rs)
+                st.metrics = run_transformation(session, run.id, rs, backend=backend)
             elif name == "LOAD":
-                st.metrics = SimulatedTargetLoader(session, tgt, run.id).load()
+                st.metrics = SimulatedTargetLoader(session, tgt, run.id, backend=backend).load()
             elif name == "RECONCILE":
                 source_store = source_store or RecordStore.load(session, src.id)
                 session.query(ReconciliationResult).filter(ReconciliationResult.run_id == run.id).delete()
                 target_store = RecordStore.load(session, tgt.id)
-                st.metrics = reconcile_run(session, run, m, source_store, target_store, financial=not run.metrics.get("merge_group"))
+                st.metrics = reconcile_run(session, run, m, source_store, target_store, financial=not run.metrics.get("merge_group"), backend=backend)
             elif name == "REPORT":
                 # the report stage is marked complete before rendering so the report reflects final stage states
                 st.status, st.finished_at = "DONE", _now()

@@ -14,11 +14,26 @@ services:
       SDTF_DATABASE_URL: postgresql+psycopg://sdtf:sdtf@postgres:5432/sdtf
       SDTF_AUTH_SECRET: ${SDTF_AUTH_SECRET:-change-me-in-production}
       SDTF_EVIDENCE_DIR: /app/data/evidence
+      SDTF_STAGING_BACKEND: columnar
+      SDTF_STAGING_DIR: /app/data/staging
       SDTF_CORS_ORIGINS: http://localhost:8080
       SDTF_ENV: compose
     volumes: ["evidence:/app/data"]
     depends_on: { postgres: { condition: service_healthy } }
     ports: ["8000:8000"]
+  worker:
+    build: { context: .., dockerfile: deploy/Dockerfile.backend }
+    command: ["sh", "-c", "python -m sdtf.cli worker"]
+    environment:
+      SDTF_DATABASE_URL: postgresql+psycopg://sdtf:sdtf@postgres:5432/sdtf
+      SDTF_AUTH_SECRET: ${SDTF_AUTH_SECRET:-change-me-in-production}
+      SDTF_EVIDENCE_DIR: /app/data/evidence
+      SDTF_STAGING_BACKEND: columnar
+      SDTF_STAGING_DIR: /app/data/staging
+      SDTF_DEV_USERS: "0"
+    volumes: ["evidence:/app/data"]
+    depends_on: [backend]
+    deploy: { replicas: 2 }
   frontend:
     build: { context: .., dockerfile: deploy/Dockerfile.frontend }
     depends_on: [backend]

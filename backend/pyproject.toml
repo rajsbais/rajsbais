@@ -17,6 +17,7 @@ dependencies = [
 [project.optional-dependencies]
 dev = ["pytest>=8", "ruff>=0.5"]
 postgres = ["psycopg[binary]>=3.1"]
+columnar = ["pyarrow>=15"]
 
 [project.scripts]
 sdtf = "sdtf.cli:main"

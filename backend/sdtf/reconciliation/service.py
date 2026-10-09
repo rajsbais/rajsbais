@@ -15,7 +15,8 @@ from sqlalchemy.orm import Session
 
 from ..catalog.business_objects import BUSINESS_OBJECTS, instance_status
 from ..catalog.store import RecordStore
-from ..models import MigrationRun, ReconciliationResult, ScopeManifest, StagedRecord, TransformationException
+from ..models import MigrationRun, ReconciliationResult, ScopeManifest, TransformationException
+from ..staging import get_backend
 
 TRANSFER = ("FULLY_TRANSFERRED", "PARTIALLY_TRANSFERRED", "SHARED_DUPLICATED")
 
@@ -32,7 +33,7 @@ def _sum_lines(rows, cc_field="BUKRS"):
     return bal
 
 
-def reconcile_run(session: Session, run: MigrationRun, manifest: ScopeManifest, source: RecordStore, target: RecordStore, financial: bool = True) -> dict:
+def reconcile_run(session: Session, run: MigrationRun, manifest: ScopeManifest, source: RecordStore, target: RecordStore, financial: bool = True, backend=None) -> dict:
     results: list[ReconciliationResult] = []
     rid = run.id
     defn = manifest.definition
@@ -41,9 +42,10 @@ def reconcile_run(session: Session, run: MigrationRun, manifest: ScopeManifest, 
     cc_map = defn.get("target_ownership", {}).get("company_code_map") or {}
     tcc_of = lambda cc: cc_map.get(cc, cc)  # noqa: E731
     target_ccs = {tcc_of(c) for c in scope_ccs}
-    staged = session.execute(select(StagedRecord).where(StagedRecord.run_id == rid)).scalars().all()
+    backend = backend or get_backend(run.metrics.get("staging_backend"), session=session)
+    staged = list(backend.iter_records(rid))
     exceptions = session.execute(select(TransformationException).where(TransformationException.run_id == rid)).scalars().all()
-    by_table: dict[str, list[StagedRecord]] = defaultdict(list)
+    by_table: dict[str, list] = defaultdict(list)
     for s in staged:
         by_table[s.table_name].append(s)
 
@@ -334,7 +336,8 @@ def reconcile_merge_group(session: Session, runs: list[MigrationRun], target: Re
         m = session.get(ScopeManifest, run.manifest_id)
         store = RecordStore.load(session, run.source_system_id)
         exceptions = session.execute(select(TransformationException).where(TransformationException.run_id == run.id)).scalars().all()
-        loaded = [s.target_payload for s in session.execute(select(StagedRecord).where(StagedRecord.run_id == run.id, StagedRecord.table_name == "BSEG", StagedRecord.load_status == "LOADED")).scalars()]
+        backend = get_backend(run.metrics.get("staging_backend"), session=session)
+        loaded = [s.target_payload for s in backend.iter_records(run.id, table="BSEG", status="LOADED")]
         contexts.append(source_context(m, store, m.selection.get("classification", {}), exceptions, loaded))
     last = runs[-1]
     session.query(ReconciliationResult).filter(ReconciliationResult.run_id == last.id, ReconciliationResult.layer == "FINANCIAL").delete()

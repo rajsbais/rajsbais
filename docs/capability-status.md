@@ -12,6 +12,8 @@
 | Carve-out classification, completeness, residual exposure, IC balances | IMPLEMENTED | cleanup never executed automatically |
 | Transformation rule DSL, validation, tests, dry run, rule factory | IMPLEMENTED | |
 | Extraction | SIMULATED | synthetic store adapter; RFC/OData/CDS/File planned |
+| Distributed extraction workers (claim/lease, crash re-queue, last-worker finalisation) | IMPLEMENTED | tested with in-process and separate worker processes |
+| Columnar staging (Parquet, object-storage mount) | IMPLEMENTED | parity-tested against relational staging |
 | Transformation stage with lineage & exceptions | IMPLEMENTED | |
 | Load | SIMULATED | idempotent upsert, config matching, load-method selection; released-API loaders planned |
 | Reconciliation (technical/functional/financial) | IMPLEMENTED | on simulated data |

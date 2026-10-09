@@ -7,6 +7,7 @@ modelled as a records-per-second budget per worker.
 from __future__ import annotations
 
 import hashlib
+import threading
 import time
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor
@@ -19,7 +20,7 @@ from ..catalog.business_objects import BUSINESS_OBJECTS
 from ..catalog.store import RecordStore
 from ..catalog.tables import TABLES, record_key
 from ..graph.service import split_node
-from ..models import StagedRecord
+from ..staging import StagedRow, get_backend
 from .adapters import ExtractedRecord, Partition
 
 TRANSFER_CLASSES = ("FULLY_TRANSFERRED", "PARTIALLY_TRANSFERRED", "SHARED_DUPLICATED")
@@ -146,45 +147,54 @@ class SyntheticStoreExtractor:
                 yield ExtractedRecord(table=table, key=record_key(table, row), payload=row, object_node=nid)
 
 
-def run_extraction(session: Session, run_id: str, extractor: SyntheticStoreExtractor, checkpoint: dict, workers: int = 4, batch: int = 1000) -> dict:
-    """Extract all partitions not yet marked DONE in checkpoint. Returns updated checkpoint + metrics.
+def extract_partition(extractor: SyntheticStoreExtractor, partition: Partition, run_id: str, backend) -> int:
+    """Extract one partition into the staging backend. Idempotent: duplicate (table, key) rows are ignored."""
+    seen = set()
+    rows = []
+    for r in extractor.extract(partition):
+        if (r.table, r.key) in seen:
+            continue
+        seen.add((r.table, r.key))
+        rows.append(StagedRow(partition.id, r.table, r.key, r.payload))
+    return backend.write_partition(run_id, partition.id, rows)
 
-    Workers extract in parallel from the in-memory store; writes are serialised into the session (SQLite).
-    """
+
+def run_extraction(session: Session, run_id: str, extractor: SyntheticStoreExtractor, checkpoint: dict, workers: int = 4, backend=None) -> dict:
+    """Inline execution: extract all partitions not yet marked DONE in checkpoint with a thread pool.
+    Distributed execution uses the same `extract_partition` from separate worker processes (runtime/worker.py)."""
+    backend = backend or get_backend(session=session)
     plan = extractor.plan()
     done = set(checkpoint.get("partitions_done", []))
     todo = [p for p in plan.partitions if p.id not in done]
-    metrics = {"partitions_total": len(plan.partitions), "partitions_skipped": len(done), "records": 0, "by_table": defaultdict(int), "by_partition": {}}
+    metrics = {"partitions_total": len(plan.partitions), "partitions_skipped": len(done), "records": 0, "by_partition": {}}
     t0 = time.monotonic()
+    lock = threading.Lock()
 
     def work(p: Partition):
-        return p, list(extractor.extract(p))
+        seen = set()
+        rows = []
+        for r in extractor.extract(p):
+            if (r.table, r.key) in seen:
+                continue
+            seen.add((r.table, r.key))
+            rows.append(StagedRow(p.id, r.table, r.key, r.payload))
+        return p, rows
 
     with ThreadPoolExecutor(max_workers=max(1, workers)) as ex:
-        for p, recs in ex.map(work, todo):
-            seen = set()
-            buf = []
-            for r in recs:
-                if (r.table, r.key) in seen:
-                    continue
-                seen.add((r.table, r.key))
-                buf.append({"run_id": run_id, "partition": p.id, "table_name": r.table, "record_key": r.key, "source_payload": r.payload, "target_payload": None, "target_key": None, "lineage": [], "load_status": "STAGED"})
-                metrics["by_table"][r.table] += 1
-            # a record can belong to several objects (e.g. shared material document); keep first occurrence
-            existing = {(t, k) for t, k in session.query(StagedRecord.table_name, StagedRecord.record_key).filter(StagedRecord.run_id == run_id, StagedRecord.table_name.in_({b["table_name"] for b in buf}) if buf else False)}
-            buf = [b for b in buf if (b["table_name"], b["record_key"]) not in existing]
-            for i in range(0, len(buf), batch):
-                session.execute(StagedRecord.__table__.insert(), buf[i : i + batch])
-            metrics["records"] += len(buf)
-            metrics["by_partition"][p.id] = len(buf)
+        for p, rows in ex.map(work, todo):
+            with lock:  # staging writes are serialised; extraction itself ran in parallel
+                n = backend.write_partition(run_id, p.id, rows)
+            metrics["records"] += n
+            metrics["by_partition"][p.id] = n
             done.add(p.id)
             checkpoint["partitions_done"] = sorted(done)
             session.flush()
-    metrics["by_table"] = dict(metrics["by_table"])
+    metrics["by_table"] = {c["table"]: c["count"] for c in backend.counts(run_id)} if todo else {}
     metrics["reference_stubs"] = len(extractor.reference_stubs)
     metrics["partial_rows_retained"] = extractor.retained_rows
     metrics["partial_headers_retained"] = len(extractor.retained_headers)
     metrics["duration_s"] = round(time.monotonic() - t0, 3)
     metrics["records_per_second"] = round(metrics["records"] / metrics["duration_s"], 1) if metrics["duration_s"] else None
     metrics["snapshot_id"] = plan.snapshot_id
+    metrics["staging_backend"] = backend.name
     return metrics

@@ -100,11 +100,19 @@ def decode_token(token: str) -> Principal:
 def seed_dev_users(session: Session) -> int:
     if not settings.dev_users_enabled:
         return 0
+    from sqlalchemy.exc import IntegrityError
+
     n = 0
     for username, display, pw, roles in DEV_USERS:
-        if session.execute(select(User).where(User.username == username)).scalars().first() is None:
-            session.add(User(username=username, display_name=display, password_hash=hash_password(pw), roles=roles))
+        if session.execute(select(User).where(User.username == username)).scalars().first() is not None:
+            continue
+        try:
+            with session.begin_nested():  # several processes may seed at once: a concurrent insert is not an error
+                session.add(User(username=username, display_name=display, password_hash=hash_password(pw), roles=roles))
+                session.flush()
             n += 1
+        except IntegrityError:
+            pass
     session.flush()
     return n
 

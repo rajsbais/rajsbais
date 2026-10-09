@@ -17,7 +17,8 @@ def db_url(tmp_path_factory):
 @pytest.fixture(scope="session")
 def engine(db_url):
     from sdtf import config
-    config.settings = config.Settings(database_url=db_url, evidence_dir=os.environ["SDTF_EVIDENCE_DIR"])
+    os.environ["SDTF_STAGING_DIR"] = os.path.join(os.path.dirname(os.environ["SDTF_EVIDENCE_DIR"]), "staging")
+    config.settings = config.Settings(database_url=db_url, evidence_dir=os.environ["SDTF_EVIDENCE_DIR"], staging_dir=os.environ["SDTF_STAGING_DIR"])
     from sdtf.db import init_schema, reset_engine
 
     reset_engine(db_url)

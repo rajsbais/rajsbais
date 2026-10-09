@@ -22,7 +22,6 @@ from ..models import (
     RuleSet,
     SapSystem,
     ScopeManifest,
-    StagedRecord,
     TransformationException,
 )
 from ..rules.engine import dry_run, parse_ruleset, validate_ruleset
@@ -247,13 +246,15 @@ class RunRequest(BaseModel):
     ruleset_id: str
     mode: str = "SIMULATED"
     workers: int | None = Field(None, ge=1, le=32)
+    execution: str = Field("INLINE", pattern="^(INLINE|DISTRIBUTED)$", description="INLINE: threads in the API process; DISTRIBUTED: partition jobs claimed by `sdtf worker` processes")
+    staging_backend: str | None = Field(None, pattern="^(relational|columnar)$")
 
 
 @router.post("/projects/{project_id}/runs", tags=["runs"], status_code=201)
 def run_start(project_id: str, req: RunRequest, db: Session = Depends(get_db), p: Principal = Depends(require("run:start"))):
     assert_project_access(db, p, project_id)
     try:
-        run = start_run(db, project_id, req.manifest_id, req.ruleset_id, p.username, req.mode, req.workers)
+        run = start_run(db, project_id, req.manifest_id, req.ruleset_id, p.username, req.mode, req.workers, execution=req.execution, staging_backend=req.staging_backend)
     except RunPrecondition as e:
         raise HTTPException(409, str(e)) from None
     return run_out(run)
@@ -276,6 +277,35 @@ def run_list(project_id: str, db: Session = Depends(get_db), p: Principal = Depe
 @router.get("/runs/{run_id}", tags=["runs"])
 def run_get(full: bool = False, r: MigrationRun = Depends(get_run), p: Principal = Depends(require("project:read"))):
     return run_out(r, full=full)
+
+
+@router.get("/runs/{run_id}/jobs", tags=["runs"])
+def run_jobs(r: MigrationRun = Depends(get_run), db: Session = Depends(get_db), p: Principal = Depends(require("project:read"))):
+    from ..runtime.worker import job_summary
+
+    return job_summary(db, r.id)
+
+
+@router.post("/runs/{run_id}/jobs/requeue", tags=["runs"])
+def run_jobs_requeue(r: MigrationRun = Depends(get_run), db: Session = Depends(get_db), p: Principal = Depends(require("run:start"))):
+    """Re-queue FAILED jobs and expired leases of a distributed run."""
+    from ..runtime.worker import requeue_jobs, requeue_stale
+
+    n = requeue_jobs(db, r.id, statuses=("FAILED",)) + requeue_stale(db)
+    record_event(db, p.username, "JOBS_REQUEUED", "RUN", r.id, {"count": n})
+    return {"requeued": n}
+
+
+@router.get("/platform/workers", tags=["platform"])
+def platform_workers(db: Session = Depends(get_db), p: Principal = Depends(require("project:read"))):
+    from ..models import ExtractionJob
+
+    rows = db.execute(select(ExtractionJob.worker_id, ExtractionJob.status, func.count()).where(ExtractionJob.worker_id.isnot(None)).group_by(ExtractionJob.worker_id, ExtractionJob.status)).all()
+    out: dict[str, dict] = {}
+    for w, st, n in rows:
+        out.setdefault(w, {"worker": w, "DONE": 0, "CLAIMED": 0, "FAILED": 0})[st] = n
+    queued = db.execute(select(func.count()).select_from(ExtractionJob).where(ExtractionJob.status == "QUEUED")).scalar()
+    return {"queued_jobs": queued, "workers": sorted(out.values(), key=lambda x: x["worker"])}
 
 
 @router.get("/runs/{run_id}/report", tags=["runs"])
@@ -302,12 +332,11 @@ def run_exceptions(r: MigrationRun = Depends(get_run), db: Session = Depends(get
 
 @router.get("/runs/{run_id}/staged", tags=["runs"])
 def run_staged(table: str | None = None, limit: int = Query(50, le=500), r: MigrationRun = Depends(get_run), db: Session = Depends(get_db), p: Principal = Depends(require("records:read"))):
-    stmt = select(StagedRecord).where(StagedRecord.run_id == r.id)
-    if table:
-        stmt = stmt.where(StagedRecord.table_name == table)
-    rows = db.execute(stmt.limit(limit)).scalars().all()
-    counts = db.execute(select(StagedRecord.table_name, StagedRecord.load_status, func.count()).where(StagedRecord.run_id == r.id).group_by(StagedRecord.table_name, StagedRecord.load_status)).all()
-    return {"counts": [{"table": t, "status": s, "count": n} for t, s, n in counts], "items": [{"table": x.table_name, "key": x.record_key, "target_key": x.target_key, "status": x.load_status, "lineage": x.lineage, "source": x.source_payload, "target": x.target_payload} for x in rows]}
+    from ..staging import get_backend
+
+    backend = get_backend(r.metrics.get("staging_backend"), session=db)
+    rows = backend.samples(r.id, table, limit)
+    return {"backend": backend.name, "counts": backend.counts(r.id), "items": [{"table": x.table_name, "key": x.record_key, "target_key": x.target_key, "status": x.load_status, "lineage": x.lineage, "source": x.source_payload, "target": x.target_payload} for x in rows]}
 
 
 class RunSignoff(BaseModel):
@@ -420,6 +449,8 @@ CAPABILITIES = [
     {"area": "Carve-out classification & reports", "status": "IMPLEMENTED", "note": "Completeness, residual exposure, intercompany balances"},
     {"area": "Transformation rule DSL", "status": "IMPLEMENTED", "note": "YAML DSL, validation, embedded tests, dry run"},
     {"area": "Extraction", "status": "SIMULATED", "note": "Synthetic store extractor; RFC/OData/CDS adapters planned"},
+    {"area": "Distributed extraction workers", "status": "IMPLEMENTED", "note": "Claim-based partition jobs with leases, crash re-queue, last-worker finalisation; `sdtf worker` processes / pods"},
+    {"area": "Columnar staging (Parquet on object-storage mount)", "status": "IMPLEMENTED", "note": "Per run/table/partition files, zstd; S3/GCS via CSI mount; fsspec backends planned"},
     {"area": "Target load", "status": "SIMULATED", "note": "Simulated loader with idempotent upsert; released-API loaders planned"},
     {"area": "Reconciliation (technical/functional/financial)", "status": "IMPLEMENTED", "note": "Runs on simulated data"},
     {"area": "Audit trail & evidence packages", "status": "IMPLEMENTED", "note": "Hash-chained events, evidence index"},

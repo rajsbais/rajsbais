@@ -27,8 +27,9 @@ container start.
 ## Kubernetes
 `kubectl apply -k deploy/k8s` — namespace, ConfigMap, Secret (replace values via External Secrets/Vault), backend
 Deployment (2 replicas, non-root, probes, evidence PVC), frontend Deployment, Ingress with TLS. Horizontal worker
-scaling: today extraction workers are threads inside the API pod (`SDTF_EXTRACTION_WORKERS`); the partition model is
-ready for a separate worker Deployment (planned).
+scaling: `deploy/k8s/worker.yaml` runs `sdtf worker` pods (HPA 2–32) that claim extraction jobs of DISTRIBUTED runs;
+INLINE runs still use threads inside the API pod (`SDTF_EXTRACTION_WORKERS`). API and workers share the RWX volume that
+holds evidence and columnar staging.
 
 ## Configuration
 | Variable | Purpose |
@@ -39,6 +40,8 @@ ready for a separate worker Deployment (planned).
 | SDTF_EVIDENCE_DIR | evidence package location (object storage mount in production) |
 | SDTF_EXTRACTION_WORKERS | parallel extraction workers |
 | SDTF_CORS_ORIGINS | allowed UI origins |
+| SDTF_STAGING_BACKEND, SDTF_STAGING_DIR | `relational` (default) or `columnar` Parquet staging under the given object-storage mount |
+| SDTF_JOB_LEASE_SECONDS, SDTF_WORKER_POLL_SECONDS | distributed worker lease and poll interval |
 
 ## Observability (partial)
 Structured stage metrics and durations are persisted per run (`run_stages.metrics`) and exposed in the UI;

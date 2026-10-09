@@ -15,7 +15,8 @@ from sqlalchemy.orm import Session
 
 from ..catalog.business_objects import BUSINESS_OBJECTS, load_methods_for
 from ..catalog.tables import TABLES
-from ..models import SapRecord, SapSystem, StagedRecord, TransformationException
+from ..models import SapRecord, SapSystem, TransformationException
+from ..staging import get_backend
 
 _TABLE_TO_BO = {}
 for _bo in BUSINESS_OBJECTS.values():
@@ -38,11 +39,12 @@ class SimulatedTargetLoader:
     name = "SIMULATED"
     status = "SIMULATED"
 
-    def __init__(self, session: Session, target: SapSystem, run_id: str, on_conflict: str = "ERROR"):
+    def __init__(self, session: Session, target: SapSystem, run_id: str, on_conflict: str = "ERROR", backend=None):
         self.session = session
         self.target = target
         self.run_id = run_id
         self.on_conflict = on_conflict
+        self.backend = backend or get_backend(session=session)
 
     def load(self, batch: int = 500) -> dict:
         t0 = time.monotonic()
@@ -50,10 +52,11 @@ class SimulatedTargetLoader:
         existing = {}
         for r in self.session.execute(select(SapRecord).where(SapRecord.system_id == self.target.id)).scalars():
             existing[(r.table_name, r.record_key)] = r
-        stmt = select(StagedRecord).where(StagedRecord.run_id == self.run_id, StagedRecord.load_status == "TRANSFORMED").execution_options(yield_per=batch)
         new_rows = []
         exceptions = []
-        for rec in self.session.execute(stmt).scalars():
+        updated = []
+        for rec in self.backend.iter_records(self.run_id, status="TRANSFORMED"):
+            updated.append(rec)
             table = rec.table_name
             method = load_method_for_table(table, self.target.product)
             m["by_method"][method] += 1
@@ -110,6 +113,7 @@ class SimulatedTargetLoader:
                 new_rows = []
         if new_rows:
             self.session.execute(SapRecord.__table__.insert(), new_rows)
+        self.backend.update_records(self.run_id, updated)
         self.session.add_all(exceptions)
         self.session.flush()
         m["by_table"] = dict(m["by_table"])

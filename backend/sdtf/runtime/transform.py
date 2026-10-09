@@ -3,19 +3,20 @@ from __future__ import annotations
 import time
 from collections import defaultdict
 
-from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from ..models import StagedRecord, TransformationException
+from ..models import TransformationException
 from ..rules.engine import CompiledRuleSet, RuleError, SkipRecord, target_key, transform_record
+from ..staging import get_backend
 
 
-def run_transformation(session: Session, run_id: str, rs: CompiledRuleSet, batch: int = 500) -> dict:
+def run_transformation(session: Session, run_id: str, rs: CompiledRuleSet, batch: int = 500, backend=None) -> dict:
+    backend = backend or get_backend(session=session)
     t0 = time.monotonic()
     metrics = {"records": 0, "transformed": 0, "rejected": 0, "skipped": 0, "unchanged": 0, "by_rule": defaultdict(int)}
-    stmt = select(StagedRecord).where(StagedRecord.run_id == run_id, StagedRecord.load_status == "STAGED").execution_options(yield_per=batch)
     exceptions = []
-    for rec in session.execute(stmt).scalars():
+    buf = []
+    for rec in backend.iter_records(run_id, status="STAGED"):
         metrics["records"] += 1
         try:
             out, lineage = transform_record(rs, rec.table_name, rec.source_payload)
@@ -24,11 +25,13 @@ def run_transformation(session: Session, run_id: str, rs: CompiledRuleSet, batch
             rec.lineage = [{"rule": e.rule_id, "field": "*", "from": "record", "to": "skipped"}]
             metrics["skipped"] += 1
             metrics["by_rule"][e.rule_id] += 1
+            buf.append(rec)
             continue
         except RuleError as e:
             rec.load_status = "REJECTED"
             metrics["rejected"] += 1
             exceptions.append(TransformationException(run_id=run_id, stage="TRANSFORM", table_name=rec.table_name, record_key=rec.record_key, rule_id=e.rule_id, severity="ERROR", message=e.message))
+            buf.append(rec)
             continue
         rec.target_payload = out
         rec.target_key = target_key(rec.table_name, out)
@@ -40,6 +43,8 @@ def run_transformation(session: Session, run_id: str, rs: CompiledRuleSet, batch
                 metrics["by_rule"][l["rule"]] += 1
         else:
             metrics["unchanged"] += 1
+        buf.append(rec)
+    backend.update_records(run_id, buf)
     session.add_all(exceptions)
     session.flush()
     metrics["by_rule"] = dict(metrics["by_rule"])
