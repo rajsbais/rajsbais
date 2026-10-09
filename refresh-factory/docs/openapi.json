@@ -13206,6 +13206,13 @@
       "type": "array",
       "title": "Customers"
      },
+     "carriers": {
+      "items": {
+       "type": "string"
+      },
+      "type": "array",
+      "title": "Carriers"
+     },
      "vendors": {
       "items": {
        "type": "string"

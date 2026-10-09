@@ -57,6 +57,9 @@ def test_end_to_end_refresh_masks_everything_and_leaves_source_untouched(svc, fa
     for st in masked["stats"]:
         orig = {r[st["field"]] for r in src.data[st["table"]] if isinstance(r.get(st["field"]), str) and r[st["field"]]}
         now = {r[st["field"]] for r in tgt.data[st["table"]] if isinstance(r.get(st["field"]), str) and r[st["field"]]}
+        if st["field"] == "PASSBIRTH":  # a date has a small value space: another person's original date may legitimately appear, one's own must not
+            assert all(a["PASSBIRTH"] != b["PASSBIRTH"] for a, b in zip(src.data["SBOOK"], tgt.data["SBOOK"])), st
+            continue
         assert not (orig & now), st
     assert not p.unmasked_target and svc.full.unmasked_targets() == []
     assert svc.postcopy.gate(p.target_id, p.profile_id)["ok"]

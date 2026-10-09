@@ -14,6 +14,7 @@ class Scope(BaseModel):
     plants: list[str] = Field(default_factory=list)
     sales_orgs: list[str] = Field(default_factory=list)
     customers: list[str] = Field(default_factory=list)
+    carriers: list[str] = Field(default_factory=list)  # airlines (flight demo model)
     vendors: list[str] = Field(default_factory=list)
     materials: list[str] = Field(default_factory=list)
     document_types: list[str] = Field(default_factory=list)
@@ -28,7 +29,7 @@ class Scope(BaseModel):
 
     def dims(self) -> dict[str, list[str]]:
         return {k: getattr(self, k) for k in
-                ("company_codes", "plants", "sales_orgs", "customers", "vendors", "materials",
+                ("company_codes", "plants", "sales_orgs", "customers", "carriers", "vendors", "materials",
                  "document_types", "fiscal_years") if getattr(self, k)}
 
 
@@ -47,5 +48,7 @@ class Manifest(BaseModel):
     def content_hash(self) -> str:
         """Hash of everything that changes *what* is executed (not name/version)."""
         payload = self.model_dump(mode="json", exclude={"name", "version"})
+        if not payload["scope"].get("carriers"):
+            payload["scope"].pop("carriers", None)  # a field added later: manifests that do not use it keep the hash they were approved under
         blob = json.dumps(payload, sort_keys=True, separators=(",", ":"))
         return hashlib.sha256(blob.encode()).hexdigest()

@@ -79,6 +79,17 @@ def _iban(value: str, p: Prng) -> str:
     return f"{cc}{98 - int(num) % 97:02d}{bban}"
 
 
+def _shift_date(v: str, p: Prng) -> str:
+    """Shift an ISO date by a keyed offset of 30 to 3000 days (forward or back): the age profile stays plausible, the date itself never survives."""
+    from datetime import date, timedelta
+    try:
+        d = date.fromisoformat(v[:10])
+    except ValueError:
+        return f"{1950 + p.below(56)}-{1 + p.below(12):02d}-{1 + p.below(28):02d}"
+    off = 30 + p.below(2971)
+    return (d + timedelta(days=off if p.below(2) else -off)).isoformat()
+
+
 STRATEGIES = {
     "NAME": lambda v, p: f"{_FIRST[p.below(10)]} {_LAST[p.below(10)]} {_CORP[p.below(7)]}",
     "STREET": lambda v, p: f"{p.below(98) + 1} {_STREET[p.below(7)]} Street",
@@ -88,6 +99,7 @@ STRATEGIES = {
     "BANK_ACCOUNT": lambda v, p: _fp(v, p),
     "TAX_ID": lambda v, p: _fp(v, p, keep_prefix=2 if v[:2].isalpha() else 0),
     "REDACT": lambda v, p: "X" * min(max(len(v), 4), 12),
+    "BIRTHDATE": lambda v, p: _shift_date(v, p),
 }
 
 # (table, field) -> (category, strategy). Seed catalog for the SAP subset; extend per customer/Z-fields.
@@ -100,9 +112,14 @@ CATALOG: dict[tuple[str, str], tuple[str, str]] = {
     ("BUT000", "NAME_ORG1"): ("name", "NAME"), ("BUT000", "BU_SORT1"): ("name", "NAME"),
     ("KNBK", "BANKN"): ("bank_account", "BANK_ACCOUNT"), ("KNBK", "IBAN"): ("iban", "IBAN"), ("KNBK", "KOINH"): ("name", "NAME"),
     ("LFBK", "BANKN"): ("bank_account", "BANK_ACCOUNT"), ("LFBK", "IBAN"): ("iban", "IBAN"), ("LFBK", "KOINH"): ("name", "NAME"),
+    # flight demo model (SCUSTOM / SBOOK): customers and passengers are people
+    ("SCUSTOM", "NAME"): ("name", "NAME"), ("SCUSTOM", "STREET"): ("street", "STREET"), ("SCUSTOM", "POSTBOX"): ("identifier", "REDACT"),
+    ("SCUSTOM", "TELEPHONE"): ("phone", "PHONE"), ("SCUSTOM", "EMAIL"): ("email", "EMAIL"), ("SCUSTOM", "WEBUSER"): ("identifier", "REDACT"),
+    ("SBOOK", "PASSNAME"): ("name", "NAME"), ("SBOOK", "PASSBIRTH"): ("birthdate", "BIRTHDATE"),
 }
 CATEGORY_LABEL = {"name": "Names", "street": "Addresses", "phone": "Telephone numbers", "email": "Email addresses",
-                  "iban": "Bank details", "bank_account": "Bank details", "tax_id": "Tax identifiers"}
+                  "iban": "Bank details", "bank_account": "Bank details", "tax_id": "Tax identifiers", "identifier": "Account and mailbox identifiers",
+                  "birthdate": "Dates of birth"}
 
 _EMAIL = re.compile(r"^[\w.+-]+@[\w-]+(\.[\w-]+)+$")
 _IBAN = re.compile(r"^[A-Z]{2}\d{2}[A-Z0-9]{10,30}$")

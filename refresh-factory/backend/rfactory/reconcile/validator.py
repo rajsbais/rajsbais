@@ -235,6 +235,25 @@ def reconcile(run: Run, plan: Plan, source: SourceAdapter, target: TargetAdapter
         checks.append(_chk("business", "BUS-PP-MOVEMENTS", "Goods movements agree with order progress and reference existing orders", not move_bad,
                            f"{len(move_bad)} inconsistent", move_bad))
 
+    # flight demo model (evaluated against the TARGET): references must resolve. No quantity invariants are asserted: real demo data does not keep them.
+    flights = docs("FLIGHT")
+    if flights:
+        ref_bad = []
+        for inst in flights:
+            f = inst.rows["SFLIGHT"][0]
+            if not target.get("SCARR", (f["CARRID"],)):
+                ref_bad.append(f"flight {inst.key}: airline {f['CARRID']} missing in target")
+            if not target.get("SPFLI", (f["CARRID"], f["CONNID"])):
+                ref_bad.append(f"flight {inst.key}: connection {f['CARRID']}/{f['CONNID']} missing in target")
+            for b in target.lookup("SBOOK", "CARRID", f["CARRID"]):
+                if b["CONNID"] == f["CONNID"] and b["FLDATE"] == f["FLDATE"] and not target.get("SCUSTOM", (b["CUSTOMID"],)):
+                    ref_bad.append(f"flight {inst.key}: booking {b['BOOKID']} refers to customer {b['CUSTOMID']}, missing in target")
+            have = {(b["BOOKID"]) for b in target.lookup("SBOOK", "CARRID", f["CARRID"]) if b["CONNID"] == f["CONNID"] and b["FLDATE"] == f["FLDATE"]}
+            if have != {b["BOOKID"] for b in inst.rows.get("SBOOK", [])}:
+                ref_bad.append(f"flight {inst.key}: the target holds a different set of bookings than was loaded")
+        checks.append(_chk("business", "BUS-FLIGHT-REFS", "Flights have their airline, connection and customers in the target, and all their bookings", not ref_bad,
+                           f"{len(ref_bad)} inconsistent", ref_bad))
+
     # ---------------- security ----------------
     cov = masking.coverage(required_sensitive)
     checks.append(_chk("security", "SEC-MASK-COVERAGE", "All discovered sensitive fields are covered by a masking rule",

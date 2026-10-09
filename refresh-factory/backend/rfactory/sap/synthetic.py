@@ -183,6 +183,7 @@ def build_source_dataset(seed: int = 42, family: str = "ECC") -> dict[str, list[
                               "NETPR": round(rng.uniform(5, 50), 2)})
 
     _add_manufacturing(d, mats, plants)
+    _add_flight(d)
 
     def mx(t, f):
         return max((int(r[f]) for r in d[t]), default=0)
@@ -276,6 +277,57 @@ def _add_manufacturing(d: dict[str, list[Row]], mats: dict[str, list[str]], plan
         d["MKPF"].append({"MBLNR": mb, "MJAHR": str(budat.year), "BLDAT": budat.isoformat(), "BUDAT": budat.isoformat(), "USNAM": "BATCHUSR"})
         d["MSEG"].append({"MBLNR": mb, "MJAHR": str(budat.year), "ZEILE": "0001", "BWART": "561", "MATNR": roh["1000"][n % 2], "WERKS": "1000", "BUKRS": "1000",
                           "MENGE": rng.randint(50, 200), "MEINS": "EA", "DMBTR": round(rng.uniform(100, 900), 2), "AUFNR": ""})
+
+
+def _add_flight(d: dict[str, list[Row]]) -> None:
+    """The SAP flight demo model (airlines, connections, flights, customers, bookings). Own random stream: nothing generated before it changed."""
+    rng = random.Random(5151)
+    carriers = [("AA", "American Airlines", "USD"), ("LH", "Lufthansa", "EUR"), ("SQ", "Singapore Airlines", "SGD"), ("UA", "United Airlines", "USD")]
+    cities = [("US", "NEW YORK", "JFK"), ("DE", "FRANKFURT", "FRA"), ("SG", "SINGAPORE", "SIN"), ("US", "SAN FRANCISCO", "SFO"), ("GB", "LONDON", "LHR"), ("JP", "TOKYO", "NRT")]
+    first = ["Anna", "Ben", "Chen", "Dara", "Elif", "Farid", "Gita", "Hugo", "Ines", "Jonas", "Kiri", "Luca"]
+    last = ["Keller", "Okafor", "Tanaka", "Silva", "Novak", "Haddad", "Larsen", "Moreau", "Ivanov", "Costa"]
+    for n in range(1, 21):
+        nm = f"{rng.choice(first)} {rng.choice(last)}"
+        d["SCUSTOM"].append({"ID": f"{n:08d}", "NAME": nm, "FORM": rng.choice(["Mr.", "Mrs.", "Company"]), "STREET": f"{rng.randint(1, 120)} {rng.choice(['Oak', 'Lake', 'Hill'])} Road",
+                             "POSTBOX": f"PB{rng.randint(100, 999)}", "POSTCODE": f"{rng.randint(10000, 99999)}", "CITY": rng.choice(cities)[1].title(),
+                             "COUNTRY": rng.choice(cities)[0], "TELEPHONE": f"+{rng.randint(10, 99)} {rng.randint(100, 999)} {rng.randint(1000, 9999)}",
+                             "CUSTTYPE": rng.choice(["B", "P"]), "DISCOUNT": rng.choice([0, 5, 10]), "LANGU": "E",
+                             "EMAIL": f"{nm.split()[0].lower()}.{nm.split()[1].lower()}{n}@mail.example", "WEBUSER": f"WEB{n:05d}"})
+    cust = [c["ID"] for c in d["SCUSTOM"]]
+    book = 0
+    for cid, cname, cur in carriers:
+        d["SCARR"].append({"CARRID": cid, "CARRNAME": cname, "CURRCODE": cur, "URL": f"http://www.{cname.split()[0].lower()}.example"})
+        for k in range(2):
+            fr, to = rng.sample(cities, 2)
+            conn = f"{rng.randint(100, 999):04d}"
+            while any(x["CARRID"] == cid and x["CONNID"] == conn for x in d["SPFLI"]):
+                conn = f"{rng.randint(100, 999):04d}"
+            d["SPFLI"].append({"CARRID": cid, "CONNID": conn, "COUNTRYFR": fr[0], "CITYFROM": fr[1], "AIRPFROM": fr[2], "COUNTRYTO": to[0], "CITYTO": to[1],
+                               "AIRPTO": to[2], "DEPTIME": f"{rng.randint(5, 22):02d}0000", "ARRTIME": f"{rng.randint(5, 22):02d}3000", "DISTANCE": rng.randint(500, 9000)})
+            for fl in range(5):
+                fd = REF_DATE + timedelta(days=rng.randint(-120, 60))
+                if any(x["CARRID"] == cid and x["CONNID"] == conn and x["FLDATE"] == fd.isoformat() for x in d["SFLIGHT"]):
+                    continue
+                price = round(rng.uniform(150, 1500), 2)
+                flight = {"CARRID": cid, "CONNID": conn, "FLDATE": fd.isoformat(), "PRICE": price, "CURRENCY": cur, "PLANETYPE": rng.choice(["747-400", "A380-800", "737-800"]),
+                          "SEATSMAX": 400, "SEATSOCC": 0, "PAYMENTSUM": 0.0}
+                pay = 0.0
+                for _ in range(rng.randint(3, 6)):
+                    book += 1
+                    cancelled = rng.random() < 0.1
+                    amt = round(price * rng.choice([1, 1, 1.5, 2.5]), 2)
+                    cu = rng.choice(cust)
+                    owner = next(c for c in d["SCUSTOM"] if c["ID"] == cu)
+                    d["SBOOK"].append({"CARRID": cid, "CONNID": conn, "FLDATE": fd.isoformat(), "BOOKID": f"{book:08d}", "CUSTOMID": cu, "CUSTTYPE": owner["CUSTTYPE"],
+                                       "SMOKER": "", "LUGGWEIGHT": rng.randint(0, 30), "WUNIT": "KG", "INVOICE": "", "CLASS": rng.choice(["Y", "C", "F"]),
+                                       "FORCURAM": amt, "FORCURKEY": cur, "LOCCURAM": amt, "LOCCURKEY": cur, "ORDER_DATE": (fd - timedelta(days=rng.randint(5, 60))).isoformat(),
+                                       "AGENCYNUM": f"{rng.randint(1, 20):08d}", "CANCELLED": "X" if cancelled else "", "PASSNAME": owner["NAME"],
+                                       "PASSBIRTH": f"{rng.randint(1950, 2005)}-{rng.randint(1, 12):02d}-{rng.randint(1, 28):02d}"})
+                    if not cancelled:
+                        flight["SEATSOCC"] += 1
+                        pay += amt
+                flight["PAYMENTSUM"] = round(pay, 2)
+                d["SFLIGHT"].append(flight)
 
 
 def _add_s4(d: dict[str, list[Row]]) -> None:
