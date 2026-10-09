@@ -23,7 +23,7 @@ from sqlalchemy.orm import Session
 from .. import observability as obs
 from ..audit.service import record_event
 from ..catalog.business_objects import BUSINESS_OBJECTS, RELATIONSHIPS, instance_status
-from ..catalog.store import RecordStore, delete_records, upsert_records
+from ..catalog.store import RecordStore
 from ..catalog.tables import TABLES
 from ..models import (
     DeltaEvent,
@@ -40,8 +40,10 @@ from ..rules.engine import RuleError, SkipRecord, parse_ruleset, target_key, tra
 from ..staging import StagedRow, get_backend
 from .activity import load_change_log
 from .extraction import TRANSFER_CLASSES
+from .loaders import DeltaLoader, EventView, LoadResult
 from .pipeline import RunPrecondition
 from .rfc import AbapAddonClient, make_transport, predicate
+from .target_api import TargetApiClient, make_target_transport
 
 DELTA_STAGES = ["PRECHECK", "CAPTURE", "TRANSFORM", "APPLY", "RECONCILE", "REPORT"]
 _TABLE_BO: dict[str, str] = {}
@@ -226,28 +228,36 @@ class DeltaEngine:
         self.run.metrics = {**self.run.metrics, "watermark_to": wm_to}
         return m
 
-    def _staged_target_key(self, table: str, record_key: str) -> str | None:
+    def _staged_target_key(self, table: str, record_key: str, before_seq: int | None = None) -> str | None:
+        """Target key of a source row: the latest applied event, an earlier event of this cycle (a row created and
+        deleted between two polls), or the baseline's staging."""
         last = self.session.execute(select(DeltaEvent.target_key).where(DeltaEvent.baseline_run_id == self.base.id, DeltaEvent.table_name == table, DeltaEvent.record_key == record_key, DeltaEvent.status == "APPLIED", DeltaEvent.target_key.isnot(None)).order_by(DeltaEvent.seq.desc()).limit(1)).scalar()
         if last:
             return last
+        if before_seq is not None:
+            mine = self.session.execute(select(DeltaEvent.target_key).where(DeltaEvent.run_id == self.run.id, DeltaEvent.table_name == table, DeltaEvent.record_key == record_key, DeltaEvent.seq < before_seq, DeltaEvent.target_key.isnot(None)).order_by(DeltaEvent.seq.desc()).limit(1)).scalar()
+            if mine:
+                return mine
         if table not in self._staged_keys:
             self._staged_keys[table] = {s.record_key: s.target_key for s in self.backend.iter_records(self.base.id, table=table) if s.target_key}
         return self._staged_keys[table].get(record_key)
 
     def transform(self) -> dict:
         evs = self.session.execute(select(DeltaEvent).where(DeltaEvent.run_id == self.run.id, DeltaEvent.status == "CAPTURED").order_by(DeltaEvent.seq)).scalars().all()
-        m = {"events": len(evs), "transformed": 0, "deletes_resolved": 0, "rejected": 0, "skipped": 0, "change_sets_rejected": 0, "by_rule": Counter()}
+        m = {"events": len(evs), "transformed": 0, "deletes_resolved": 0, "deletes_unresolved": 0, "rejected": 0, "skipped": 0, "change_sets_rejected": 0, "by_rule": Counter()}
         groups: dict[str, list[DeltaEvent]] = defaultdict(list)
         for e in evs:
             groups[e.changenr or f"seq{e.seq}"].append(e)
         exceptions = []
+        in_cycle: dict[tuple[str, str], str] = {}  # rows transformed earlier in this cycle (created, then deleted between two polls)
         for cs, members in groups.items():
             failed = None
             for e in members:
                 if e.op == "D":
-                    tk = self._staged_target_key(e.table_name, e.record_key)
+                    tk = in_cycle.get((e.table_name, e.record_key)) or self._staged_target_key(e.table_name, e.record_key, before_seq=e.seq)
                     if tk is None:
-                        e.status, e.message = "SKIPPED_MISSING", "deleted row was never loaded into the target"
+                        e.status, e.message = "SKIPPED_MISSING", "deleted row was never loaded into the target (e.g. the retained side of a partially transferred document)"
+                        m["deletes_unresolved"] += 1
                         continue
                     e.target_key = tk
                     m["deletes_resolved"] += 1
@@ -262,6 +272,7 @@ class DeltaEngine:
                     failed = (e, ex)
                     break
                 e.target_payload, e.target_key = out, target_key(e.table_name, out)
+                in_cycle[(e.table_name, e.record_key)] = e.target_key
                 for l in lineage:
                     m["by_rule"][l["rule"]] += 1
                 m["transformed"] += 1
@@ -280,59 +291,78 @@ class DeltaEngine:
         return m
 
     def apply(self) -> dict:
+        """Replay the cycle's events on the target through the released-API loaders (ADR-0015)."""
         evs = self.session.execute(select(DeltaEvent).where(DeltaEvent.run_id == self.run.id, DeltaEvent.status == "CAPTURED", DeltaEvent.target_key.isnot(None))).scalars().all()
         rank = type_order()
         evs.sort(key=lambda e: (rank.get(e.object_type, 99), e.changed_at, e.seq))
-        m = {"events": len(evs), "inserted": 0, "updated": 0, "deleted": 0, "skipped_duplicate": 0, "skipped_missing": 0, "conflicts": 0, "by_table": Counter()}
-        tables = sorted({e.table_name for e in evs})
-        target = RecordStore.load(self.session, self.tgt.id, tables=tables) if tables else RecordStore(self.tgt.id)
+        m = {"events": len(evs), "inserted": 0, "updated": 0, "deleted": 0, "reversed": 0, "reposted": 0, "blocked": 0, "derived": 0, "matched": 0, "skipped_duplicate": 0, "skipped_missing": 0, "conflicts": 0, "unsupported": 0, "rejected_by_target": 0, "config_missing": 0, "by_table": Counter(), "by_load_method": Counter()}
+        transport = make_target_transport(self.session, self.tgt)
+        client = TargetApiClient(transport)
+        read_row = transport.row if hasattr(transport, "row") else None
+        loader = DeltaLoader(client, self.tgt.product, read_row=read_row)
         last_applied: dict[tuple[str, str], int] = {}
         for (t, k, s) in self.session.execute(select(DeltaEvent.table_name, DeltaEvent.target_key, func.max(DeltaEvent.seq)).where(DeltaEvent.baseline_run_id == self.base.id, DeltaEvent.status == "APPLIED").group_by(DeltaEvent.table_name, DeltaEvent.target_key)):
             last_applied[(t, k)] = s
         staged_new: list[StagedRow] = []
         staged_upd: list[StagedRow] = []
+        cycle = self.run.metrics.get("cycle", 0)
+        # pre-checks against the ledger: identical content is a no-op, an older sequence than the last applied one is stale
+        todo: list[DeltaEvent] = []
         for e in evs:
             key = (e.table_name, e.target_key)
-            existing = target.by_key(e.table_name, e.target_key)
-            if e.op == "D":
-                if existing is None:
-                    e.status, e.message = "SKIPPED_MISSING", "already absent from target"
-                    m["skipped_missing"] += 1
-                    continue
-                delete_records(self.session, self.tgt.id, e.table_name, [e.target_key])
-                target._by_key[e.table_name].pop(e.target_key, None)
-                e.status, e.action = "APPLIED", "DELETED"
-                m["deleted"] += 1
-                staged_upd.append(StagedRow("DELTA", e.table_name, e.record_key, e.source_payload or {}, None, e.target_key, [{"rule": "delta", "field": "*", "from": "record", "to": "deleted"}], "DELETED"))
-            elif existing is None:
-                upsert_records(self.session, self.tgt.id, e.table_name, [e.target_payload])
-                target._by_key[e.table_name][e.target_key] = e.target_payload
-                e.status, e.action = "APPLIED", "INSERTED"
-                m["inserted"] += 1
-                staged_new.append(StagedRow(f"DELTA:{self.run.metrics.get('cycle', 0)}", e.table_name, e.record_key, e.source_payload or {}, e.target_payload, e.target_key, [{"rule": "delta", "field": "*", "from": "cdc", "to": "inserted"}], "LOADED"))
-            elif existing == e.target_payload:
+            existing = read_row(e.table_name, e.target_key) if read_row else None
+            if e.op != "D" and existing is not None and existing == e.target_payload:
                 e.status, e.message = "SKIPPED_DUPLICATE", "target already holds this content"
                 m["skipped_duplicate"] += 1
-            elif e.seq > last_applied.get(key, -1):
-                upsert_records(self.session, self.tgt.id, e.table_name, [e.target_payload])
-                target._by_key[e.table_name][e.target_key] = e.target_payload
-                e.status, e.action = "APPLIED", "UPDATED"
-                m["updated"] += 1
-                staged_new.append(StagedRow(f"DELTA:{self.run.metrics.get('cycle', 0)}", e.table_name, e.record_key, e.source_payload or {}, e.target_payload, e.target_key, [], "LOADED"))
-                staged_upd.append(StagedRow("DELTA", e.table_name, e.record_key, e.source_payload or {}, e.target_payload, e.target_key, [{"rule": "delta", "field": "*", "from": "cdc", "to": "updated"}], "LOADED"))
-            else:
+            elif e.op != "D" and existing is not None and e.seq <= last_applied.get(key, -1):
                 e.status, e.message = "CONFLICT", f"stale event: target was updated by sequence {last_applied[key]} after this change ({e.seq}); target content differs"
                 m["conflicts"] += 1
-                continue
-            last_applied[key] = e.seq
-            m["by_table"][e.table_name] += 1
+            else:
+                todo.append(e)
+        # one load per change set and business object instance, in dependency order of the first event
+        groups: dict[tuple[str, str], list[DeltaEvent]] = defaultdict(list)
+        order: list[tuple[str, str]] = []
+        for e in todo:
+            g = (e.changenr or f"seq{e.seq}", f"{e.object_type}:{e.object_key}")
+            if g not in groups:
+                order.append(g)
+            groups[g].append(e)
+        for g in order:
+            members = groups[g]
+            views = [EventView(e.seq, e.table_name, e.op, e.record_key, e.target_key, e.target_payload, e.object_type, e.object_key, e.changenr) for e in members]
+            loader.load_change_set(views)
+            for e, v in zip(members, views, strict=True):
+                r = v.result or LoadResult("UNSUPPORTED", "", "", "", "loader produced no result")
+                e.load_method, e.api_call, e.action, e.message = r.load_method, r.api_call, r.action, r.message
+                e.status = r.status
+                m["by_load_method"][r.load_method or "-"] += 1
+                if r.status != "APPLIED":
+                    m[{"SKIPPED_MISSING": "skipped_missing", "UNSUPPORTED": "unsupported", "REJECTED_BY_TARGET": "rejected_by_target", "MATCHED": "matched", "CONFIG_MISSING": "config_missing"}.get(r.status, "unsupported")] += 1
+                    continue
+                if r.target_key and r.target_key != e.target_key and r.action not in ("REVERSED",):
+                    e.target_key = r.target_key
+                if r.target_row is not None and r.action not in ("DELETED", "REVERSED", "BLOCKED"):
+                    e.target_payload = r.target_row
+                m[{"INSERTED": "inserted", "UPDATED": "updated", "DELETED": "deleted", "REVERSED": "reversed", "REPOSTED": "reposted", "BLOCKED": "blocked", "DERIVED": "derived"}.get(r.action, "updated")] += 1
+                m["by_table"][e.table_name] += 1
+                last_applied[(e.table_name, e.target_key)] = e.seq
+                if r.action in ("DELETED", "BLOCKED"):
+                    staged_upd.append(StagedRow("DELTA", e.table_name, e.record_key, e.source_payload or {}, None, e.target_key, [{"rule": "delta", "field": "*", "from": "record", "to": r.action.lower()}], "DELETED"))
+                elif r.action == "REVERSED":
+                    staged_upd.append(StagedRow("DELTA", e.table_name, e.record_key, e.source_payload or {}, None, e.target_key, [{"rule": "delta", "field": "*", "from": "record", "to": "reversed"}], "DELETED"))
+                else:
+                    lineage = [{"rule": "delta", "field": "*", "from": "cdc", "to": r.action.lower()}]
+                    staged_new.append(StagedRow(f"DELTA:{cycle}", e.table_name, e.record_key, e.source_payload or {}, e.target_payload, e.target_key, lineage, "LOADED"))
+                    staged_upd.append(StagedRow("DELTA", e.table_name, e.record_key, e.source_payload or {}, e.target_payload, e.target_key, lineage, "LOADED"))
         # keep the baseline's staging in step so its three-layer reconciliation stays meaningful after deltas
         if staged_new:
-            self.backend.write_partition(self.base.id, f"DELTA:{self.run.metrics.get('cycle', 0)}", staged_new)
+            self.backend.write_partition(self.base.id, f"DELTA:{cycle}", staged_new)
         if staged_upd:
             self.backend.update_records(self.base.id, staged_upd)
         self.session.flush()
         m["by_table"] = dict(m["by_table"])
+        m["by_load_method"] = dict(m["by_load_method"])
+        m["api"] = {"transport": getattr(transport, "name", "?"), **client.stats()}
         return m
 
     def reconcile(self) -> dict:
@@ -345,11 +375,20 @@ class DeltaEngine:
             by_table[e.table_name].append(e)
         for t, evs in sorted(by_table.items()):
             bad = []
-            for e in evs:
+            latest = {}
+            for e in sorted(evs, key=lambda x: x.seq):  # a document changed twice in one cycle: only its last image counts
+                latest[e.target_key] = e
+            for e in latest.values():
                 row = target.by_key(t, e.target_key)
                 if e.action == "DELETED":
                     if row is not None:
                         bad.append({"key": e.target_key, "reason": "still present after delete"})
+                elif e.action == "BLOCKED":
+                    if row is None or not row.get("IS_BLOCKED"):
+                        bad.append({"key": e.target_key, "reason": "master not blocked in target"})
+                elif e.action == "REVERSED":
+                    if t == "BKPF" and row is None:
+                        bad.append({"key": e.target_key, "reason": "reversal document missing"})
                 elif row != e.target_payload:
                     bad.append({"key": e.target_key, "reason": "target content differs from transformed event"})
             results.append(_r(self.run.id, "TECHNICAL", "delta_apply", "PASS" if not bad else "FAIL", t, len(evs), len(evs) - len(bad), len(bad), "Every applied event re-read from the target equals its transformed image" if not bad else "Applied events whose target image differs", {"samples": bad[:10]}))

@@ -365,6 +365,8 @@ class DeltaEvent(IdMixin, Base):
     target_payload: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     target_key: Mapped[str | None] = mapped_column(String(200), nullable=True)
     status: Mapped[str] = mapped_column(String(20), default="CAPTURED", nullable=False)  # CAPTURED / FILTERED / REJECTED / APPLIED / SKIPPED_DUPLICATE / SKIPPED_MISSING / CONFLICT
-    action: Mapped[str] = mapped_column(String(16), default="")  # INSERTED / UPDATED / DELETED
+    action: Mapped[str] = mapped_column(String(16), default="")  # INSERTED / UPDATED / DELETED / REVERSED / REPOSTED / BLOCKED / DERIVED / MATCHED
+    load_method: Mapped[str] = mapped_column(String(32), default="")  # API / CONFIG_TRANSPORT / MIGRATION_COCKPIT / ...
+    api_call: Mapped[str] = mapped_column(String(160), default="")  # e.g. API_SALES_ORDER_SRV POST A_SalesOrder (deep insert)
     message: Mapped[str] = mapped_column(Text, default="")
     __table_args__ = (UniqueConstraint("baseline_run_id", "seq", name="uq_delta_event_seq"), Index("ix_delta_target", "baseline_run_id", "table_name", "target_key"))

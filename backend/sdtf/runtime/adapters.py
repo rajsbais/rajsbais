@@ -81,6 +81,7 @@ class CdsExtractor:
 ADAPTER_REGISTRY = {
     "SYNTHETIC": {"status": "SIMULATED", "description": "In-platform synthetic record store; no SAP system involved"},
     "RFC": {"status": "IMPLEMENTED", "description": "ABAP add-on read modules over RFC (pyrfc) or the simulated add-on; not yet verified against a live SAP system", "note": "unverified against a live SAP system"},
+    "API": {"status": "IMPLEMENTED", "description": "Target loaders through released S/4HANA APIs (OData V2 services, journal entry SOAP) over HTTPS or the simulated gateway; delta loads verified on the simulated gateway only", "note": "targets only; unverified against a live S/4HANA system"},
     "ODATA": {"status": "PLANNED", "description": "Released OData APIs", "class": ODataExtractor},
     "CDS": {"status": "PLANNED", "description": "CDS views / ODP / supported HANA access", "class": CdsExtractor},
 }

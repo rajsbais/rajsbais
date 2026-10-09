@@ -36,6 +36,14 @@ Alembic (`backend/alembic.ini`, `backend/sdtf/migrations`). `alembic upgrade hea
   the exact error (`RFC_UNAVAILABLE`, `NOT_AUTHORIZED`, `SNAPSHOT_*`, `CHECKSUM_MISMATCH`, logon/communication
   errors). Tune `SDTF_RFC_PACKAGE_SIZE` (default 5000, add-on cap 10 000) and `SDTF_RFC_KEY_CHUNK` to the source's
   work-process budget. Without a system, `meta.rfc.transport = "simulated"` runs the same code path on synthetic data.
+* **Connect a real S/4HANA target over its released APIs** (ADR-0015): activate the OData services the bindings use
+  (API_BUSINESS_PARTNER, API_PRODUCT_SRV, API_SALES_ORDER_SRV, API_PURCHASEORDER_PROCESS_SRV,
+  API_OUTBOUND_DELIVERY_SRV, API_COSTCENTER_SRV, API_PROFITCENTER_SRV) and the journal entry SOAP service, create a
+  communication user or OAuth client with the matching scopes, expose the `YY1_` extension fields the bindings emit,
+  set `SDTF_S4_API_<SID>` (`{"base_url":"https://…","user":"SDTF_LOAD","passwd":"env:S4_PW"}` or
+  `token_url`/`client_id`/`client_secret`), register the target with connector `API`, run
+  `POST /systems/{id}/connector/test` (CSRF token fetched, nothing written). Compare every binding with the
+  service's `$metadata` before the first delta cycle; `REJECTED_BY_TARGET` events carry the service's message.
 * **Delta synchronisation** (ADR-0014): after a completed baseline run on an RFC source, run cycles from the Delta
   Synchronization Monitor or `POST /runs/{baseline}/delta/cycles`; each cycle is a run with CAPTURE/TRANSFORM/APPLY/
   RECONCILE stages and an event ledger (`GET .../delta/events`: FILTERED reasons, REJECTED change sets, CONFLICT

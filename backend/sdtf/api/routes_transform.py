@@ -453,7 +453,7 @@ CAPABILITIES = [
     {"area": "Distributed extraction workers", "status": "IMPLEMENTED", "note": "Claim-based partition jobs with leases, crash re-queue, last-worker finalisation; `sdtf worker` processes / pods"},
     {"area": "Columnar staging (Parquet on local / S3 / GCS / Azure via fsspec, key-range sidecar index)", "status": "IMPLEMENTED", "note": "Per run/table/partition files, zstd; object-store path tested with the in-memory filesystem"},
     {"area": "Observability (OpenTelemetry traces, metrics, trace-correlated JSON logs)", "status": "IMPLEMENTED", "note": "OTLP/HTTP export when OTEL_EXPORTER_OTLP_ENDPOINT is set; no-op otherwise"},
-    {"area": "Target load", "status": "SIMULATED", "note": "Simulated loader with idempotent upsert; released-API loaders planned"},
+    {"area": "Target load", "status": "SIMULATED", "note": "Initial load: simulated loader with idempotent upsert tagged with the registry's load method. Delta loads: released S/4HANA APIs (business partner, product, sales/purchase order, delivery, journal entry) through the API connector, verified on the simulated gateway only (ADR-0015)"},
     {"area": "Reconciliation (technical/functional/financial)", "status": "IMPLEMENTED", "note": "Runs on simulated data"},
     {"area": "Audit trail & evidence packages", "status": "IMPLEMENTED", "note": "Hash-chained events, evidence index"},
     {"area": "AI agents", "status": "IMPLEMENTED", "note": "12 bounded heuristic agents; LLM reasoner planned"},
@@ -548,7 +548,7 @@ def delta_events(status: str | None = None, limit: int = Query(200, ge=1, le=200
     if status:
         stmt = stmt.where(DeltaEvent.status == status)
     rows = db.execute(stmt.order_by(DeltaEvent.seq.desc()).limit(limit)).scalars().all()
-    return [{"id": e.id, "cycle_run_id": e.run_id, "seq": e.seq, "changenr": e.changenr, "object_type": e.object_type, "object_key": e.object_key, "table": e.table_name, "record_key": e.record_key, "op": e.op, "changed_at": e.changed_at, "changed_by": e.changed_by, "status": e.status, "action": e.action, "target_key": e.target_key, "message": e.message} for e in rows]
+    return [{"id": e.id, "cycle_run_id": e.run_id, "seq": e.seq, "changenr": e.changenr, "object_type": e.object_type, "object_key": e.object_key, "table": e.table_name, "record_key": e.record_key, "op": e.op, "changed_at": e.changed_at, "changed_by": e.changed_by, "status": e.status, "action": e.action, "load_method": e.load_method, "api_call": e.api_call, "target_key": e.target_key, "message": e.message} for e in rows]
 
 
 # ------------------------------------------------------------------------------------------ merger

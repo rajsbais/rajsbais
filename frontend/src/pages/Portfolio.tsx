@@ -18,7 +18,7 @@ export default function Portfolio() {
   return (
     <div>
       <Card title="Create project from synthetic ECC landscape" actions={<span className="muted">Imports a deterministic ECC 6.0 EHP8-like landscape (6 company codes, 9 plants) and a prepared S/4HANA 2025 shell target</span>}>
-        <div className="row"><input style={{ minWidth: 360 }} value={name} onChange={(e) => setName(e.target.value)} /><label className="chk">Scale <input type="number" min={1} max={5} value={scale} onChange={(e) => setScale(Number(e.target.value))} style={{ width: 70 }} /></label><label className="chk">Source connector <select value={connector} onChange={(e) => setConnector(e.target.value)}><option value="SYNTHETIC">SYNTHETIC (record store)</option><option value="RFC">RFC (simulated SAP add-on)</option></select></label><button disabled={busy} onClick={create}>{busy ? "Importing…" : "Create demo project"}</button></div>
+        <div className="row"><input style={{ minWidth: 360 }} value={name} onChange={(e) => setName(e.target.value)} /><label className="chk">Scale <input type="number" min={1} max={5} value={scale} onChange={(e) => setScale(Number(e.target.value))} style={{ width: 70 }} /></label><label className="chk">Source connector <select value={connector} onChange={(e) => setConnector(e.target.value)}><option value="SYNTHETIC">SYNTHETIC (record store)</option><option value="RFC">RFC source + API target (simulated SAP add-on and S/4HANA gateway)</option></select></label><button disabled={busy} onClick={create}>{busy ? "Importing…" : "Create demo project"}</button></div>
         <ErrorBox error={err} />
       </Card>
       <Card title="Portfolio">

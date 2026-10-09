@@ -180,11 +180,13 @@ class SystemCreate(BaseModel):
 def _connector_status(connector: str, meta: dict) -> str:
     if connector == "RFC":
         return "SIMULATED" if (meta.get("rfc") or {}).get("transport") == "simulated" else ADAPTER_REGISTRY["RFC"]["status"]
+    if connector == "API":
+        return "SIMULATED" if (meta.get("api") or {}).get("transport") == "simulated" else ADAPTER_REGISTRY["API"]["status"]
     return ADAPTER_REGISTRY[connector]["status"]
 
 
 def _uses_record_store(s: SapSystem) -> bool:
-    return s.connector == "SYNTHETIC" or (s.connector == "RFC" and (s.meta.get("rfc") or {}).get("transport") == "simulated")
+    return s.connector == "SYNTHETIC" or (s.connector == "RFC" and (s.meta.get("rfc") or {}).get("transport") == "simulated") or (s.connector == "API" and (s.meta.get("api") or {}).get("transport") == "simulated")
 
 
 @router.post("/projects/{project_id}/systems", tags=["systems"], status_code=201)
@@ -193,15 +195,42 @@ def create_system(project_id: str, req: SystemCreate, db: Session = Depends(get_
     if req.connector not in ADAPTER_REGISTRY:
         raise HTTPException(400, f"unknown connector {req.connector}")
     from ..runtime.rfc import SECRET_KEYS
+    from ..runtime.target_api import SECRET_KEYS as API_SECRET_KEYS
 
     meta = dict(req.meta)
     if any(k in (meta.get("rfc", {}).get("dest") or {}) for k in SECRET_KEYS):
         raise HTTPException(400, "RFC secrets are never stored: reference them as 'env:NAME' or set SDTF_RFC_DEST_<SID>_PASSWD")
+    if any(k in (meta.get("api", {}).get("dest") or {}) for k in API_SECRET_KEYS):
+        raise HTTPException(400, "API secrets are never stored: reference them as 'env:NAME' or set SDTF_S4_API_<SID>_PASSWD")
+    if req.connector == "API" and req.role != "TARGET":
+        raise HTTPException(400, "the API connector loads targets; sources use SYNTHETIC or RFC")
     s = SapSystem(project_id=project_id, sid=req.sid, client=req.client, role=req.role, product=req.product, release=req.release, connector=req.connector, connector_status=_connector_status(req.connector, meta), database=req.database, os_name=req.os_name, logical_system=f"{req.sid}CLNT{req.client}", meta=meta)
     db.add(s)
     db.flush()
     record_event(db, p.username, "SYSTEM_REGISTERED", "SYSTEM", s.id, {"sid": s.sid, "connector": s.connector})
     return _system_out(s)
+
+
+def _test_api_connector(s: SapSystem, db: Session, p: Principal) -> dict:
+    """Fetch a CSRF token from API_BUSINESS_PARTNER and read one company code's configuration through the target
+    transport: proves reachability, authentication and the service activation without writing anything."""
+    from ..runtime import target_api as tapi
+
+    t0 = time.monotonic()
+    try:
+        transport = tapi.make_target_transport(db, s)
+        client = tapi.TargetApiClient(transport)
+        token = client._token("API_BUSINESS_PARTNER")
+        services = sorted({b.service for b in tapi.API_BINDINGS.values()})
+        probe = None
+        if hasattr(transport, "rows"):
+            cc = next((r["BUKRS"] for r in transport.rows("T001")), None)
+            probe = {"company_code": cc, "sales_orgs": len(transport.rows("TVKO")), "plants": len(transport.rows("T001W"))}
+        out = {"ok": True, "connector": "API", "transport": getattr(transport, "name", "?"), "csrf_token": bool(token), "services": services, "numbering": getattr(transport, "numbering", None), "probe": probe, "destination": tapi.mask_api_destination(tapi.resolve_api_destination(s.sid, s.meta)), "duration_ms": round((time.monotonic() - t0) * 1000, 1)}
+    except tapi.ApiError as e:
+        out = {"ok": False, "connector": "API", "error": e.code, "detail": e.message, "destination": tapi.mask_api_destination(tapi.resolve_api_destination(s.sid, s.meta)), "duration_ms": round((time.monotonic() - t0) * 1000, 1)}
+    record_event(db, p.username, "CONNECTOR_TESTED", "SYSTEM", s.id, {k: v for k, v in out.items() if k in ("ok", "transport", "error")})
+    return out
 
 
 @router.post("/systems/{system_id}/connector/test", tags=["systems"])
@@ -210,8 +239,10 @@ def test_connector(s: SapSystem = Depends(get_system), db: Session = Depends(get
     Proves connectivity, authorization and the contract end to end; never touches application data beyond T001."""
     from ..runtime import rfc as rfcmod
 
+    if s.connector == "API":
+        return _test_api_connector(s, db, p)
     if s.connector != "RFC":
-        raise HTTPException(409, f"connector test is only defined for RFC systems (this one is {s.connector})")
+        raise HTTPException(409, f"connector test is only defined for RFC sources and API targets (this one is {s.connector})")
     t0 = time.monotonic()
     try:
         transport = rfcmod.make_transport(s.sid, s.meta, store_loader=lambda: RecordStore.load(db, s.id, tables=["T001", "T001K"]))

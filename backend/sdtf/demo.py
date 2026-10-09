@@ -29,7 +29,8 @@ def create_demo_project(session: Session, actor: str = "architect", scale: int =
     session.flush()
     src_meta = {"seed": seed, "scale": scale, **({"rfc": {"transport": "simulated"}} if connector == "RFC" else {})}
     src = SapSystem(project_id=project.id, sid="ECP", client="100", role="SOURCE", product="ECC", release="6.0 EHP8", database="Oracle 19c (synthetic)", os_name="Linux (synthetic)", connector=connector, connector_status="SIMULATED", logical_system="ECPCLNT100", meta=src_meta)
-    tgt = SapSystem(project_id=project.id, sid="S4P", client="100", role="TARGET", product="S4HANA", release="2025", database="SAP HANA (synthetic)", os_name="Linux (synthetic)", connector="SYNTHETIC", connector_status="SIMULATED", logical_system="S4PCLNT100", meta={"deployment": "private cloud (synthetic)"})
+    tgt_meta = {"deployment": "private cloud (synthetic)", **({"api": {"transport": "simulated"}} if connector == "RFC" else {})}
+    tgt = SapSystem(project_id=project.id, sid="S4P", client="100", role="TARGET", product="S4HANA", release="2025", database="SAP HANA (synthetic)", os_name="Linux (synthetic)", connector="API" if connector == "RFC" else "SYNTHETIC", connector_status="SIMULATED", logical_system="S4PCLNT100", meta=tgt_meta)
     session.add_all([src, tgt])
     session.flush()
     tables = generate_landscape(LandscapeSpec(seed=seed, scale=scale))

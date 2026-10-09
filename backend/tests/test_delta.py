@@ -111,11 +111,13 @@ def test_source_drift_is_visible_before_delta_and_cycle_captures_only_scope(delt
     cap, tr, ap, rec = w["c1"]["CAPTURE"], w["c1"]["TRANSFORM"], w["c1"]["APPLY"], w["c1"]["RECONCILE"]
     assert cap["captured"] == cap["in_scope"] + cap["filtered"] and cap["in_scope"] > 0 and cap["filtered_by_reason"]["out_of_scope"] > 0
     assert cap["watermark_from"] == "0" and cap["watermark_to"] == w["activity"]["watermark"] and cap["lag_seconds"] is not None
-    assert tr["rejected"] == 0 and tr["transformed"] + tr["deletes_resolved"] == cap["in_scope"] and tr["by_rule"]["cc-reassign"] > 0
-    assert ap["inserted"] > 0 and ap["updated"] > 0 and ap["deleted"] > 0 and ap["conflicts"] == 0 and ap["inserted"] + ap["updated"] + ap["deleted"] == cap["in_scope"]
+    assert tr["rejected"] == 0 and tr["transformed"] + tr["deletes_resolved"] + tr["deletes_unresolved"] == cap["in_scope"] and tr["by_rule"]["cc-reassign"] > 0
+    applied = sum(ap[k] for k in ("inserted", "updated", "deleted", "reversed", "reposted", "blocked", "derived"))
+    assert ap["inserted"] > 0 and ap["updated"] > 0 and ap["deleted"] > 0 and ap["conflicts"] == 0 and applied == ap["events"] and ap["events"] + tr["deletes_unresolved"] == cap["in_scope"]
+    assert ap["api"]["transport"] == "SIMULATED_S4" and ap["api"]["failures"] == 0 and ap["api"]["by_service"]["API_SALES_ORDER_SRV"] > 0 and ap["by_load_method"] == {"API": ap["events"]}
     assert rec["overall"] == "PASS" and rec["by_layer"]["TECHNICAL"]["PASS"] >= 1
     statuses = Counter(e[3] for e in w["c1_events"])
-    assert statuses["APPLIED"] == cap["in_scope"] and statuses["FILTERED"] == cap["filtered"] and set(statuses) == {"APPLIED", "FILTERED"}
+    assert statuses["APPLIED"] + statuses["SKIPPED_MISSING"] == cap["in_scope"] and statuses["FILTERED"] == cap["filtered"] and set(statuses) <= {"APPLIED", "FILTERED", "SKIPPED_MISSING"}
     # every in-scope event ended in the target under its transformed key, deletes are gone
     assert all(e[5] for e in w["c1_events"] if e[3] == "APPLIED")
 
@@ -127,15 +129,17 @@ def test_applied_events_are_in_target_and_baseline_staging_follows(delta_world):
     ids = delta_world["ids"]
     with session_scope() as s:
         tgt = RecordStore.load(s, ids["tgt"])
-        evs = s.execute(select(DeltaEvent).where(DeltaEvent.run_id == ids["c1"], DeltaEvent.status == "APPLIED")).scalars().all()
-        for e in evs:
+        evs = s.execute(select(DeltaEvent).where(DeltaEvent.run_id == ids["c1"], DeltaEvent.status == "APPLIED").order_by(DeltaEvent.seq)).scalars().all()
+        latest = {(e.table_name, e.target_key): e for e in evs}  # a document changed twice in one cycle: its last image counts
+        for e in latest.values():
             row = tgt.by_key(e.table_name, e.target_key)
             assert (row is None) if e.action == "DELETED" else (row == e.target_payload), (e.table_name, e.target_key, e.action)
+            assert e.load_method == "API" and e.api_call
             assert e.target_payload is None or e.target_payload.get("BUKRS", "SP01") in ("SP01",) or e.table_name not in ("BKPF", "BSEG")
         # the baseline's staging knows the new/changed/deleted rows, so its reconciliation stays meaningful
         backend = get_backend(session=s)
         staged = {(r.table_name, r.record_key): r for r in backend.iter_records(ids["run"])}
-        for e in evs:
+        for e in latest.values():
             st = staged[(e.table_name, e.record_key)]
             assert st.load_status == ("DELETED" if e.action == "DELETED" else "LOADED") and (st.target_payload == e.target_payload or e.action == "DELETED")
 

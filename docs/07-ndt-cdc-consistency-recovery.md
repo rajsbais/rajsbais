@@ -11,8 +11,9 @@ cutover forecast is template-based and labelled as such, and simulated cycles sa
   customer masters, across company codes) into a simulated source and its change log.
 * `POST /runs/{baseline}/delta/cycles` runs a delta cycle: CAPTURE (poll after the watermark, scope filter with
   reasons) → TRANSFORM (baseline ruleset, change sets rejected atomically) → APPLY (config → masters → documents in
-  DOC_FLOW/ACCOUNTING_REF order; insert / update / delete; idempotency ledger `delta_events`; stale events are
-  CONFLICTs) → RECONCILE (every applied event re-read from the target) → REPORT. The baseline's staging is kept in
+  DOC_FLOW/ACCOUNTING_REF order through the released APIs of the target, ADR-0015: deep inserts, ETag-guarded
+  PATCH, item DELETE, masters blocked instead of deleted, journal entries posted and reversed with target-assigned
+  numbers; idempotency ledger `delta_events`; stale events are CONFLICTs; API refusals are REJECTED_BY_TARGET) → RECONCILE (every applied event re-read from the target) → REPORT. The baseline's staging is kept in
   step so its three-layer reconciliation stays valid.
 * `POST /runs/{baseline}/delta/freeze` (approver) declares the business freeze; the simulated source then refuses
   changes for the frozen company codes. `{"final": true}` runs the final delta and the full reconciliation of the

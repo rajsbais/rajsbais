@@ -30,7 +30,7 @@ export default function DeltaMonitor() {
   const s = state.data;
   return (
     <div>
-      <Banner kind="warn">Delta synchronisation is <b>SIMULATED</b>: change events come from the SAP add-on contract (<code>Z_SDTF_CDC_POLL</code>) served by the simulated add-on over the RFC adapter, and are applied to the simulated target. The engine's ordering, idempotency, conflict detection, freeze handling and final reconciliation are real; the source is not. No downtime figure is derived from these cycles.</Banner>
+      <Banner kind="warn">Delta synchronisation is <b>SIMULATED</b>: change events come from the SAP add-on contract (<code>Z_SDTF_CDC_POLL</code>) served by the simulated add-on over the RFC adapter, and are loaded through the released S/4HANA APIs (business partner, product, sales order, purchase order, journal entry) on the simulated gateway. The engine's ordering, idempotency, conflict detection, API operations, freeze handling and final reconciliation are real; neither system is. No downtime figure is derived from these cycles.</Banner>
       <Card title="Baseline (initial load) run" actions={<Select value={baseId || ""} onChange={setSel} options={baselines.map((r) => ({ value: r.id, label: `${r.id.slice(0, 8)} · ${String(r.started_at || "").slice(0, 16)} · recon ${r.reconciliation || "-"}` }))} placeholder="completed baseline run" />}>
         {!baselines.length && <p className="muted">Complete an initial simulated run first (Extraction &amp; Load Monitor). Delta capture needs a source registered with the RFC connector; create the demo project with “RFC (simulated SAP add-on)” in Portfolio.</p>}
         {s && !s.cdc_supported && <ErrorBox error={`Source ${s.source.sid} uses the ${s.source.connector} connector, which has no change log. Delta capture needs the RFC connector (Z_SDTF_CDC_POLL on the SAP add-on).`} />}
@@ -62,7 +62,7 @@ export default function DeltaMonitor() {
         </Card>
       </div>}
       {shownCycle && events.data && <Card title={`Events of cycle ${shownCycle.slice(0, 8)} (${events.data.length})`}>
-        <Table cols={[{ k: "seq", h: "Seq" }, { k: "changenr", h: "Change set" }, { k: "object_type", h: "Object" }, { k: "table", h: "Table" }, { k: "record_key", h: "Source key" }, { k: "op", h: "Op" }, { k: "status", h: "Status", r: (r) => <Pill value={r.status} /> }, { k: "action", h: "Action" }, { k: "target_key", h: "Target key" }, { k: "message", h: "Reason / message" }]} rows={events.data} />
+        <Table cols={[{ k: "seq", h: "Seq" }, { k: "changenr", h: "Change set" }, { k: "object_type", h: "Object" }, { k: "table", h: "Table" }, { k: "record_key", h: "Source key" }, { k: "op", h: "Op" }, { k: "status", h: "Status", r: (r) => <Pill value={r.status} /> }, { k: "action", h: "Action" }, { k: "load_method", h: "Load method" }, { k: "api_call", h: "API call" }, { k: "target_key", h: "Target key" }, { k: "message", h: "Reason / message" }]} rows={events.data} />
       </Card>}
       {s?.freeze && <Card title="Business freeze"><KV obj={s.freeze} /></Card>}
     </div>

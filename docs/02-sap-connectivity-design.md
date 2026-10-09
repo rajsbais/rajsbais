@@ -40,6 +40,21 @@ passwords. SNC parameters are passed through to `pyrfc` unchanged.
    delta* scheme: initial extraction up to watermark, then CDC delta from watermark (doc 07).
 
 ## Target loaders (S/4HANA)
+**Delta loads go through the released APIs** (ADR-0015, `runtime/target_api.py`, `runtime/loaders.py`,
+`catalog/api_bindings.py`): targets are registered with the `API` connector; `S4ApiHttpTransport` reaches a real
+system (OData V2 under `/sap/opu/odata/sap/<service>/` with CSRF handshake, basic or OAuth2 client-credentials auth,
+SOAP envelope for the journal entry service), `SimulatedS4Gateway` is the executable contract over the record store
+(CSRF, ETags, configuration validation, derived pricing/status, deep inserts, target numbering, reversals, block
+flags). Bindings map table fields to API properties per business object and declare derived, priced and updatable
+properties, numbering and delete policy; unmapped fields travel as `YY1_` extension properties. Destination:
+`SDTF_S4_API_<SID>` (JSON: `base_url`, `user`/`passwd` or `token_url`/`client_id`/`client_secret`, secrets as
+`env:NAME`) or `meta.api.dest`; `SDTF_S4_API_TRANSPORT=auto|http|simulated`. The initial load still uses the
+simulated loader (next step: route it through the same loaders).
+
+Verify on a real target before relying on the bindings: `$metadata` of each service (property names, key order,
+navigation names for deep inserts), address/role navigations of API_BUSINESS_PARTNER (flattened here), the journal
+entry service's XML namespaces, reversal operation and reason codes, number range assignment per document type,
+and key-user extensibility for every `YY1_` property the bindings emit.
 Load strategies are chosen from the release-specific registry (`catalog/business_objects.py::S4_COMPATIBILITY`,
 `BusinessObjectType.load_methods`):
 * **API** — released OData/SOAP (Business Partner, Product, Sales Order, Purchase Order, Journal Entry).

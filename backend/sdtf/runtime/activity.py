@@ -18,7 +18,7 @@ from ..catalog.store import RecordStore, delete_records, upsert_records
 from ..catalog.tables import record_key
 from ..models import SapSystem, SourceChangeEvent
 
-KINDS = ("NEW_SALES_ORDER", "UPDATE_SALES_ORDER_STATUS", "NEW_FI_DOCUMENT", "UPDATE_CUSTOMER", "DELETE_SALES_ORDER_ITEM")
+KINDS = ("NEW_SALES_ORDER", "UPDATE_SALES_ORDER_ITEM_QTY", "NEW_FI_DOCUMENT", "UPDATE_CUSTOMER", "DELETE_SALES_ORDER_ITEM")
 
 
 def _ts() -> str:
@@ -46,6 +46,13 @@ class _Changes:
         self.events.append(SourceChangeEvent(system_id=self.system.id, seq=self.seq, changenr=changenr, object_type=object_type, table_name=table, record_key=key, op=op, changed_at=_ts(), changed_by=self.actor, payload=None if op == "D" else dict(row)))
 
 
+def _lines_by_doc(store: RecordStore) -> dict[str, list[dict]]:
+    out: dict[str, list[dict]] = {}
+    for l in store.rows("BSEG"):
+        out.setdefault(f"{l['BUKRS']}|{l['BELNR']}|{l['GJAHR']}", []).append(l)
+    return out
+
+
 def simulate_business_activity(session: Session, system: SapSystem, seed: int = 1, count: int = 10, company_codes: list[str] | None = None, frozen_ccs: set[str] | None = None, actor: str = "BUSINESS_SIM") -> dict:
     """Apply `count` business changes to the source. Each change is one change set (document + items). Returns a summary."""
     rng = random.Random(seed)
@@ -59,13 +66,19 @@ def simulate_business_activity(session: Session, system: SapSystem, seed: int = 
     by_cc: Counter = Counter()
     blocked = 0
     vkorg_of_cc = {r["VKORG"]: r["BUKRS"] for r in store.rows("TVKO")}
+    cc_of_plant = {r["BWKEY"]: r["BUKRS"] for r in store.rows("T001K")}
     vbak_by_cc: dict[str, list[dict]] = {}
     for r in store.rows("VBAK"):
         vbak_by_cc.setdefault(vkorg_of_cc.get(r.get("VKORG"), r.get("BUKRS_VF")), []).append(r)
+
+    def own_plants(order: dict, cc: str) -> bool:  # new business is created in the company code's own plants (cross-company orders are not cloned)
+        items = store.lookup("VBAP", "VBELN", order["VBELN"])
+        return bool(items) and all(cc_of_plant.get(i.get("WERKS")) == cc for i in items)
     bkpf_by_cc: dict[str, list[dict]] = {}
+    gl_only = {h for h, lines in _lines_by_doc(store).items() if all(l.get("KOART") == "S" for l in lines)}
     for r in store.rows("BKPF"):
-        if not r.get("BSTAT") and not r.get("BVORG"):
-            bkpf_by_cc.setdefault(r["BUKRS"], []).append(r)
+        if not r.get("BSTAT") and not r.get("BVORG") and f"{r['BUKRS']}|{r['BELNR']}|{r['GJAHR']}" in gl_only:
+            bkpf_by_cc.setdefault(r["BUKRS"], []).append(r)  # G/L-only templates: open items follow from customer/supplier lines in the target
     next_vbeln = max((int(r["VBELN"]) for r in store.rows("VBAK") if str(r["VBELN"]).isdigit()), default=1000000) + 1
     next_belnr = max((int(r["BELNR"]) for r in store.rows("BKPF") if str(r["BELNR"]).isdigit()), default=100000000) + 1
     created_orders: list[dict] = []
@@ -77,7 +90,8 @@ def simulate_business_activity(session: Session, system: SapSystem, seed: int = 
             continue
         cs = ch.change_set()
         if kind == "NEW_SALES_ORDER":
-            tmpl = rng.choice(vbak_by_cc.get(cc) or []) if vbak_by_cc.get(cc) else None
+            clean = [r for r in vbak_by_cc.get(cc, []) if own_plants(r, cc)]
+            tmpl = rng.choice(clean) if clean else None
             if tmpl is None:
                 continue
             items = store.lookup("VBAP", "VBELN", tmpl["VBELN"])
@@ -91,13 +105,24 @@ def simulate_business_activity(session: Session, system: SapSystem, seed: int = 
                 new_items.append(row)
             created_orders.append(hdr)
             vbak_by_cc.setdefault(cc, []).append(hdr)
-        elif kind == "UPDATE_SALES_ORDER_STATUS":
-            cands = [r for r in vbak_by_cc.get(cc, []) if r.get("GBSTK") != "C"]
+        elif kind == "UPDATE_SALES_ORDER_ITEM_QTY":
+            # the customer changes an item quantity: the item is re-priced at its unit price, the header total follows
+            cands = [r for r in vbak_by_cc.get(cc, []) if r.get("GBSTK") != "C" and store.lookup("VBAP", "VBELN", r["VBELN"])]
             if not cands:
                 continue
-            hdr = {**rng.choice(cands), "GBSTK": "C"}
-            ch.write(cs, "SD.SalesOrder", "VBAK", hdr, "U")
-            vbak_by_cc[cc] = [hdr if r["VBELN"] == hdr["VBELN"] else r for r in vbak_by_cc[cc]]
+            hdr = rng.choice(cands)
+            items = sorted(store.lookup("VBAP", "VBELN", hdr["VBELN"]), key=lambda x: int(x["POSNR"]))
+            it = items[0]
+            old_qty = float(it["KWMENG"]) or 1.0
+            new_qty = max(1, int(old_qty) + rng.choice((-2, -1, 1, 2, 3)))
+            new_item = {**it, "KWMENG": new_qty, "NETWR": round(float(it["NETWR"]) / old_qty * new_qty, 2)}
+            ch.write(cs, "SD.SalesOrder", "VBAP", new_item, "U")
+            total = round(sum(float(x["NETWR"]) for x in items[1:]) + new_item["NETWR"], 2)
+            new_hdr = {**hdr, "NETWR": total}
+            ch.write(cs, "SD.SalesOrder", "VBAK", new_hdr, "U")
+            vbak_by_cc[cc] = [new_hdr if r["VBELN"] == hdr["VBELN"] else r for r in vbak_by_cc[cc]]
+            store._tables["VBAP"] = [new_item if (x["VBELN"] == it["VBELN"] and x["POSNR"] == it["POSNR"]) else x for x in store._tables["VBAP"]]
+            store._indexes.pop(("VBAP", "VBELN"), None)
         elif kind == "NEW_FI_DOCUMENT":
             tmpl = rng.choice(bkpf_by_cc[cc]) if bkpf_by_cc.get(cc) else None
             if tmpl is None:
