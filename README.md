@@ -28,7 +28,7 @@ migrations, deployment) for the Phase 1 foundation and the first vertical slice.
   redirection, per-source number ranges, group-level financial reconciliation.
 * Distributed stage workers: extraction, transformation and load as pipelined per-partition jobs and
   reconciliation as per-table, functional and financial jobs, with leases, crash re-queue, atomic stage closing
-  and idle self-healing; columnar Parquet staging on an object-storage mount. INLINE threads and relational
+  and idle self-healing; columnar Parquet staging on local, S3, GCS or Azure filesystems via fsspec. INLINE threads and relational
   staging remain for small scopes.
 * RBAC/ABAC, tenant segregation, masking, four-eyes approvals, tamper detection, OIDC single sign-on.
 * 19 frontend applications wired to the API; Docker/compose/Kubernetes/CI.
