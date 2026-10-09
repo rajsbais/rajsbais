@@ -13,6 +13,7 @@ from sdtf.models import MigrationRun
 from sdtf.runtime.pipeline import start_run
 from sdtf.runtime.worker import (
     JOB_STAGES,
+    PARTITION_STAGES,
     Worker,
     advance_run_if_stage_complete,
     claim_job,
@@ -87,17 +88,21 @@ def test_distributed_run_is_processed_by_in_process_workers(session, slice_resul
             break
     session.expire_all()
     summary = job_summary(session, run.id)
-    # every stage ran as one job per partition, each claimed exactly once
-    assert summary["total"] == 3 * partitions and summary["by_status"] == {"DONE": summary["total"]}
-    assert {st: {"DONE": partitions} for st in JOB_STAGES} == summary["by_stage"]
+    # every partition stage ran as one job per partition, reconciliation as one job per table + functional + financial
+    recon = summary["by_stage"]["RECONCILE"]["DONE"]
+    assert summary["total"] == 3 * partitions + recon and summary["by_status"] == {"DONE": summary["total"]}
+    assert {st: {"DONE": partitions} for st in PARTITION_STAGES} == {st: v for st, v in summary["by_stage"].items() if st != "RECONCILE"}
+    recon_jobs = [j for j in summary["jobs"] if j["stage"] == "RECONCILE"]
+    assert {j["partition"] for j in recon_jobs} >= {"functional", "financial", "technical:BKPF", "technical:BSEG"} and recon >= 20
     assert set(summary["workers"]) == {"w1", "w2"} and all(j["attempts"] == 1 for j in summary["jobs"])
     run = session.get(MigrationRun, run.id)
     assert run.status == "COMPLETED", run.status
     assert run.report["reconciliation"]["overall"] == "PASS", run.report["reconciliation"]["failures"][:5]
     assert run.report["exceptions"]["count"] == 0
     stages = {st.name: st.metrics for st in run.stages}
-    for name in JOB_STAGES:
+    for name in PARTITION_STAGES:
         assert stages[name]["execution"] == "DISTRIBUTED" and stages[name]["partitions_total"] == partitions and sorted(stages[name]["workers"]) == ["w1", "w2"], name
+    assert stages["RECONCILE"]["overall"] == "PASS" and stages["RECONCILE"]["checks"] == run.report["reconciliation"]["checks"] and stages["RECONCILE"]["partitions_total"] == recon
     assert stages["TRANSFORM"]["records"] == stages["EXTRACT"]["records"] and stages["TRANSFORM"]["transformed"] > 0
     assert stages["LOAD"]["loaded"] + stages["LOAD"]["skipped_duplicate"] + stages["LOAD"]["matched_config"] == stages["TRANSFORM"]["records"] - stages["TRANSFORM"]["rejected"]
     assert stages["LOAD"]["conflicts"] == 0
@@ -163,7 +168,8 @@ def test_pipelined_run_overlaps_stages_and_barrier_mode_does_not(session, slice_
         assert run.status == "COMPLETED" and run.report["reconciliation"]["overall"] == "PASS"
         stages = {st.name: st for st in run.stages}
         summary = job_summary(session, run.id)
-        assert summary["by_status"] == {"DONE": 3 * run.metrics["partitions"]}
+        assert summary["by_status"] == {"DONE": 3 * run.metrics["partitions"] + run.metrics["stage_jobs"]["RECONCILE"]}
+        assert stages["RECONCILE"].started_at >= stages["LOAD"].finished_at, "reconciliation waits for every load job"
         results[pipelined] = (run, stages)
     pr, ps = results[True]
     assert pr.metrics["pipelined"] is True and ps["TRANSFORM"].metrics["pipelined"] is True
@@ -193,4 +199,4 @@ def test_idle_worker_repairs_missing_successor_and_lost_wakeup(session, slice_re
     session.expire_all()
     run = session.get(MigrationRun, run.id)
     assert run.status == "COMPLETED" and run.report["reconciliation"]["overall"] == "PASS"
-    assert job_summary(session, run.id)["by_status"] == {"DONE": 3 * run.metrics["partitions"]}
+    assert job_summary(session, run.id)["by_status"] == {"DONE": 3 * run.metrics["partitions"] + run.metrics["stage_jobs"]["RECONCILE"]}

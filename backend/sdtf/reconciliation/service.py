@@ -33,78 +33,67 @@ def _sum_lines(rows, cc_field="BUKRS"):
     return bal
 
 
-def reconcile_run(session: Session, run: MigrationRun, manifest: ScopeManifest, source: RecordStore, target: RecordStore, financial: bool = True, backend=None) -> dict:
+def _item_tables_of(table: str):
+    """(business object, header table) pairs for which `table` is an item table."""
+    return [(bo, bo.header_table) for bo in BUSINESS_OBJECTS.values() if table in bo.item_tables]
+
+
+def technical_checks_for_table(rid: str, table: str, recs: list, target: RecordStore) -> tuple[list[ReconciliationResult], int]:
+    """Technical layer for one staged table: record counts, target-key uniqueness, checksum, field-level sample
+    comparison and, for item tables, item -> header referential integrity in the target."""
     results: list[ReconciliationResult] = []
-    rid = run.id
+    loaded = [s for s in recs if s.load_status == "LOADED"]
+    present = [s for s in loaded if target.by_key(table, s.target_key) is not None]
+    missing = len(loaded) - len(present)
+    rejected = sum(1 for s in recs if s.load_status in ("REJECTED", "CONFLICT", "UNSUPPORTED"))
+    status = "PASS" if missing == 0 and rejected == 0 else ("FAIL" if missing else "WARN")
+    results.append(_r(rid, "TECHNICAL", "record_count", status, table, len(recs), len(present), len(recs) - len(present), f"{rejected} record(s) rejected/unsupported before load" if rejected else "", {"missing_in_target": missing, "rejected": rejected}))
+    tkeys = Counter(s.target_key for s in {x.record_key: x for x in loaded}.values())  # identical copies staged by two partitions are one record
+    dups = sum(1 for k, n in tkeys.items() if n > 1)
+    results.append(_r(rid, "TECHNICAL", "key_uniqueness", "PASS" if dups == 0 else "FAIL", table, len(tkeys), len(loaded), dups, "Several source records map to the same target key" if dups else ""))
+    exp = hashlib.sha256("".join(sorted(json.dumps(s.target_payload, sort_keys=True, default=str) for s in loaded)).encode()).hexdigest()
+    act = hashlib.sha256("".join(sorted(json.dumps(target.by_key(table, s.target_key), sort_keys=True, default=str) for s in present)).encode()).hexdigest()
+    results.append(_r(rid, "TECHNICAL", "checksum", "PASS" if exp == act else "FAIL", table, exp[:16], act[:16], "", "" if exp == act else "Target content differs from transformed staging content"))
+    mism = 0
+    for s in present[:200]:
+        t = target.by_key(table, s.target_key)
+        mism += sum(1 for k, v in s.target_payload.items() if t.get(k) != v)
+    results.append(_r(rid, "TECHNICAL", "field_comparison", "PASS" if mism == 0 else "FAIL", table, min(len(present), 200), mism, mism, "Field-level sample comparison of staged vs loaded"))
+    for bo, header in _item_tables_of(table):
+        rows = target.rows(table)
+        if not rows or not target.rows(header):
+            continue
+        orphans = 0
+        for r in rows:
+            hk = {k: r.get(k) for k in bo.key_fields if k in r}
+            if len(hk) == len(bo.key_fields) and target.get(header, **hk) is None:
+                orphans += 1
+        results.append(_r(rid, "TECHNICAL", "referential_integrity", "PASS" if orphans == 0 else "FAIL", f"{table}->{header}", len(rows), len(rows) - orphans, orphans, "Item rows without header in target" if orphans else ""))
+    return results, dups
+
+
+def functional_checks(rid: str, manifest: ScopeManifest, hdr_map: dict, loaded_tables: set[str], target: RecordStore) -> list[ReconciliationResult]:
+    """Functional layer: document-chain completeness, partner/material references, open-document validity and
+    organisational assignments. hdr_map: table -> source key -> target key of loaded records."""
+    results: list[ReconciliationResult] = []
     defn = manifest.definition
     cls = manifest.selection.get("classification", {})
-    scope_ccs = set(defn["company_codes"])
     cc_map = defn.get("target_ownership", {}).get("company_code_map") or {}
-    tcc_of = lambda cc: cc_map.get(cc, cc)  # noqa: E731
-    target_ccs = {tcc_of(c) for c in scope_ccs}
-    backend = backend or get_backend(run.metrics.get("staging_backend"), session=session)
-    staged = list(backend.iter_records(rid))
-    exceptions = session.execute(select(TransformationException).where(TransformationException.run_id == rid)).scalars().all()
-    by_table: dict[str, list] = defaultdict(list)
-    for s in staged:
-        by_table[s.table_name].append(s)
-
-    # ------------------------------------------------------------------ TECHNICAL
-    key_collisions = 0
-    for table, recs in sorted(by_table.items()):
-        loaded = [s for s in recs if s.load_status == "LOADED"]
-        present = [s for s in loaded if target.by_key(table, s.target_key) is not None]
-        missing = len(loaded) - len(present)
-        rejected = sum(1 for s in recs if s.load_status in ("REJECTED", "CONFLICT", "UNSUPPORTED"))
-        status = "PASS" if missing == 0 and rejected == 0 else ("FAIL" if missing else "WARN")
-        results.append(_r(rid, "TECHNICAL", "record_count", status, table, len(recs), len(present), len(recs) - len(present), f"{rejected} record(s) rejected/unsupported before load" if rejected else "", {"missing_in_target": missing, "rejected": rejected}))
-        tkeys = Counter(s.target_key for s in {x.record_key: x for x in loaded}.values())  # identical copies staged by two partitions are one record
-        dups = sum(1 for k, n in tkeys.items() if n > 1)
-        key_collisions += dups
-        results.append(_r(rid, "TECHNICAL", "key_uniqueness", "PASS" if dups == 0 else "FAIL", table, len(tkeys), len(loaded), dups, "Several source records map to the same target key" if dups else ""))
-        exp = hashlib.sha256("".join(sorted(json.dumps(s.target_payload, sort_keys=True, default=str) for s in loaded)).encode()).hexdigest()
-        act = hashlib.sha256("".join(sorted(json.dumps(target.by_key(table, s.target_key), sort_keys=True, default=str) for s in present)).encode()).hexdigest()
-        results.append(_r(rid, "TECHNICAL", "checksum", "PASS" if exp == act else "FAIL", table, exp[:16], act[:16], "", "" if exp == act else "Target content differs from transformed staging content"))
-        mism = 0
-        for s in present[:200]:
-            t = target.by_key(table, s.target_key)
-            mism += sum(1 for k, v in s.target_payload.items() if t.get(k) != v)
-        results.append(_r(rid, "TECHNICAL", "field_comparison", "PASS" if mism == 0 else "FAIL", table, min(len(present), 200), mism, mism, "Field-level sample comparison of staged vs loaded"))
-    # referential integrity: item -> header in target, for loaded tables
-    for bo in BUSINESS_OBJECTS.values():
-        if not bo.item_tables or not target.rows(bo.header_table):
-            continue
-        for it in bo.item_tables:
-            rows = target.rows(it)
-            if not rows:
-                continue
-            orphans = 0
-            for r in rows:
-                hk = {k: r.get(k) for k in bo.key_fields if k in r}
-                if len(hk) == len(bo.key_fields) and target.get(bo.header_table, **hk) is None:
-                    orphans += 1
-            results.append(_r(rid, "TECHNICAL", "referential_integrity", "PASS" if orphans == 0 else "FAIL", f"{it}->{bo.header_table}", len(rows), len(rows) - orphans, orphans, "Item rows without header in target" if orphans else ""))
-
-    # ------------------------------------------------------------------ FUNCTIONAL
-    hdr_map: dict[str, dict[str, str]] = defaultdict(dict)  # table -> source key -> target key
-    for s in staged:
-        if s.load_status == "LOADED":
-            hdr_map[s.table_name][s.record_key] = s.target_key
-    # document chains
-    for chain_name, head, follow in (("order_to_cash", "SD.SalesOrder", ["SD.Delivery", "SD.BillingDocument", "FI.AccountingDocument"]), ("procure_to_pay", "MM.PurchaseOrder", ["MM.MaterialDocument", "MM.InvoiceReceipt", "FI.AccountingDocument"])):
+    target_ccs = {cc_map.get(c, c) for c in defn["company_codes"]}
+    for chain_name, head in (("order_to_cash", "SD.SalesOrder"), ("procure_to_pay", "MM.PurchaseOrder")):
         heads = [n for n, c in cls.items() if c["type"] == head and c["classification"] in TRANSFER]
         complete = 0
         broken = []
+        htable = BUSINESS_OBJECTS[head].header_table
         for n in heads:
-            htable = BUSINESS_OBJECTS[head].header_table
             skey = n.split(":", 1)[1]
-            tkey = hdr_map[htable].get(skey)
+            tkey = hdr_map.get(htable, {}).get(skey)
             if tkey is None or target.by_key(htable, tkey) is None:
                 broken.append({"node": n, "reason": "head document missing in target"})
                 continue
             complete += 1
         results.append(_r(rid, "FUNCTIONAL", "document_chain", "PASS" if not broken else "FAIL", chain_name, len(heads), complete, len(broken), "Transferred head documents present in target; dependent documents validated through referential checks", {"broken": broken[:20]}))
-    # partner / material references in target
+
     def ref_check(name, table, fld, ref_table, ref_fld):
         rows = target.rows(table)
         if not rows:
@@ -120,7 +109,6 @@ def reconcile_run(session: Session, run: MigrationRun, manifest: ScopeManifest, 
     ref_check("material_reference", "VBAP", "MATNR", "MARA", "MATNR")
     ref_check("material_reference", "EKPO", "MATNR", "MARA", "MATNR")
     ref_check("material_reference", "MARC", "MATNR", "MARA", "MATNR")
-    # open document validity
     for bo_id in ("SD.SalesOrder", "MM.PurchaseOrder", "FI.AccountingDocument"):
         bo = BUSINESS_OBJECTS[bo_id]
         checked, mism, partial = 0, [], 0
@@ -131,7 +119,7 @@ def reconcile_run(session: Session, run: MigrationRun, manifest: ScopeManifest, 
                 partial += 1
                 continue  # status of a partially transferred document is re-derived after business redesign
             skey = n.split(":", 1)[1]
-            tkey = hdr_map[bo.header_table].get(skey)
+            tkey = hdr_map.get(bo.header_table, {}).get(skey)
             trow = target.by_key(bo.header_table, tkey) if tkey else None
             tst = instance_status(bo, trow, target) if trow else None
             checked += 1
@@ -139,16 +127,45 @@ def reconcile_run(session: Session, run: MigrationRun, manifest: ScopeManifest, 
                 mism.append({"node": n, "source": c.get("status"), "target": tst})
         status = "PASS" if not mism else "FAIL"
         results.append(_r(rid, "FUNCTIONAL", "open_document_validity", status, bo_id, checked, checked - len(mism), len(mism), f"{partial} partially transferred document(s) excluded from status comparison" if partial else "", {"mismatches": mism[:20]}))
-    # organisational assignments
     tgt_cc_set = {r["BUKRS"] for r in target.rows("T001")} | target_ccs
     bad_cc = Counter()
-    for table in by_table:
+    for table in loaded_tables:
         for r in target.rows(table):
             if r.get("BUKRS") and r["BUKRS"] not in tgt_cc_set:
                 bad_cc[table] += 1
     results.append(_r(rid, "FUNCTIONAL", "organizational_assignment", "PASS" if not bad_cc else "FAIL", "company_codes", sorted(target_ccs), sorted(tgt_cc_set), sum(bad_cc.values()), "Target records referencing unknown company codes" if bad_cc else "", dict(bad_cc)))
+    return results
 
-    # ------------------------------------------------------------------ FINANCIAL
+
+def _hdr_map(staged) -> tuple[dict, set[str]]:
+    hdr_map: dict[str, dict[str, str]] = defaultdict(dict)
+    tables = set()
+    for s in staged:
+        tables.add(s.table_name)
+        if s.load_status == "LOADED":
+            hdr_map[s.table_name][s.record_key] = s.target_key
+    return hdr_map, tables
+
+
+def reconcile_run(session: Session, run: MigrationRun, manifest: ScopeManifest, source: RecordStore, target: RecordStore, financial: bool = True, backend=None) -> dict:
+    """Inline reconciliation: all three layers in one call. Distributed runs execute the same functions as
+    RECONCILE jobs (see reconcile_partition)."""
+    results: list[ReconciliationResult] = []
+    rid = run.id
+    cls = manifest.selection.get("classification", {})
+    backend = backend or get_backend(run.metrics.get("staging_backend"), session=session)
+    staged = list(backend.iter_records(rid))
+    exceptions = session.execute(select(TransformationException).where(TransformationException.run_id == rid)).scalars().all()
+    by_table: dict[str, list] = defaultdict(list)
+    for s in staged:
+        by_table[s.table_name].append(s)
+    key_collisions = 0
+    for table, recs in sorted(by_table.items()):
+        res, dups = technical_checks_for_table(rid, table, recs, target)
+        results.extend(res)
+        key_collisions += dups
+    hdr_map, tables = _hdr_map(staged)
+    results.extend(functional_checks(rid, manifest, hdr_map, tables, target))
     gl_fail = 0
     if financial:
         ctx = source_context(manifest, source, cls, exceptions, [s.target_payload for s in by_table.get("BSEG", []) if s.load_status == "LOADED"])
@@ -348,3 +365,54 @@ def reconcile_merge_group(session: Session, runs: list[MigrationRun], target: Re
     summary["gl_failures"] = gl_fail
     summary["sources"] = len(contexts)
     return summary
+
+
+# ====================================================================== distributed RECONCILE jobs
+def reconcile_partitions(session: Session, run: MigrationRun, backend=None) -> list[tuple[str, str, int]]:
+    """Job list for a distributed run: one technical job per staged table, one functional, one financial
+    (skipped for merge-group members). Returns (partition_id, object_type, est_rows)."""
+    backend = backend or get_backend(run.metrics.get("staging_backend"), session=session)
+    tables: dict[str, int] = defaultdict(int)
+    for c in backend.counts(run.id):
+        tables[c["table"]] += c["count"]
+    jobs = [(f"technical:{t}", "RECONCILE.TECHNICAL", n) for t, n in sorted(tables.items())]
+    jobs.append(("functional", "RECONCILE.FUNCTIONAL", sum(tables.values())))
+    if not run.metrics.get("merge_group"):
+        jobs.append(("financial", "RECONCILE.FINANCIAL", tables.get("BSEG", 0)))
+    return jobs
+
+
+def reconcile_partition(session: Session, run: MigrationRun, partition: str, backend=None, target: RecordStore | None = None) -> dict:
+    """Execute one RECONCILE job and persist its result rows. Idempotent: previous rows of the same job are replaced."""
+    rid = run.id
+    m = session.get(ScopeManifest, run.manifest_id)
+    backend = backend or get_backend(run.metrics.get("staging_backend"), session=session)
+    target = target or RecordStore.load(session, run.target_system_id)
+    if partition.startswith("technical:"):
+        table = partition.split(":", 1)[1]
+        session.query(ReconciliationResult).filter(ReconciliationResult.run_id == rid, ReconciliationResult.layer == "TECHNICAL", ReconciliationResult.subject.in_([table] + [f"{table}->{h}" for _, h in _item_tables_of(table)])).delete(synchronize_session=False)
+        results, dups = technical_checks_for_table(rid, table, list(backend.iter_records(rid, table=table)), target)
+        extra = {"key_collisions": dups}
+    elif partition == "functional":
+        session.query(ReconciliationResult).filter(ReconciliationResult.run_id == rid, ReconciliationResult.layer == "FUNCTIONAL").delete(synchronize_session=False)
+        hdr_map, tables = _hdr_map(backend.iter_records(rid))
+        results = functional_checks(rid, m, hdr_map, tables, target)
+        extra = {}
+    elif partition == "financial":
+        session.query(ReconciliationResult).filter(ReconciliationResult.run_id == rid, ReconciliationResult.layer == "FINANCIAL").delete(synchronize_session=False)
+        source = RecordStore.load(session, run.source_system_id)
+        exceptions = session.execute(select(TransformationException).where(TransformationException.run_id == rid)).scalars().all()
+        ctx = source_context(m, source, m.selection.get("classification", {}), exceptions, [s.target_payload for s in backend.iter_records(rid, table="BSEG", status="LOADED")])
+        results, gl_fail = financial_checks(rid, [ctx], target)
+        extra = {"gl_failures": gl_fail}
+    else:
+        raise ValueError(f"unknown reconciliation partition {partition}")
+    session.add_all(results)
+    session.flush()
+    by = Counter(r.status for r in results)
+    return {"checks": len(results), **{k: v for k, v in by.items()}, **extra}
+
+
+def run_summary(session: Session, run_id: str) -> dict:
+    rows = session.execute(select(ReconciliationResult).where(ReconciliationResult.run_id == run_id)).scalars().all()
+    return summarize(rows)

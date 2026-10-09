@@ -22,7 +22,8 @@ Alembic (`backend/alembic.ini`, `backend/sdtf/migrations`). `alembic upgrade hea
 Start runs with `execution=DISTRIBUTED`; scale `sdtf worker` processes/pods as needed. Monitor `/runs/{id}/jobs`
 and `/platform/workers`. A worker crash leaves a CLAIMED job whose lease expires (`SDTF_JOB_LEASE_SECONDS`); any
 worker re-queues it on its next poll. `POST /runs/{id}/jobs/requeue` re-queues FAILED jobs after fixing the cause.
-Extraction, transformation and load each run as one job per partition. In pipelined mode (default) a partition's
+Extraction, transformation and load each run as one job per partition; reconciliation runs as one technical job
+per staged table plus a functional and a financial job once every load job is done. In pipelined mode (default) a partition's
 next-stage job is queued as soon as the previous one finishes; `pipelined=false` on run start restores stage
 barriers. A stage closes automatically when its last job completes; idle workers also close stages and re-create
 missing successor jobs, so a stalled run normally heals itself within one poll interval. A run stuck in ADVANCING means the advancing worker died mid-transition: `POST /runs/{id}/resume`

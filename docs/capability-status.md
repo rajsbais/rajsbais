@@ -12,7 +12,7 @@
 | Carve-out classification, completeness, residual exposure, IC balances | IMPLEMENTED | cleanup never executed automatically |
 | Transformation rule DSL, validation, tests, dry run, rule factory | IMPLEMENTED | |
 | Extraction | SIMULATED | synthetic store adapter; RFC/OData/CDS/File planned |
-| Distributed stage workers: extraction, transformation and load as per-partition jobs with per-partition pipelining (claim/lease, crash re-queue, atomic stage closing, idle self-healing) | IMPLEMENTED | tested with in-process and separate worker processes; reconciliation runs in the advancing worker |
+| Distributed stage workers: extraction, transformation and load as per-partition pipelined jobs, reconciliation as per-table/functional/financial jobs (claim/lease, crash re-queue, atomic stage closing, idle self-healing) | IMPLEMENTED | tested with in-process and separate worker processes; only report rendering runs in the closing worker |
 | Columnar staging (Parquet, object-storage mount) | IMPLEMENTED | parity-tested against relational staging |
 | Transformation stage with lineage & exceptions | IMPLEMENTED | |
 | Load | SIMULATED | idempotent upsert, config matching, load-method selection; released-API loaders planned |

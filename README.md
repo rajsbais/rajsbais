@@ -26,8 +26,9 @@ migrations, deployment) for the Phase 1 foundation and the first vertical slice.
 * 12 bounded AI agents (heuristic reasoner) that propose, with confidence and evidence; humans decide.
 * Multi-source merger: merge groups, cross-system key-collision planning, master-data deduplication with survivor
   redirection, per-source number ranges, group-level financial reconciliation.
-* Distributed stage workers: extraction, transformation and load as per-partition jobs, pipelined per partition,
-  with leases, crash re-queue, atomic stage closing and idle self-healing; columnar Parquet staging on an object-storage mount. INLINE threads and relational
+* Distributed stage workers: extraction, transformation and load as pipelined per-partition jobs and
+  reconciliation as per-table, functional and financial jobs, with leases, crash re-queue, atomic stage closing
+  and idle self-healing; columnar Parquet staging on an object-storage mount. INLINE threads and relational
   staging remain for small scopes.
 * RBAC/ABAC, tenant segregation, masking, four-eyes approvals, tamper detection, OIDC single sign-on.
 * 19 frontend applications wired to the API; Docker/compose/Kubernetes/CI.

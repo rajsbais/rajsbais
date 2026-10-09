@@ -28,13 +28,15 @@ from .. import config
 from ..audit.service import record_event
 from ..catalog.store import RecordStore
 from ..models import ExtractionJob, MigrationRun, RuleSet, SapSystem, ScopeManifest
+from ..reconciliation.service import reconcile_partition, reconcile_partitions, run_summary
 from ..rules.engine import parse_ruleset
 from ..staging import get_backend
 from .extraction import SyntheticStoreExtractor, extract_partition
 from .load import SimulatedTargetLoader
 from .transform import run_transformation
 
-JOB_STAGES = ["EXTRACT", "TRANSFORM", "LOAD"]
+JOB_STAGES = ["EXTRACT", "TRANSFORM", "LOAD", "RECONCILE"]
+PARTITION_STAGES = ["EXTRACT", "TRANSFORM", "LOAD"]  # one job per extraction partition; RECONCILE has its own job list
 
 
 def _now():
@@ -69,6 +71,13 @@ def _stage(run: MigrationRun, name: str):
 
 # ------------------------------------------------------------------------------------- enqueue / requeue
 def enqueue_stage_jobs(session: Session, run: MigrationRun, stage: str) -> int:
+    if stage == "RECONCILE":
+        jobs = reconcile_partitions(session, run)
+        for pid, otype, est in jobs:
+            session.add(ExtractionJob(run_id=run.id, stage="RECONCILE", partition_id=pid, object_type=otype, est_rows=est))
+        run.metrics = {**run.metrics, "stage_jobs": {**run.metrics.get("stage_jobs", {}), "RECONCILE": len(jobs)}}
+        session.flush()
+        return len(jobs)
     ex = _extractor_for(session, run)
     plan = ex.plan()
     n = 0
@@ -88,9 +97,10 @@ def _next_stage(stage: str) -> str | None:
 
 
 def enqueue_successor(session: Session, job: ExtractionJob) -> bool:
-    """Pipelined mode: queue the next stage's job for this partition (idempotent under the unique constraint)."""
+    """Pipelined mode: queue the next stage's job for this partition (idempotent under the unique constraint).
+    RECONCILE jobs are table-partitioned and are enqueued when LOAD closes, never per extraction partition."""
     nxt = _next_stage(job.stage)
-    if nxt is None:
+    if nxt is None or nxt == "RECONCILE":
         return False
     exists = session.execute(select(ExtractionJob.id).where(ExtractionJob.run_id == job.run_id, ExtractionJob.stage == nxt, ExtractionJob.partition_id == job.partition_id)).first()
     if exists:
@@ -164,7 +174,7 @@ def claim_job(session: Session, worker_id: str, lease_seconds: int | None = None
     """Atomically claim one QUEUED job: the conditional UPDATE succeeds for exactly one worker per job."""
     lease = lease_seconds or config.settings.job_lease_seconds
     for _ in range(5):
-        priority = case((ExtractionJob.stage == "LOAD", 0), (ExtractionJob.stage == "TRANSFORM", 1), else_=2)
+        priority = case((ExtractionJob.stage == "RECONCILE", 0), (ExtractionJob.stage == "LOAD", 1), (ExtractionJob.stage == "TRANSFORM", 2), else_=3)
         cand = session.execute(select(ExtractionJob).where(ExtractionJob.status == "QUEUED").order_by(priority, ExtractionJob.created_at, ExtractionJob.est_rows.desc()).limit(1)).scalars().first()
         if cand is None:
             return None
@@ -193,6 +203,12 @@ def process_job(session: Session, job: ExtractionJob, cache: dict | None = None)
             tgt = session.get(SapSystem, run.target_system_id)
             metrics = SimulatedTargetLoader(session, tgt, run.id, backend=backend).load(partition=job.partition_id)
             n = metrics["loaded"] + metrics["skipped_duplicate"] + metrics["matched_config"]
+        elif job.stage == "RECONCILE":
+            key = ("tgt", run.target_system_id, run.id)
+            if cache is not None and key not in cache:
+                cache[key] = RecordStore.load(session, run.target_system_id)
+            metrics = reconcile_partition(session, run, job.partition_id, backend=backend, target=cache[key] if cache is not None else None)
+            n = metrics["checks"]
         else:  # pragma: no cover
             raise ValueError(f"unknown job stage {job.stage}")
     except Exception as e:  # noqa: BLE001
@@ -233,8 +249,9 @@ def advance_run_if_stage_complete(session: Session, run_id: str, actor: str) -> 
         return None
     partitions = run.metrics.get("partitions") or 0
     pipelined = run.metrics.get("pipelined", True)
+    expected = {st: (run.metrics.get("stage_jobs", {}).get(st) if st == "RECONCILE" else partitions) for st in JOB_STAGES}
     counts = {st: n for st, n in session.execute(select(ExtractionJob.stage, func.count()).where(ExtractionJob.run_id == run_id, ExtractionJob.status == "DONE").group_by(ExtractionJob.stage))}
-    closable = [st for st in JOB_STAGES if _stage(run, st).status == "RUNNING" and partitions and counts.get(st, 0) >= partitions]
+    closable = [st for st in JOB_STAGES if _stage(run, st).status == "RUNNING" and expected[st] and counts.get(st, 0) >= expected[st]]
     if not closable:
         return None
     res = session.execute(update(MigrationRun).where(MigrationRun.id == run_id, MigrationRun.status == "RUNNING").values(status="ADVANCING"))
@@ -242,7 +259,7 @@ def advance_run_if_stage_complete(session: Session, run_id: str, actor: str) -> 
     if res.rowcount != 1:
         return None  # another worker is advancing
     run = session.get(MigrationRun, run_id)
-    load_closed = False
+    reconcile_closed = False
     for current in closable:
         st = _stage(run, current)
         if st.status != "RUNNING":
@@ -259,27 +276,29 @@ def advance_run_if_stage_complete(session: Session, run_id: str, actor: str) -> 
             cnt = backend.counts(run_id)
             metrics.update({"records": sum(c["count"] for c in cnt), "by_table": {c["table"]: c["count"] for c in cnt}, "snapshot_id": run.snapshot_id, "staging_backend": backend.name})
             metrics["records_per_second"] = round(metrics["records"] / metrics["duration_s"], 1) if metrics["duration_s"] else None
+        if current == "RECONCILE":
+            metrics.update(run_summary(session, run_id))
         st.metrics, st.status, st.finished_at = metrics, "DONE", _now()
         st.duration_ms = round(metrics["duration_s"] * 1000, 1)
         st.checkpoint = {"partitions_done": sorted(j.partition_id for j in jobs)}
         nxt = _next_stage(current)
         if nxt is None:
-            load_closed = True
-        elif not pipelined:
+            reconcile_closed = True
+        elif nxt == "RECONCILE" or not pipelined:  # reconciliation is table-partitioned: enqueued at LOAD close in both modes
+            if current == "LOAD":
+                run.metrics = {**run.metrics, "pipeline_overlap_s": _overlap(run)}
             ns = _stage(run, nxt)
             ns.status, ns.started_at = "RUNNING", _now()
-            ns.metrics = {"jobs": enqueue_stage_jobs(session, run, nxt), "execution": "DISTRIBUTED", "pipelined": False}
+            ns.metrics = {"jobs": enqueue_stage_jobs(session, run, nxt), "execution": "DISTRIBUTED", "pipelined": pipelined}
         session.commit()
         record_event(session, actor, "STAGE_CLOSED", "RUN", run_id, {"stage": current, "next": nxt, "pipelined": pipelined})
         session.commit()
     run.status = "RUNNING"
     session.commit()
-    if load_closed:
-        run.metrics = {**run.metrics, "pipeline_overlap_s": _overlap(run)}
-        session.commit()
+    if reconcile_closed:
         from .pipeline import execute_run
 
-        return execute_run(session, run, actor)
+        return execute_run(session, run, actor)  # only REPORT is left
     # jobs may have completed while this worker held the ADVANCING lock: re-evaluate before returning
     return advance_run_if_stage_complete(session, run_id, actor) or run
 
