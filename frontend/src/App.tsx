@@ -21,11 +21,12 @@ import Cutover from "./pages/Cutover";
 import Copilot from "./pages/Copilot";
 import Compliance from "./pages/Compliance";
 import Portfolio from "./pages/Portfolio";
+import Merger from "./pages/Merger";
 
 const NAV: { group: string; items: { to: string; label: string }[] }[] = [
   { group: "Overview", items: [{ to: "/", label: "Executive Dashboard" }, { to: "/portfolio", label: "Migration Factory Portfolio" }] },
   { group: "Discover", items: [{ to: "/landscape", label: "SAP Landscape Explorer" }, { to: "/analyzer", label: "Enterprise Analyzer" }, { to: "/org", label: "Organizational Structure" }, { to: "/catalog", label: "Business Object Catalog" }, { to: "/graph", label: "Dependency Graph Explorer" }] },
-  { group: "Design", items: [{ to: "/scope", label: "Selective Scope Designer" }, { to: "/carveout", label: "Carve-out Studio" }, { to: "/bluefield", label: "Bluefield Transformation Studio" }, { to: "/rules", label: "Mapping & Rules Workbench" }] },
+  { group: "Design", items: [{ to: "/scope", label: "Selective Scope Designer" }, { to: "/carveout", label: "Carve-out Studio" }, { to: "/bluefield", label: "Bluefield Transformation Studio" }, { to: "/merger", label: "Merger & Consolidation" }, { to: "/rules", label: "Mapping & Rules Workbench" }] },
   { group: "Execute", items: [{ to: "/quality", label: "Data Quality Dashboard" }, { to: "/runs", label: "Extraction & Load Monitor" }, { to: "/delta", label: "Delta Synchronization Monitor" }, { to: "/reconciliation", label: "Reconciliation Center" }, { to: "/cutover", label: "Cutover Command Center" }] },
   { group: "Govern", items: [{ to: "/copilot", label: "AI Transformation Copilot" }, { to: "/compliance", label: "Compliance & Evidence Center" }] },
 ];
@@ -84,6 +85,7 @@ export default function App() {
           <Route path="/scope" element={<ScopeDesigner />} />
           <Route path="/carveout" element={<CarveoutStudio />} />
           <Route path="/bluefield" element={<BluefieldStudio />} />
+          <Route path="/merger" element={<Merger />} />
           <Route path="/rules" element={<RulesWorkbench />} />
           <Route path="/quality" element={<DataQuality />} />
           <Route path="/runs" element={<RunsMonitor />} />

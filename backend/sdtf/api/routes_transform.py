@@ -174,15 +174,22 @@ def ruleset_create(project_id: str, req: RuleSetCreate, db: Session = Depends(ge
     return ruleset_out(row, full=True)
 
 
+class GenerateOptions(BaseModel):
+    source_index: int = Field(0, ge=0, le=20, description="position of the source in a merge group; >0 selects disjoint number ranges and key prefixes")
+    dedup: dict = Field(default_factory=dict, description="lookups from /merge/dedup: {customers|vendors|materials: {dup_key: survivor_key}}")
+    coa_map: dict = Field(default_factory=dict)
+
+
 @router.post("/projects/{project_id}/rulesets/generate", tags=["rules"])
-def ruleset_generate(project_id: str, manifest_id: str, db: Session = Depends(get_db), p: Principal = Depends(require("rules:write"))):
+def ruleset_generate(project_id: str, manifest_id: str, opts: GenerateOptions | None = None, db: Session = Depends(get_db), p: Principal = Depends(require("rules:write"))):
     assert_project_access(db, p, project_id)
     m = db.get(ScopeManifest, manifest_id)
     if m is None or m.project_id != project_id:
         raise HTTPException(404, "manifest not found")
     defn = ScopeDefinition(**m.definition)
     tgt = db.get(SapSystem, defn.target_system_id)
-    return {"source_yaml": generate_candidate_ruleset(defn, tgt.product if tgt else "S4HANA")}
+    opts = opts or GenerateOptions()
+    return {"source_yaml": generate_candidate_ruleset(defn, tgt.product if tgt else "S4HANA", source_index=opts.source_index, dedup=opts.dedup or None, coa_map=opts.coa_map or None)}
 
 
 @router.post("/rulesets/validate", tags=["rules"])
@@ -417,9 +424,10 @@ CAPABILITIES = [
     {"area": "Reconciliation (technical/functional/financial)", "status": "IMPLEMENTED", "note": "Runs on simulated data"},
     {"area": "Audit trail & evidence packages", "status": "IMPLEMENTED", "note": "Hash-chained events, evidence index"},
     {"area": "AI agents", "status": "IMPLEMENTED", "note": "12 bounded heuristic agents; LLM reasoner planned"},
+    {"area": "Multi-source merger / consolidation", "status": "IMPLEMENTED", "note": "Merge groups, cross-system key collision planning, master-data dedup, group-level financial reconciliation (simulated runtime)"},
     {"area": "Delta capture / near-zero downtime", "status": "PLANNED", "note": "Design in docs/07; no CDC adapter exists"},
     {"area": "Cutover command center", "status": "PARTIAL", "note": "Runbook generation, critical path, forecast; execution tracking planned"},
-    {"area": "SSO / enterprise identity", "status": "PLANNED", "note": "Dev users with HMAC tokens; OIDC planned"},
+    {"area": "SSO / enterprise identity", "status": "IMPLEMENTED", "note": "OIDC RS256 bearer tokens verified against JWKS with group-to-role mapping; dev users remain for local use"},
     {"area": "Production SAP migration", "status": "UNSUPPORTED", "note": "This build never connects to or writes into an SAP system"},
 ]
 
@@ -445,3 +453,65 @@ def portfolio(db: Session = Depends(get_db), p: Principal = Depends(require("pro
 @router.get("/platform/delta/status", tags=["platform"])
 def delta_status(p: Principal = Depends(current_principal)):
     return {"status": "PLANNED", "stages": ["Initial extraction", "Initial transformation", "Initial target load", "Delta capture", "Delta transformation", "Continuous synchronization", "Backlog monitoring", "Business freeze coordination", "Final delta synchronization", "Final reconciliation", "Cutover authorization", "Business validation", "Production handover"], "implemented_stages": ["Initial extraction", "Initial transformation", "Initial target load", "Final reconciliation"], "note": "No change-data-capture adapter exists in this build. See docs/07-ndt-cdc-consistency-recovery.md for the design."}
+
+
+# ------------------------------------------------------------------------------------------ merger
+class MergeSource(BaseModel):
+    manifest_id: str
+    ruleset_id: str
+
+
+class MergeRequest(BaseModel):
+    sources: list[MergeSource] = Field(min_length=2)
+
+
+@router.post("/projects/{project_id}/merge/plan", tags=["merger"])
+def merge_plan(project_id: str, req: MergeRequest, db: Session = Depends(get_db), p: Principal = Depends(require("project:read"))):
+    from ..runtime.merge import plan_merge
+
+    assert_project_access(db, p, project_id)
+    try:
+        return plan_merge(db, project_id, [s.model_dump() for s in req.sources])
+    except RunPrecondition as e:
+        raise HTTPException(409, str(e)) from None
+
+
+@router.post("/projects/{project_id}/merge/run", tags=["merger"], status_code=201)
+def merge_run(project_id: str, req: MergeRequest, db: Session = Depends(get_db), p: Principal = Depends(require("run:start"))):
+    from ..runtime.merge import start_merge_run
+
+    assert_project_access(db, p, project_id)
+    try:
+        return start_merge_run(db, project_id, [s.model_dump() for s in req.sources], p.username)
+    except RunPrecondition as e:
+        raise HTTPException(409, str(e)) from None
+
+
+class DedupRequest(BaseModel):
+    leading_manifest_id: str
+    leading_ruleset_id: str
+    source_system_id: str
+
+
+@router.post("/projects/{project_id}/merge/dedup", tags=["merger"])
+def merge_dedup(project_id: str, req: DedupRequest, db: Session = Depends(get_db), p: Principal = Depends(require("project:read"))):
+    """Duplicate master-data candidates of a non-leading source and the lookups the rule factory needs."""
+    from ..runtime.merge import dedup_for_merge
+
+    assert_project_access(db, p, project_id)
+    try:
+        return dedup_for_merge(db, project_id, {"manifest_id": req.leading_manifest_id, "ruleset_id": req.leading_ruleset_id}, req.source_system_id)
+    except RunPrecondition as e:
+        raise HTTPException(409, str(e)) from None
+
+
+@router.get("/projects/{project_id}/merge/duplicates", tags=["merger"])
+def merge_duplicates(project_id: str, db: Session = Depends(get_db), p: Principal = Depends(require("project:read"))):
+    from ..catalog.dedup import find_duplicate_masters
+
+    assert_project_access(db, p, project_id)
+    systems = [s.id for s in db.execute(select(SapSystem).where(SapSystem.project_id == project_id, SapSystem.role == "SOURCE")).scalars()]
+    if len(systems) < 2:
+        return {"systems": systems, "candidates": {}, "note": "at least two source systems are needed"}
+    cands = find_duplicate_masters(db, systems)
+    return {"systems": systems, "counts": {k: len(v) for k, v in cands.items()}, "candidates": {k: v[:100] for k, v in cands.items()}}

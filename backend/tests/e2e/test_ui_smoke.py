@@ -7,7 +7,7 @@ import os
 import pytest
 
 pytestmark = pytest.mark.skipif(os.getenv("SDTF_E2E") != "1", reason="set SDTF_E2E=1 with a running UI/API")
-PAGES = ["/", "/portfolio", "/landscape", "/analyzer", "/org", "/catalog", "/graph", "/scope", "/carveout", "/bluefield", "/rules", "/quality", "/runs", "/delta", "/reconciliation", "/cutover", "/copilot", "/compliance"]
+PAGES = ["/", "/portfolio", "/landscape", "/analyzer", "/org", "/catalog", "/graph", "/scope", "/carveout", "/bluefield", "/merger", "/rules", "/quality", "/runs", "/delta", "/reconciliation", "/cutover", "/copilot", "/compliance"]
 ALLOWED_403 = ("/audit/events", "/audit/verify")
 
 

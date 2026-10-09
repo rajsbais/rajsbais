@@ -96,13 +96,16 @@ class SyntheticStoreExtractor:
                 continue
             first = common[0]
             for row in self.store.lookup(it, first, hk[first]):
-                if all(str(row.get(k)) == str(hk[k]) for k in common):
-                    if bo_id == "FI.AccountingDocument" and it in ("BSID", "BSIK"):
-                        pass
-                    yield it, row
-        # company-code / plant views of client-level master data: restrict to in-scope views
-        if bo_id in ("MD.Customer", "MD.Vendor"):
-            pass  # KNB1/LFB1 handled above via item tables; filtering happens in extract()
+                if not all(str(row.get(k)) == str(hk[k]) for k in common):
+                    continue
+                # company-code / plant views of client-level master data: only views of carved-out org units move
+                if it in ("KNB1", "LFB1") and row.get("BUKRS") not in self.scope_ccs:
+                    continue
+                if it in ("MARC", "MBEW", "MARD"):
+                    k = self.store.get("T001K", BWKEY=row.get("WERKS") or row.get("BWKEY"))
+                    if not k or k["BUKRS"] not in self.scope_ccs:
+                        continue
+                yield it, row
 
     def extract(self, partition: Partition) -> Iterable[ExtractedRecord]:
         plan = self.plan()
@@ -135,15 +138,6 @@ class SyntheticStoreExtractor:
                         continue
                 if stub:
                     self.reference_stubs.add(nid)
-                # client-level master data: only carry views that belong to carved-out company codes / plants
-                if table in ("KNB1", "LFB1") and row.get("BUKRS") not in self.scope_ccs:
-                    continue
-                if table in ("MARC", "MBEW", "MARD"):
-                    k = self.store.get("T001K", BWKEY=row.get("WERKS") or row.get("BWKEY"))
-                    if not k or k["BUKRS"] not in self.scope_ccs:
-                        continue
-                if table == "ANLC":
-                    pass
                 n += 1
                 if self.max_rps:
                     elapsed = time.monotonic() - started

@@ -13,7 +13,9 @@
 | Agents (12 registered, each bounded, decision workflow), scope recommendation validity, ownership proposals, carve-out reports, cutover runbook DAG | 17 | pass |
 | Scale (scale 3 slice completes, timings recorded) | 1 | pass |
 | UI end-to-end (Playwright, 18 screens, graph traversal, scope preview, cutover risk) | 1 | pass when run with `SDTF_E2E=1` against a live stack (verified in this session); skipped otherwise |
-| **Total** | **61** | **60 passed, 1 skipped by default (e2e)** |
+| OIDC (role mapping, expired/issuer/audience rejection, forged signature, API acceptance, tenant isolation) | 6 | pass |
+| Merger (cross-source duplicate detection, collision plan blocks naive rulesets, resolved plan runs both sources into one company code with group financial PASS; API merge flow) | 3 | pass |
+| **Total** | **70** | **69 passed, 1 skipped by default (e2e)** |
 
 Lint: `ruff check backend/sdtf backend/tests` clean. Frontend: `tsc --noEmit` and `vite build` clean.
 

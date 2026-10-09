@@ -42,7 +42,7 @@ def _now():
     return datetime.now(timezone.utc)
 
 
-def start_run(session: Session, project_id: str, manifest_id: str, ruleset_id: str, actor: str, mode: str = "SIMULATED", workers: int | None = None) -> MigrationRun:
+def start_run(session: Session, project_id: str, manifest_id: str, ruleset_id: str, actor: str, mode: str = "SIMULATED", workers: int | None = None, merge_group: str | None = None) -> MigrationRun:
     if mode not in SUPPORTED_MODES:
         raise RunPrecondition(f"mode {mode} is not supported by this build; only SIMULATED runs exist (no production SAP connectivity)")
     m = session.get(ScopeManifest, manifest_id)
@@ -61,7 +61,7 @@ def start_run(session: Session, project_id: str, manifest_id: str, ruleset_id: s
     tgt = session.get(SapSystem, m.definition["target_system_id"])
     if src is None or tgt is None or src.project_id != project_id or tgt.project_id != project_id:
         raise RunPrecondition("source/target systems not found in project")
-    run = MigrationRun(project_id=project_id, manifest_id=m.id, ruleset_id=rs.id, source_system_id=src.id, target_system_id=tgt.id, mode=mode, status="RUNNING", started_by=actor, started_at=_now(), metrics={"workers": workers or config.settings.extraction_workers})
+    run = MigrationRun(project_id=project_id, manifest_id=m.id, ruleset_id=rs.id, source_system_id=src.id, target_system_id=tgt.id, mode=mode, status="RUNNING", started_by=actor, started_at=_now(), metrics={"workers": workers or config.settings.extraction_workers, **({"merge_group": merge_group} if merge_group else {})})
     session.add(run)
     session.flush()
     for i, name in enumerate(STAGES):
@@ -118,7 +118,7 @@ def execute_run(session: Session, run: MigrationRun, actor: str) -> MigrationRun
                 source_store = source_store or RecordStore.load(session, src.id)
                 session.query(ReconciliationResult).filter(ReconciliationResult.run_id == run.id).delete()
                 target_store = RecordStore.load(session, tgt.id)
-                st.metrics = reconcile_run(session, run, m, source_store, target_store)
+                st.metrics = reconcile_run(session, run, m, source_store, target_store, financial=not run.metrics.get("merge_group"))
             elif name == "REPORT":
                 # the report stage is marked complete before rendering so the report reflects final stage states
                 st.status, st.finished_at = "DONE", _now()

@@ -126,3 +126,48 @@ def test_record_masking_for_viewer(client, tokens):
     assert masked["masked"] and all(row["NAME1"].startswith("tok_") for row in masked["rows"])
     clear = client.get(f"{API}/systems/{src['id']}/records", params={"table": "KNA1", "limit": 3}, headers=tokens["architect"]).json()
     assert not clear["masked"] and not clear["rows"][0]["NAME1"].startswith("tok_")
+
+
+def test_merge_endpoints(client, tokens):
+    arch, appr, op = tokens["architect"], tokens["approver"], tokens["operator"]
+    proj = client.post(f"{API}/projects", json={"name": "api merger", "scenario_type": "MERGER"}, headers=arch).json()
+    srcs = []
+    for sid, seed in (("MA1", 301), ("MB1", 302)):
+        s = client.post(f"{API}/projects/{proj['id']}/systems", json={"sid": sid, "role": "SOURCE", "product": "ECC", "release": "6.0 EHP8"}, headers=arch).json()
+        client.post(f"{API}/systems/{s['id']}/import-synthetic", json={"scale": 1, "seed": seed}, headers=arch)
+        client.post(f"{API}/systems/{s['id']}/discover", headers=arch)
+        client.post(f"{API}/systems/{s['id']}/graph/build", headers=arch)
+        srcs.append(s)
+    tgt = client.post(f"{API}/projects/{proj['id']}/systems", json={"sid": "MT1", "role": "TARGET", "product": "S4HANA", "release": "2025"}, headers=arch).json()
+    # a prepared shell for the merged company code
+    from sdtf.catalog.store import import_tables
+    from sdtf.db import session_scope
+    from sdtf.demo import spinco_shell
+
+    with session_scope() as s:
+        import_tables(s, tgt["id"], spinco_shell(bukrs="M100", plants=("M110", "M120", "M130", "M140"), name="Merged"))
+    dups = client.get(f"{API}/projects/{proj['id']}/merge/duplicates", headers=arch).json()
+    assert dups["counts"]["customers"] > 0
+    members = []
+    for i, s in enumerate(srcs):
+        plants = {"1010": "M110", "1020": "M120"} if i == 0 else {"1010": "M130", "1020": "M140"}
+        defn = {"name": f"merge-{s['sid']}", "scenario_type": "MERGER", "source_system_id": s["id"], "target_system_id": tgt["id"], "company_codes": ["1000"], "target_ownership": {"company_code_map": {"1000": "M100"}, "plant_map": plants, "controlling_area_map": {"1000": "M100"}}}
+        m = client.post(f"{API}/projects/{proj['id']}/manifests", json=defn, headers=arch).json()
+        client.post(f"{API}/manifests/{m['id']}/dispositions", json={"all_pending": True, "decision": "TRANSFER"}, headers=appr)
+        assert client.post(f"{API}/manifests/{m['id']}/approve", json={}, headers=appr).json()["status"] == "APPROVED"
+        opts = {"source_index": i}
+        if i == 1:
+            dd = client.post(f"{API}/projects/{proj['id']}/merge/dedup", json={"leading_manifest_id": members[0]["manifest_id"], "leading_ruleset_id": members[0]["ruleset_id"], "source_system_id": s["id"]}, headers=arch).json()
+            opts["dedup"] = dd["lookups"]
+        y = client.post(f"{API}/projects/{proj['id']}/rulesets/generate", params={"manifest_id": m["id"]}, json=opts, headers=arch).json()["source_yaml"]
+        rs = client.post(f"{API}/projects/{proj['id']}/rulesets", json={"source_yaml": y}, headers=arch).json()
+        assert rs["validation"]["ok"], rs["validation"]
+        client.post(f"{API}/rulesets/{rs['id']}/approve", json={}, headers=appr)
+        members.append({"manifest_id": m["id"], "ruleset_id": rs["id"]})
+    plan = client.post(f"{API}/projects/{proj['id']}/merge/plan", json={"sources": members}, headers=arch).json()
+    assert plan["ready"], plan["collisions"]["samples"][:3]
+    assert client.post(f"{API}/projects/{proj['id']}/merge/run", json={"sources": members}, headers=tokens["viewer"]).status_code == 403
+    r = client.post(f"{API}/projects/{proj['id']}/merge/run", json={"sources": members}, headers=op)
+    assert r.status_code == 201, r.text
+    out = r.json()
+    assert out["overall"] == "PASS" and out["financial"]["sources"] == 2 and len(out["runs"]) == 2

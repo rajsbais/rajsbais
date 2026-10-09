@@ -36,27 +36,27 @@ def create_demo_project(session: Session, actor: str = "architect", scale: int =
     return {"project": project, "source": src, "target": tgt, "import_counts": counts}
 
 
-def spinco_shell() -> dict[str, list[dict]]:
-    """Organisational configuration of the prepared S/4HANA target shell for SpinCo."""
+def spinco_shell(bukrs: str = "SP01", plants: tuple[str, ...] = ("SP10", "SP20"), name: str = "Specialty Materials SpinCo GmbH", country: str = "DE", currency: str = "EUR") -> dict[str, list[dict]]:
+    """Organisational configuration of a prepared S/4HANA target shell (default: SpinCo)."""
     return {
-        "T001": [{"BUKRS": "SP01", "BUTXT": "Specialty Materials SpinCo GmbH", "LAND1": "DE", "WAERS": "EUR", "KTOPL": "INT", "PERIV": "K4", "SPRAS": "E"}],
-        "T001W": [{"WERKS": "SP10", "NAME1": "Plant SP10 (DE)", "BWKEY": "SP10", "LAND1": "DE", "VKORG": "SP01", "EKORG": "SP01"}, {"WERKS": "SP20", "NAME1": "Plant SP20 (DE)", "BWKEY": "SP20", "LAND1": "DE", "VKORG": "SP01", "EKORG": "SP01"}],
-        "T001K": [{"BWKEY": "SP10", "BUKRS": "SP01"}, {"BWKEY": "SP20", "BUKRS": "SP01"}],
-        "TKA01": [{"KOKRS": "SP01", "BEZEI": "Controlling area SpinCo", "WAERS": "EUR", "KTOPL": "INT"}],
-        "TKA02": [{"BUKRS": "SP01", "KOKRS": "SP01"}],
-        "TVKO": [{"VKORG": "SP01", "BUKRS": "SP01", "VTEXT": "Sales org SpinCo"}],
-        "T024E": [{"EKORG": "SP01", "BUKRS": "SP01", "EKOTX": "Purch org SpinCo"}],
+        "T001": [{"BUKRS": bukrs, "BUTXT": name, "LAND1": country, "WAERS": currency, "KTOPL": "INT", "PERIV": "K4", "SPRAS": "E"}],
+        "T001W": [{"WERKS": p, "NAME1": f"Plant {p} ({country})", "BWKEY": p, "LAND1": country, "VKORG": bukrs, "EKORG": bukrs} for p in plants],
+        "T001K": [{"BWKEY": p, "BUKRS": bukrs} for p in plants],
+        "TKA01": [{"KOKRS": bukrs, "BEZEI": f"Controlling area {name}", "WAERS": currency, "KTOPL": "INT"}],
+        "TKA02": [{"BUKRS": bukrs, "KOKRS": bukrs}],
+        "TVKO": [{"VKORG": bukrs, "BUKRS": bukrs, "VTEXT": f"Sales org {name}"}],
+        "T024E": [{"EKORG": bukrs, "BUKRS": bukrs, "EKOTX": f"Purch org {name}"}],
         "T004": [{"KTOPL": "INT", "KTPLT": "Group chart of accounts"}],
     }
 
 
-def create_target_shell(session: Session, project: Project, sid: str, source: SapSystem | None = None, keep_source_org: bool = False) -> SapSystem:
+def create_target_shell(session: Session, project: Project, sid: str, source: SapSystem | None = None, keep_source_org: bool = False, shell: dict[str, list[dict]] | None = None) -> SapSystem:
     """Register an additional prepared S/4HANA target. With keep_source_org the source organisational
     configuration is copied as well (scenarios that keep company codes unchanged, e.g. reverse carve-outs)."""
     tgt = SapSystem(project_id=project.id, sid=sid, client="100", role="TARGET", product="S4HANA", release="2025", connector="SYNTHETIC", connector_status="SIMULATED", logical_system=f"{sid}CLNT100")
     session.add(tgt)
     session.flush()
-    shell = spinco_shell()
+    shell = shell or spinco_shell()
     if keep_source_org and source is not None:
         store = RecordStore.load(session, source.id, tables=list(shell))
         for t in shell:

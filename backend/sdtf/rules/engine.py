@@ -15,7 +15,7 @@ import yaml
 
 from ..catalog.tables import TABLES, record_key
 
-RULE_TYPES = ("org_reassign", "value_map", "key_map", "number_range", "currency_convert", "default", "conditional", "field_map", "lookup_enrich", "reject")
+RULE_TYPES = ("org_reassign", "value_map", "key_map", "number_range", "currency_convert", "default", "conditional", "field_map", "lookup_enrich", "reject", "skip")
 
 
 @dataclass
@@ -25,6 +25,14 @@ class RuleError(Exception):
 
     def __str__(self):
         return f"[{self.rule_id}] {self.message}"
+
+
+@dataclass
+class SkipRecord(Exception):
+    """Raised by a `skip` rule: the record is intentionally not migrated (e.g. a deduplicated master record)."""
+
+    rule_id: str
+    message: str
 
 
 @dataclass
@@ -112,7 +120,7 @@ def validate_ruleset(rs: CompiledRuleSet) -> dict:
             errors.append(f"[{rid}] number_range offset must be integer")
         if t == "currency_convert" and not r.get("rates"):
             errors.append(f"[{rid}] currency_convert requires 'rates'")
-        if t in ("conditional", "reject") and not r.get("when"):
+        if t in ("conditional", "reject", "skip") and not r.get("when"):
             errors.append(f"[{rid}] requires 'when'")
         if t == "default" and not r.get("set"):
             errors.append(f"[{rid}] requires 'set'")
@@ -138,13 +146,13 @@ def _rule_fields(r: dict) -> list[str]:
 
 
 # ------------------------------------------------------------------------------ evaluation helpers
-def _match(when: dict, rec: dict) -> bool:
+def _match(when: dict, rec: dict, lookups: dict | None = None) -> bool:
     if not when:
         return True
     if "all" in when:
-        return all(_match(w, rec) for w in when["all"])
+        return all(_match(w, rec, lookups) for w in when["all"])
     if "any" in when:
-        return any(_match(w, rec) for w in when["any"])
+        return any(_match(w, rec, lookups) for w in when["any"])
     f = when.get("field")
     v = rec.get(f)
     if "equals" in when:
@@ -157,12 +165,18 @@ def _match(when: dict, rec: dict) -> bool:
         return bool(v) == bool(when["present"])
     if "prefix" in when:
         return str(v).startswith(str(when["prefix"]))
+    if "not_prefix" in when:
+        return not str(v).startswith(str(when["not_prefix"]))
+    if "in_lookup" in when:
+        return str(v) in (lookups or {}).get(when["in_lookup"], {})
+    if "not_in_lookup" in when:
+        return str(v) not in (lookups or {}).get(when["not_in_lookup"], {})
     return True
 
 
 def apply_rule(rule: dict, rs: CompiledRuleSet, table: str, rec: dict, lineage: list[Lineage]) -> None:
     rid, t = rule["id"], rule["type"]
-    if not _match(rule.get("when", {}), rec):
+    if not _match(rule.get("when", {}), rec, rs.lookups):
         return
     if t in ("org_reassign", "value_map"):
         mapping = rule.get("map") or rs.lookups[rule["lookup"]]
@@ -264,6 +278,8 @@ def apply_rule(rule: dict, rs: CompiledRuleSet, table: str, rec: dict, lineage: 
             raise RuleError(rid, f"no enrichment for {rule['key_field']}={key!r}")
     elif t == "reject":
         raise RuleError(rid, rule.get("message", "record rejected by rule"))
+    elif t == "skip":
+        raise SkipRecord(rid, rule.get("message", "record intentionally skipped"))
 
 
 def transform_record(rs: CompiledRuleSet, table: str, record: dict) -> tuple[dict, list[dict]]:
@@ -287,7 +303,9 @@ def run_tests(rs: CompiledRuleSet) -> dict:
         table = case["table"]
         try:
             out, lineage = transform_record(rs, table, case["input"])
-            if case.get("expect_reject"):
+            if case.get("expect_skip"):
+                ok, detail = False, "expected skip but record passed"
+            elif case.get("expect_reject"):
                 ok, detail = False, "expected rejection but record passed"
             else:
                 exp = case.get("expected", {})
@@ -296,6 +314,9 @@ def run_tests(rs: CompiledRuleSet) -> dict:
         except RuleError as e:
             ok = bool(case.get("expect_reject"))
             detail = str(e)
+        except SkipRecord as e:
+            ok = bool(case.get("expect_skip"))
+            detail = f"skipped: {e.message}"
         results.append({"name": name, "ok": ok, "detail": detail})
     return {"passed": sum(1 for r in results if r["ok"]), "failed": sum(1 for r in results if not r["ok"]), "results": results}
 
@@ -312,6 +333,10 @@ def dry_run(rs: CompiledRuleSet, samples: dict[str, list[dict]], limit: int = 25
                 new, lineage = transform_record(rs, table, rec)
             except RuleError as e:
                 out["exceptions"].append({"table": table, "key": record_key(table, rec) if table in TABLES else "", "rule": e.rule_id, "message": e.message})
+                continue
+            except SkipRecord as e:
+                out["skipped"] = out.get("skipped", 0) + 1
+                impact[e.rule_id] = impact.get(e.rule_id, 0) + 1
                 continue
             if lineage:
                 out["changed"] += 1

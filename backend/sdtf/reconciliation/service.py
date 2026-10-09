@@ -32,7 +32,7 @@ def _sum_lines(rows, cc_field="BUKRS"):
     return bal
 
 
-def reconcile_run(session: Session, run: MigrationRun, manifest: ScopeManifest, source: RecordStore, target: RecordStore) -> dict:
+def reconcile_run(session: Session, run: MigrationRun, manifest: ScopeManifest, source: RecordStore, target: RecordStore, financial: bool = True) -> dict:
     results: list[ReconciliationResult] = []
     rid = run.id
     defn = manifest.definition
@@ -147,115 +147,11 @@ def reconcile_run(session: Session, run: MigrationRun, manifest: ScopeManifest, 
     results.append(_r(rid, "FUNCTIONAL", "organizational_assignment", "PASS" if not bad_cc else "FAIL", "company_codes", sorted(target_ccs), sorted(tgt_cc_set), sum(bad_cc.values()), "Target records referencing unknown company codes" if bad_cc else "", dict(bad_cc)))
 
     # ------------------------------------------------------------------ FINANCIAL
-    src_bseg = [l for l in source.rows("BSEG") if l["BUKRS"] in scope_ccs]
-    tgt_bseg = [l for l in target.rows("BSEG") if l["BUKRS"] in target_ccs]
-    # trial balance per company code and per document in target
-    for tcc in sorted(target_ccs):
-        lines = [l for l in tgt_bseg if l["BUKRS"] == tcc]
-        debit = round(sum(float(l["DMBTR"]) for l in lines if l["SHKZG"] == "S"), 2)
-        credit = round(sum(float(l["DMBTR"]) for l in lines if l["SHKZG"] == "H"), 2)
-        doc_bal = defaultdict(float)
-        for l in lines:
-            doc_bal[(l["BELNR"], l["GJAHR"])] += float(l["DMBTR"]) if l["SHKZG"] == "S" else -float(l["DMBTR"])
-        unbalanced = sum(1 for v in doc_bal.values() if abs(v) > 0.005)
-        ok = abs(debit - credit) < 0.005 and unbalanced == 0
-        results.append(_r(rid, "FINANCIAL", "trial_balance", "PASS" if ok else "FAIL", tcc, debit, credit, round(debit - credit, 2), f"{unbalanced} unbalanced document(s)" if unbalanced else "Debits equal credits; every document balances", {"documents": len(doc_bal)}))
-    # GL balances: source in-scope totals vs target totals, with variance explanation
-    src_bal = _sum_lines(src_bseg)
-    tgt_bal = _sum_lines(tgt_bseg)
-    # expected after transformation (what was staged & loaded)
-    exp_bal = _sum_lines([s.target_payload for s in by_table.get("BSEG", []) if s.load_status == "LOADED"])
-    retained_docs = {n.split(":", 1)[1] for n, c in cls.items() if c["type"] == "FI.AccountingDocument" and c["classification"] not in TRANSFER}
-    classified_docs = {n.split(":", 1)[1] for n, c in cls.items() if c["type"] == "FI.AccountingDocument"}
-    # documents of in-scope company codes that never entered the manifest: removed by fiscal-year / status filters
-    filtered_docs = {f"{h['BUKRS']}|{h['BELNR']}|{h['GJAHR']}" for h in source.rows("BKPF") if h["BUKRS"] in scope_ccs} - classified_docs
-    rejected_keys = {e.record_key for e in exceptions if e.table_name in ("BKPF", "BSEG")}
-
-    def _amt(l):
-        return float(l["DMBTR"]) if l["SHKZG"] == "S" else -float(l["DMBTR"])
-    accounts = sorted({k[1] for k in src_bal} | {k[1] for k in tgt_bal})
     gl_fail = 0
-    for cc in sorted(scope_ccs):
-        tcc = tcc_of(cc)
-        for acct in accounts:
-            s = round(src_bal.get((cc, acct), 0.0), 2)
-            t = round(tgt_bal.get((tcc, acct), 0.0), 2)
-            e = round(exp_bal.get((tcc, acct), 0.0), 2)
-            if s == 0 and t == 0:
-                continue
-            var = round(s - t, 2)
-            if abs(var) < 0.005:
-                status, expl = "PASS", ""
-            else:
-                # explain: amounts of retained / rejected documents on this account
-                lines_cc = [l for l in src_bseg if l["BUKRS"] == cc and l["HKONT"] == acct]
-                retained_amt = round(sum(_amt(l) for l in lines_cc if f"{cc}|{l['BELNR']}|{l['GJAHR']}" in retained_docs), 2)
-                filtered_amt = round(sum(_amt(l) for l in lines_cc if f"{cc}|{l['BELNR']}|{l['GJAHR']}" in filtered_docs), 2)
-                rejected_amt = round(sum(_amt(l) for l in lines_cc if f"{cc}|{l['BELNR']}|{l['GJAHR']}|{l['BUZEI']}" in rejected_keys), 2)
-                unexplained = round(var - retained_amt - filtered_amt - rejected_amt, 2)
-                status = "WARN" if abs(unexplained) < 0.005 else "FAIL"
-                expl = f"Variance {var}: {retained_amt} in documents retained/excluded by scope policy, {filtered_amt} in documents outside the fiscal-year/status filters (balance carry-forward required), {rejected_amt} in documents rejected by transformation rules, unexplained {unexplained}"
-                if abs(e - t) > 0.005:
-                    status = "FAIL"
-                    expl += f"; loaded content differs from staged expectation ({e} vs {t})"
-                if status == "FAIL":
-                    gl_fail += 1
-            results.append(_r(rid, "FINANCIAL", "gl_balance", status, f"{cc}->{tcc}/{acct}", s, t, var, expl, {"expected_after_rules": e}))
-    # AP / AR open items
-    for name, table, fld in (("ar_open_items", "BSID", "KUNNR"), ("ap_open_items", "BSIK", "LIFNR")):
-        s_rows = [r for r in source.rows(table) if r["BUKRS"] in scope_ccs and not r.get("AUGBL")]
-        t_rows = [r for r in target.rows(table) if r["BUKRS"] in target_ccs and not r.get("AUGBL")]
-        s_amt = round(sum(float(r["DMBTR"]) * (1 if r["SHKZG"] == "S" else -1) for r in s_rows), 2)
-        t_amt = round(sum(float(r["DMBTR"]) * (1 if r["SHKZG"] == "S" else -1) for r in t_rows), 2)
-        ok = len(s_rows) == len(t_rows) and abs(s_amt - t_amt) < 0.005
-        results.append(_r(rid, "FINANCIAL", name, "PASS" if ok else "WARN", "open_items", f"{len(s_rows)} / {s_amt}", f"{len(t_rows)} / {t_amt}", round(s_amt - t_amt, 2), "" if ok else "Open-item differences are explained by retained/excluded documents (see gl_balance rows)"))
-    # asset balances
-    s_assets = round(sum(float(r["KANSW"]) for r in source.rows("ANLC") if r["BUKRS"] in scope_ccs), 2)
-    t_assets = round(sum(float(r["KANSW"]) for r in target.rows("ANLC") if r["BUKRS"] in target_ccs), 2)
-    results.append(_r(rid, "FINANCIAL", "asset_balances", "PASS" if abs(s_assets - t_assets) < 0.005 else "FAIL", "acquisition_values", s_assets, t_assets, round(s_assets - t_assets, 2)))
-    # inventory valuation by valuation area
-    plant_map = defn.get("target_ownership", {}).get("plant_map") or {}
-    src_val_areas = {r["BWKEY"] for r in source.rows("T001K") if r["BUKRS"] in scope_ccs}
-    s_inv = round(sum(float(r["SALK3"]) for r in source.rows("MBEW") if r["BWKEY"] in src_val_areas), 2)
-    tgt_val_areas = {plant_map.get(b, b) for b in src_val_areas}
-    t_inv = round(sum(float(r["SALK3"]) for r in target.rows("MBEW") if r["BWKEY"] in tgt_val_areas), 2)
-    inv_var = round(s_inv - t_inv, 2)
-    inv_expl = ""
-    if abs(inv_var) >= 0.005:
-        not_transferred = {n.split(":", 1)[1] for n, c in cls.items() if c["type"] == "MD.Material" and c["classification"] not in TRANSFER}
-        held = round(sum(float(r["SALK3"]) for r in source.rows("MBEW") if r["BWKEY"] in src_val_areas and r["MATNR"] in not_transferred), 2)
-        inv_expl = f"{held} held by materials not transferred (manual disposition / excluded); unexplained {round(inv_var - held, 2)}"
-    results.append(_r(rid, "FINANCIAL", "inventory_valuation", "PASS" if abs(inv_var) < 0.005 else ("WARN" if inv_expl and abs(inv_var - held) < 0.005 else "FAIL"), "valuation_areas", s_inv, t_inv, inv_var, inv_expl))
-    # intercompany balances (open)
-    def ic(rows, ccs):
-        out = defaultdict(float)
-        for l in rows:
-            if l["BUKRS"] in ccs and l.get("VBUND") and l["KOART"] in ("D", "K") and not l.get("AUGBL"):
-                out[(l["BUKRS"], l["VBUND"])] += float(l["DMBTR"]) if l["SHKZG"] == "S" else -float(l["DMBTR"])
-        return out
-
-    s_ic, t_ic = ic(src_bseg, scope_ccs), ic(tgt_bseg, target_ccs)
-    for (cc, vb), amt in sorted(s_ic.items()):
-        t_amt = round(t_ic.get((tcc_of(cc), tcc_of(vb)), 0.0), 2)
-        results.append(_r(rid, "FINANCIAL", "intercompany_balance", "PASS" if abs(round(amt, 2) - t_amt) < 0.005 else "WARN", f"{cc}<->{vb}", round(amt, 2), t_amt, round(amt - t_amt, 2), "" if abs(round(amt, 2) - t_amt) < 0.005 else "Counterpart documents retained by seller or excluded by cross-company policy"))
-    # currency-specific
-    s_cur = defaultdict(float)
-    t_cur = defaultdict(float)
-    for l in src_bseg:
-        h = source.get("BKPF", BUKRS=l["BUKRS"], BELNR=l["BELNR"], GJAHR=l["GJAHR"])
-        if h and l["SHKZG"] == "S":
-            s_cur[(tcc_of(l["BUKRS"]), h["WAERS"])] += float(l["WRBTR"])
-    for l in tgt_bseg:
-        h = target.get("BKPF", BUKRS=l["BUKRS"], BELNR=l["BELNR"], GJAHR=l["GJAHR"])
-        if h and l["SHKZG"] == "S":
-            t_cur[(l["BUKRS"], h["WAERS"])] += float(l["WRBTR"])
-    for k in sorted(set(s_cur) | set(t_cur)):
-        s, t = round(s_cur.get(k, 0), 2), round(t_cur.get(k, 0), 2)
-        results.append(_r(rid, "FINANCIAL", "currency_totals", "PASS" if abs(s - t) < 0.005 else "WARN", f"{k[0]}/{k[1]}", s, t, round(s - t, 2), "" if abs(s - t) < 0.005 else "Document-currency debit totals differ; see gl_balance explanations"))
-    # fiscal period controls
-    yf, yt = defn.get("fiscal_year_from"), defn.get("fiscal_year_to")
-    out_of_range = sum(1 for h in target.rows("BKPF") if h["BUKRS"] in target_ccs and ((yf and int(h["GJAHR"]) < yf) or (yt and int(h["GJAHR"]) > yt)))
-    results.append(_r(rid, "FINANCIAL", "fiscal_period_control", "PASS" if out_of_range == 0 else "FAIL", f"{yf or '*'}-{yt or '*'}", "", out_of_range, out_of_range, "Target documents outside the scoped fiscal years" if out_of_range else ""))
+    if financial:
+        ctx = source_context(manifest, source, cls, exceptions, [s.target_payload for s in by_table.get("BSEG", []) if s.load_status == "LOADED"])
+        fin, gl_fail = financial_checks(rid, [ctx], target)
+        results.extend(fin)
 
     session.add_all(results)
     session.flush()
@@ -276,3 +172,176 @@ def summarize(results: list[ReconciliationResult]) -> dict:
         elif c["WARN"] and overall != "FAIL":
             overall = "WARN"
     return {"overall": overall, "by_layer": {k: dict(v) for k, v in by_layer.items()}, "checks": len(results)}
+
+
+# ====================================================================== FINANCIAL (single- or multi-source)
+def source_context(manifest: ScopeManifest, store: RecordStore, cls: dict, exceptions: list, loaded_bseg_payloads: list[dict]) -> dict:
+    defn = manifest.definition
+    cc_map = defn.get("target_ownership", {}).get("company_code_map") or {}
+    scope_ccs = set(defn["company_codes"])
+    return {"store": store, "defn": defn, "cls": cls, "scope_ccs": scope_ccs, "tcc_of": (lambda cc: cc_map.get(cc, cc)), "plant_map": defn.get("target_ownership", {}).get("plant_map") or {}, "rejected_keys": {e.record_key for e in exceptions if e.table_name in ("BKPF", "BSEG")}, "loaded_bseg": loaded_bseg_payloads}
+
+
+def _amt(l):
+    return float(l["DMBTR"]) if l["SHKZG"] == "S" else -float(l["DMBTR"])
+
+
+def financial_checks(rid: str, sources: list[dict], target: RecordStore) -> tuple[list[ReconciliationResult], int]:
+    """Financial reconciliation of one or several sources (merge group) against one target. Source totals are
+    mapped to target company codes and aggregated before comparison; variances are explained per bucket."""
+    results: list[ReconciliationResult] = []
+    target_ccs = {c["tcc_of"](cc) for c in sources for cc in c["scope_ccs"]}
+    src_label: dict[str, list[str]] = defaultdict(list)
+    for c in sources:
+        for cc in sorted(c["scope_ccs"]):
+            src_label[c["tcc_of"](cc)].append(cc)
+    tgt_bseg = [l for l in target.rows("BSEG") if l["BUKRS"] in target_ccs]
+    # trial balance per target company code and per document
+    for tcc in sorted(target_ccs):
+        lines = [l for l in tgt_bseg if l["BUKRS"] == tcc]
+        debit = round(sum(float(l["DMBTR"]) for l in lines if l["SHKZG"] == "S"), 2)
+        credit = round(sum(float(l["DMBTR"]) for l in lines if l["SHKZG"] == "H"), 2)
+        doc_bal = defaultdict(float)
+        for l in lines:
+            doc_bal[(l["BELNR"], l["GJAHR"])] += _amt(l)
+        unbalanced = sum(1 for v in doc_bal.values() if abs(v) > 0.005)
+        ok = abs(debit - credit) < 0.005 and unbalanced == 0
+        results.append(_r(rid, "FINANCIAL", "trial_balance", "PASS" if ok else "FAIL", tcc, debit, credit, round(debit - credit, 2), f"{unbalanced} unbalanced document(s)" if unbalanced else "Debits equal credits; every document balances", {"documents": len(doc_bal)}))
+    # GL balances aggregated by target company code
+    src_bal: dict[tuple, float] = defaultdict(float)
+    retained_b: dict[tuple, float] = defaultdict(float)
+    filtered_b: dict[tuple, float] = defaultdict(float)
+    rejected_b: dict[tuple, float] = defaultdict(float)
+    exp_bal: dict[tuple, float] = defaultdict(float)
+    for c in sources:
+        store, cls, scope_ccs, tcc_of = c["store"], c["cls"], c["scope_ccs"], c["tcc_of"]
+        retained = {n.split(":", 1)[1] for n, x in cls.items() if x["type"] == "FI.AccountingDocument" and x["classification"] not in TRANSFER}
+        classified = {n.split(":", 1)[1] for n, x in cls.items() if x["type"] == "FI.AccountingDocument"}
+        filtered = {f"{h['BUKRS']}|{h['BELNR']}|{h['GJAHR']}" for h in store.rows("BKPF") if h["BUKRS"] in scope_ccs} - classified
+        for l in store.rows("BSEG"):
+            if l["BUKRS"] not in scope_ccs:
+                continue
+            k = (tcc_of(l["BUKRS"]), l["HKONT"])
+            a = _amt(l)
+            src_bal[k] += a
+            doc = f"{l['BUKRS']}|{l['BELNR']}|{l['GJAHR']}"
+            if doc in retained:
+                retained_b[k] += a
+            elif doc in filtered:
+                filtered_b[k] += a
+            elif f"{doc}|{l['BUZEI']}" in c["rejected_keys"]:
+                rejected_b[k] += a
+        for k, v in _sum_lines(c["loaded_bseg"]).items():
+            exp_bal[k] += v
+    tgt_bal = _sum_lines(tgt_bseg)
+    gl_fail = 0
+    for k in sorted(set(src_bal) | set(tgt_bal)):
+        tcc, acct = k
+        if tcc not in target_ccs:
+            continue
+        s, t, e = round(src_bal.get(k, 0.0), 2), round(tgt_bal.get(k, 0.0), 2), round(exp_bal.get(k, 0.0), 2)
+        if s == 0 and t == 0:
+            continue
+        var = round(s - t, 2)
+        if abs(var) < 0.005:
+            status, expl = "PASS", ""
+        else:
+            ra, fa, ja = round(retained_b.get(k, 0.0), 2), round(filtered_b.get(k, 0.0), 2), round(rejected_b.get(k, 0.0), 2)
+            unexplained = round(var - ra - fa - ja, 2)
+            status = "WARN" if abs(unexplained) < 0.005 else "FAIL"
+            expl = f"Variance {var}: {ra} in documents retained/excluded by scope policy, {fa} in documents outside the fiscal-year/status filters (balance carry-forward required), {ja} in documents rejected by transformation rules, unexplained {unexplained}"
+            if abs(e - t) > 0.005:
+                status = "FAIL"
+                expl += f"; loaded content differs from staged expectation ({e} vs {t})"
+            if status == "FAIL":
+                gl_fail += 1
+        results.append(_r(rid, "FINANCIAL", "gl_balance", status, f"{'+'.join(src_label[tcc])}->{tcc}/{acct}", s, t, var, expl, {"expected_after_rules": e}))
+    # AP / AR open items
+    for name, table in (("ar_open_items", "BSID"), ("ap_open_items", "BSIK")):
+        s_rows = [r for c in sources for r in c["store"].rows(table) if r["BUKRS"] in c["scope_ccs"] and not r.get("AUGBL")]
+        t_rows = [r for r in target.rows(table) if r["BUKRS"] in target_ccs and not r.get("AUGBL")]
+        s_amt = round(sum(_amt(r) for r in s_rows), 2)
+        t_amt = round(sum(_amt(r) for r in t_rows), 2)
+        ok = len(s_rows) == len(t_rows) and abs(s_amt - t_amt) < 0.005
+        results.append(_r(rid, "FINANCIAL", name, "PASS" if ok else "WARN", "open_items", f"{len(s_rows)} / {s_amt}", f"{len(t_rows)} / {t_amt}", round(s_amt - t_amt, 2), "" if ok else "Open-item differences are explained by retained/excluded documents (see gl_balance rows)"))
+    # asset balances
+    s_assets = round(sum(float(r["KANSW"]) for c in sources for r in c["store"].rows("ANLC") if r["BUKRS"] in c["scope_ccs"]), 2)
+    t_assets = round(sum(float(r["KANSW"]) for r in target.rows("ANLC") if r["BUKRS"] in target_ccs), 2)
+    results.append(_r(rid, "FINANCIAL", "asset_balances", "PASS" if abs(s_assets - t_assets) < 0.005 else "FAIL", "acquisition_values", s_assets, t_assets, round(s_assets - t_assets, 2)))
+    # inventory valuation by valuation area
+    s_inv, held, tgt_val_areas = 0.0, 0.0, set()
+    for c in sources:
+        store = c["store"]
+        areas = {r["BWKEY"] for r in store.rows("T001K") if r["BUKRS"] in c["scope_ccs"]}
+        tgt_val_areas |= {c["plant_map"].get(b, b) for b in areas}
+        not_transferred = {n.split(":", 1)[1] for n, x in c["cls"].items() if x["type"] == "MD.Material" and x["classification"] not in TRANSFER}
+        for r in store.rows("MBEW"):
+            if r["BWKEY"] in areas:
+                s_inv += float(r["SALK3"])
+                if r["MATNR"] in not_transferred:
+                    held += float(r["SALK3"])
+    s_inv, held = round(s_inv, 2), round(held, 2)
+    t_inv = round(sum(float(r["SALK3"]) for r in target.rows("MBEW") if r["BWKEY"] in tgt_val_areas), 2)
+    inv_var = round(s_inv - t_inv, 2)
+    inv_expl = "" if abs(inv_var) < 0.005 else f"{held} held by materials not transferred (manual disposition / excluded); unexplained {round(inv_var - held, 2)}"
+    results.append(_r(rid, "FINANCIAL", "inventory_valuation", "PASS" if abs(inv_var) < 0.005 else ("WARN" if abs(inv_var - held) < 0.005 else "FAIL"), "valuation_areas", s_inv, t_inv, inv_var, inv_expl))
+    # intercompany balances (open), aggregated on target company codes
+    s_ic: dict[tuple, float] = defaultdict(float)
+    for c in sources:
+        for l in c["store"].rows("BSEG"):
+            if l["BUKRS"] in c["scope_ccs"] and l.get("VBUND") and l["KOART"] in ("D", "K") and not l.get("AUGBL"):
+                s_ic[(c["tcc_of"](l["BUKRS"]), c["tcc_of"](l["VBUND"]))] += _amt(l)
+    t_ic: dict[tuple, float] = defaultdict(float)
+    for l in tgt_bseg:
+        if l.get("VBUND") and l["KOART"] in ("D", "K") and not l.get("AUGBL"):
+            t_ic[(l["BUKRS"], l["VBUND"])] += _amt(l)
+    for k, amt in sorted(s_ic.items()):
+        t_amt = round(t_ic.get(k, 0.0), 2)
+        ok = abs(round(amt, 2) - t_amt) < 0.005
+        results.append(_r(rid, "FINANCIAL", "intercompany_balance", "PASS" if ok else "WARN", f"{k[0]}<->{k[1]}", round(amt, 2), t_amt, round(amt - t_amt, 2), "" if ok else "Counterpart documents retained by seller or excluded by cross-company policy"))
+    # currency-specific debit totals
+    s_cur: dict[tuple, float] = defaultdict(float)
+    t_cur: dict[tuple, float] = defaultdict(float)
+    for c in sources:
+        store = c["store"]
+        for l in store.rows("BSEG"):
+            if l["BUKRS"] in c["scope_ccs"] and l["SHKZG"] == "S":
+                h = store.get("BKPF", BUKRS=l["BUKRS"], BELNR=l["BELNR"], GJAHR=l["GJAHR"])
+                if h:
+                    s_cur[(c["tcc_of"](l["BUKRS"]), h["WAERS"])] += float(l["WRBTR"])
+    for l in tgt_bseg:
+        if l["SHKZG"] == "S":
+            h = target.get("BKPF", BUKRS=l["BUKRS"], BELNR=l["BELNR"], GJAHR=l["GJAHR"])
+            if h:
+                t_cur[(l["BUKRS"], h["WAERS"])] += float(l["WRBTR"])
+    for k in sorted(set(s_cur) | set(t_cur)):
+        s, t = round(s_cur.get(k, 0), 2), round(t_cur.get(k, 0), 2)
+        results.append(_r(rid, "FINANCIAL", "currency_totals", "PASS" if abs(s - t) < 0.005 else "WARN", f"{k[0]}/{k[1]}", s, t, round(s - t, 2), "" if abs(s - t) < 0.005 else "Document-currency debit totals differ; see gl_balance explanations"))
+    # fiscal period controls (per source range, on that source's target company codes)
+    for c in sources:
+        yf, yt = c["defn"].get("fiscal_year_from"), c["defn"].get("fiscal_year_to")
+        tccs = {c["tcc_of"](cc) for cc in c["scope_ccs"]}
+        out_of_range = sum(1 for h in target.rows("BKPF") if h["BUKRS"] in tccs and ((yf and int(h["GJAHR"]) < yf) or (yt and int(h["GJAHR"]) > yt)))
+        results.append(_r(rid, "FINANCIAL", "fiscal_period_control", "PASS" if out_of_range == 0 else "FAIL", f"{'+'.join(sorted(tccs))}:{yf or '*'}-{yt or '*'}", "", out_of_range, out_of_range, "Target documents outside the scoped fiscal years" if out_of_range else ""))
+    return results, gl_fail
+
+
+def reconcile_merge_group(session: Session, runs: list[MigrationRun], target: RecordStore) -> dict:
+    """Group-level financial reconciliation for a multi-source merge: the union of all sources' in-scope
+    balances versus the shared target. Results are attributed to the last run of the group."""
+    contexts = []
+    for run in runs:
+        m = session.get(ScopeManifest, run.manifest_id)
+        store = RecordStore.load(session, run.source_system_id)
+        exceptions = session.execute(select(TransformationException).where(TransformationException.run_id == run.id)).scalars().all()
+        loaded = [s.target_payload for s in session.execute(select(StagedRecord).where(StagedRecord.run_id == run.id, StagedRecord.table_name == "BSEG", StagedRecord.load_status == "LOADED")).scalars()]
+        contexts.append(source_context(m, store, m.selection.get("classification", {}), exceptions, loaded))
+    last = runs[-1]
+    session.query(ReconciliationResult).filter(ReconciliationResult.run_id == last.id, ReconciliationResult.layer == "FINANCIAL").delete()
+    results, gl_fail = financial_checks(last.id, contexts, target)
+    session.add_all(results)
+    session.flush()
+    summary = summarize(results)
+    summary["gl_failures"] = gl_fail
+    summary["sources"] = len(contexts)
+    return summary

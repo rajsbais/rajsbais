@@ -24,13 +24,15 @@ migrations, deployment) for the Phase 1 foundation and the first vertical slice.
   **technical, functional and financial reconciliation** (233 checks PASS on the demo) → hash-chained audit and
   evidence package. Failed runs resume from checkpoints.
 * 12 bounded AI agents (heuristic reasoner) that propose, with confidence and evidence; humans decide.
-* RBAC/ABAC, tenant segregation, masking, four-eyes approvals, tamper detection.
-* 18 frontend applications wired to the API; Docker/compose/Kubernetes/CI.
+* Multi-source merger: merge groups, cross-system key-collision planning, master-data deduplication with survivor
+  redirection, per-source number ranges, group-level financial reconciliation.
+* RBAC/ABAC, tenant segregation, masking, four-eyes approvals, tamper detection, OIDC single sign-on.
+* 19 frontend applications wired to the API; Docker/compose/Kubernetes/CI.
 
 ## Quick start
 ```bash
 python3 -m venv .venv && . .venv/bin/activate && pip install -e "backend[dev]"
-cd backend && pytest -q                      # 60 tests (+1 opt-in UI e2e)
+cd backend && pytest -q                      # 69 tests (+1 opt-in UI e2e)
 python -m sdtf.cli demo                      # full vertical slice, prints the execution report
 python -m sdtf.cli serve                     # API http://localhost:8000/docs
 cd ../frontend && npm install && npm run dev # UI http://localhost:5173 (login architect/architect)

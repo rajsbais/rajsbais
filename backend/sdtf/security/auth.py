@@ -120,7 +120,15 @@ def current_principal(request: Request) -> Principal:
     auth = request.headers.get("authorization", "")
     if not auth.lower().startswith("bearer "):
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "missing bearer token")
-    return decode_token(auth.split(" ", 1)[1].strip())
+    token = auth.split(" ", 1)[1].strip()
+    from . import oidc
+
+    if oidc.looks_like_jwt(token) and oidc.config().enabled:
+        try:
+            return oidc.principal_from_claims(oidc.verify_jwt(token))
+        except oidc.OidcError as e:
+            raise HTTPException(status.HTTP_401_UNAUTHORIZED, f"OIDC token rejected: {e}") from None
+    return decode_token(token)
 
 
 def require(permission: str):

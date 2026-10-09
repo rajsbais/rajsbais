@@ -23,8 +23,9 @@ synthetic data but replaces an SAP system with an in-platform store) · **PARTIA
 | 14 | Cutover | `cutover` | runbook generation, critical path, downtime forecast, rollback gates | PARTIAL |
 | 15 | Delta / NDT | — | CDC adapters, delta replay, backlog monitoring | PLANNED (design in doc 07) |
 | 16 | AI agents | `agents` | 12 bounded agents, proposals, confidence, evidence, human decision | IMPLEMENTED (heuristic reasoner); LLM reasoner PLANNED |
-| 17 | Security & governance | `security` | dev auth, RBAC/ABAC, tenant segregation, masking | IMPLEMENTED (dev identity); SSO PLANNED |
-| 18 | Frontend applications | `frontend/` | 18 screens wired to the API | IMPLEMENTED |
+| 17 | Security & governance | `security` | dev auth, OIDC SSO, RBAC/ABAC, tenant segregation, masking | IMPLEMENTED |
+| 19 | Merger orchestration | `runtime/merge`, `catalog/dedup` | merge groups, collision planner, dedup, group reconciliation | IMPLEMENTED (simulated runtime) |
+| 18 | Frontend applications | `frontend/` | 19 screens wired to the API | IMPLEMENTED |
 
 ## Context map (who depends on whom)
 ```
@@ -45,4 +46,4 @@ in-memory state, so each can be scaled or replaced independently (e.g. a propert
 | A1 Selective Data Transition | org/time/status/object filters, dependency preservation, CoA & BP mapping, validation | target process redesign tooling, broader object packages |
 | A2 Bluefield / hybrid | prepared-shell target with config matching, release registry, load-method selection | finance conversion execution, CVI execution, custom-code analysis |
 | A3 Carve-outs | forward/reverse flag, full/partial, shared masters, cross-company docs, IC balances, TSA, residual cleanup candidates, export control | asset vs share deal templates, automated cleanup execution (intentionally manual) |
-| A4 Mergers | scope DSL supports multi-source projects, number-range offsets, key maps | multi-source orchestration run, dedup engine |
+| A4 Mergers | merge groups with key-collision planning, per-source number ranges and prefixes, master-data dedup, group financial reconciliation | fuzzy matching, UI survivor selection |

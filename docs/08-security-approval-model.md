@@ -5,7 +5,7 @@ Implemented in `backend/sdtf/security/auth.py`, enforced on every route via `Dep
 ## Identity
 * Dev build: seeded users with PBKDF2 password hashes, HMAC-SHA256 signed bearer tokens with expiry
   (`SDTF_AUTH_SECRET`, `SDTF_TOKEN_TTL`). `SDTF_DEV_USERS=0` disables seeding in production images.
-* Planned: OIDC/SAML SSO; `Principal` (username, roles, tenant, attributes) is the integration point.
+* OIDC SSO (`security/oidc.py`): RS256 bearer tokens are verified against the provider's JWKS (URL or file), issuer, audience and expiry; the groups claim is mapped to SDTF roles via `SDTF_OIDC_ROLE_MAP`, the tenant claim to the tenant. Unknown groups degrade to `viewer`. Dev HMAC tokens stay available for local use. SAML and the UI-side PKCE login flow are planned.
 
 ## RBAC + ABAC
 | Role | Permissions |

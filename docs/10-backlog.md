@@ -7,8 +7,8 @@ Legend: P0 next increment · P1 following · P2 later. Sizes are relative (S/M/L
 |---|---|---|
 | P0 | Distributed extraction workers (Kubernetes Jobs per partition) using the existing partition/checkpoint model | M |
 | P0 | Columnar staging backend (Parquet on object storage) behind `RecordStore` for multi-TB volumes | L |
-| P0 | OIDC SSO + group→role mapping; remove dev users from production images | M |
-| P0 | Multi-source projects: MERGER orchestration across several source systems, key-map collisions | L |
+| ✅ | OIDC SSO + group→role mapping (done: `security/oidc.py`); UI PKCE login flow pending | M |
+| ✅ | Multi-source MERGER orchestration, key-collision planner, master-data dedup (done: `runtime/merge.py`, `catalog/dedup.py`) | L |
 | P1 | Property-graph backend adapter (ADR-0004) with the same `Graph` interface | M |
 | P1 | Scope designer: saved scenarios, scenario matrix comparison across >2 manifests | S |
 | P1 | Carve-out: asset vs share deal templates, residual cleanup execution with approval workflow | M |

@@ -20,7 +20,8 @@
 | Delta capture / continuous sync / NDT | PLANNED | design in docs/07 |
 | Cutover command center | PARTIAL | runbook, critical path, forecast, rollback gates, go/no-go; execution tracking planned |
 | AI agents (12) | IMPLEMENTED | heuristic reasoner; LLM reasoner planned |
-| Security: dev identity, RBAC/ABAC, tenant segregation, masking | IMPLEMENTED | SSO planned |
-| Frontend (18 applications) | IMPLEMENTED | all wired to live API |
+| Security: RBAC/ABAC, tenant segregation, masking, OIDC SSO (RS256/JWKS, group→role map) | IMPLEMENTED | dev users remain for local use |
+| Multi-source merger: merge groups, key-collision planning, master-data dedup, group financial reconciliation | IMPLEMENTED | simulated runtime |
+| Frontend (19 applications incl. Merger & Consolidation) | IMPLEMENTED | all wired to live API |
 | Deployment: Docker, compose, Kubernetes, CI | IMPLEMENTED | not yet exercised on a cluster |
 | Production SAP migration | UNSUPPORTED | this build never connects to or writes into an SAP system |

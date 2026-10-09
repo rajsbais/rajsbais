@@ -16,7 +16,7 @@ Reviewed against the master build prompt (sections A–S) on the current branch.
 | Cross-module dependency preservation | ✅ graph traversal with explanations | S/4-source resolvers (CDS) | — |
 | Bluefield prepared-shell target, config matching, release registry, load-method selection | ✅ | finance conversion execution, CVI execution, custom-code analysis | SAP Readiness Check / Simplification Item catalogue integration (SAP-licensed content) |
 | Forward/reverse, full/partial carve-out; ParentCo/SpinCo ownership; shared masters; cross-company docs; IC balances; TSA; residual cleanup candidates; export control | ✅ (reverse carve-out verified: 15.6k records, 130 financial checks PASS) | asset vs share deal templates; automated residual cleanup *execution* | legal disposition decisions, data-ownership sign-off |
-| Mergers: multi-source, dedup, number-range conflicts | scope DSL + number-range offsets + key maps | multi-source run orchestration, master-data dedup engine | — |
+| Mergers: multi-source, dedup, number-range conflicts | ✅ merge groups, cross-system key-collision planner (header + item keys), master-data dedup with survivor redirection, per-source number ranges/prefixes, group-level financial reconciliation (two-source test: PASS) | fuzzy matching beyond exact normalised keys; UI-driven survivor selection | — |
 
 ## B–E. Discovery, graph, scope, carve-out intelligence
 | Capability | Status |
@@ -43,7 +43,7 @@ Reviewed against the master build prompt (sections A–S) on the current branch.
 | Capability | Status |
 |---|---|
 | 12 bounded agents with confidence, evidence, approvals, decision log | **Built** (heuristic); LLM reasoner **pending** |
-| RBAC/ABAC, tenant segregation, four-eyes, masking, immutable audit, tamper detection | **Built**; SSO/OIDC, secrets manager integration, tokenisation service **pending** |
+| RBAC/ABAC, tenant segregation, four-eyes, masking, immutable audit, tamper detection, OIDC SSO (JWKS, group→role map) | **Built**; secrets manager integration, tokenisation service, PKCE login flow in the UI **pending** |
 | Export-control and cross-border controls | **Built** as classification + compliance findings; **legal determinations cannot be made by the platform** |
 | 18 frontend applications on live APIs | **Built** (Playwright e2e verified) |
 | Containers, Kubernetes, CI/CD, IaC | **Built** manifests/workflow; **not exercised on a real cluster here** (no cluster); Terraform/Helm **pending** |
