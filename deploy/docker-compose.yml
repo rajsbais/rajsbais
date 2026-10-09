@@ -18,6 +18,8 @@ services:
       SDTF_STAGING_DIR: /app/data/staging
       SDTF_CORS_ORIGINS: http://localhost:8080
       SDTF_ENV: compose
+      SDTF_LOG_FORMAT: json
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}   # e.g. http://otel-collector:4318
     volumes: ["evidence:/app/data"]
     depends_on: { postgres: { condition: service_healthy } }
     ports: ["8000:8000"]
@@ -31,6 +33,9 @@ services:
       SDTF_STAGING_BACKEND: columnar
       SDTF_STAGING_DIR: /app/data/staging
       SDTF_DEV_USERS: "0"
+      SDTF_LOG_FORMAT: json
+      OTEL_SERVICE_NAME: sdtf-worker
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
     volumes: ["evidence:/app/data"]
     depends_on: [backend]
     deploy: { replicas: 2 }

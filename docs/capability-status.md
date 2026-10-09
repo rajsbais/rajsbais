@@ -25,5 +25,6 @@
 | Security: RBAC/ABAC, tenant segregation, masking, OIDC SSO (RS256/JWKS, group→role map) | IMPLEMENTED | dev users remain for local use |
 | Multi-source merger: merge groups, key-collision planning, master-data dedup, group financial reconciliation | IMPLEMENTED | simulated runtime |
 | Frontend (19 applications incl. Merger & Consolidation) | IMPLEMENTED | all wired to live API |
+| Observability: OpenTelemetry traces, metrics, trace-correlated JSON logs | IMPLEMENTED | OTLP/HTTP export; verified with in-memory exporters, not against a live collector |
 | Deployment: Docker, compose, Kubernetes, CI | IMPLEMENTED | not yet exercised on a cluster |
 | Production SAP migration | UNSUPPORTED | this build never connects to or writes into an SAP system |

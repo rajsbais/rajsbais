@@ -34,7 +34,12 @@ PostgreSQL (metadata, manifests, audit) and the evidence directory/bucket are th
 files are content-addressed via `evidence_index.json`; verify hashes after restore.
 
 ## Observability
-`/healthz`; per-stage metrics in `run_stages`; audit events for every governance action. Planned: OpenTelemetry.
+OpenTelemetry (ADR-0011): point `OTEL_EXPORTER_OTLP_ENDPOINT` at a collector; traces show `sdtf.run` → stages for
+inline runs and `sdtf.job` spans (stage, partition, worker, attempt) for distributed runs, with staging writes as
+children. Useful queries: p95 of `sdtf.job.duration` by stage; `sdtf.jobs` with status=FAILED; `sdtf.jobs.requeued`
+(lease expiries indicate dying or hanging workers); `sdtf.staging.files_scanned` vs `files_pruned` (index
+effectiveness); `sdtf.reconciliation.checks` by layer/status. Logs are JSON with `trace_id`; `/healthz` and
+`/api/v1/platform/telemetry` report the active exporter. Per-stage metrics also remain in `run_stages`.
 
 ## Housekeeping
 `staged_records` grows per run; retain runs that back sign-offs, purge the rest by `run_id` after the evidence

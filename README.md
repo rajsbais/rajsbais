@@ -30,13 +30,14 @@ migrations, deployment) for the Phase 1 foundation and the first vertical slice.
   reconciliation as per-table, functional and financial jobs, with leases, crash re-queue, atomic stage closing
   and idle self-healing; columnar Parquet staging on local, S3, GCS or Azure filesystems via fsspec. INLINE threads and relational
   staging remain for small scopes.
+* OpenTelemetry traces, metrics and trace-correlated JSON logs across API and workers.
 * RBAC/ABAC, tenant segregation, masking, four-eyes approvals, tamper detection, OIDC single sign-on.
 * 19 frontend applications wired to the API; Docker/compose/Kubernetes/CI.
 
 ## Quick start
 ```bash
 python3 -m venv .venv && . .venv/bin/activate && pip install -e "backend[dev]"
-cd backend && pytest -q                      # 79 tests (+1 opt-in UI e2e)
+cd backend && pytest -q                      # 85 tests (+1 opt-in UI e2e)
 python -m sdtf.cli demo                      # full vertical slice, prints the execution report
 python -m sdtf.cli serve                     # API http://localhost:8000/docs
 cd ../frontend && npm install && npm run dev # UI http://localhost:5173 (login architect/architect)
@@ -60,7 +61,7 @@ Or: `docker compose -f deploy/docker-compose.yml up --build` (UI :8080, API :800
 | [11](docs/11-vertical-slice-acceptance.md) | vertical slice acceptance criteria and verified results |
 | [capability review](docs/capability-review.md) | built / pending / cannot be built here, per brief section |
 | [test report](docs/test-report.md) | test campaign results, scenario matrix, scale timings, defects fixed |
-| [ADRs](docs/adr) | ten architecture decision records |
+| [ADRs](docs/adr) | eleven architecture decision records |
 | [operations](docs/operations.md) · [benchmarks](docs/benchmarks.md) · [capability status](docs/capability-status.md) | |
 
 ## Repository layout

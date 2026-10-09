@@ -13,6 +13,7 @@ spec:
           image: ghcr.io/example/sdtf-backend:0.1.0
           command: ["python", "-m", "sdtf.cli", "worker"]
           envFrom: [{ configMapRef: { name: sdtf-config } }, { secretRef: { name: sdtf-secrets } }]
+          env: [{ name: OTEL_SERVICE_NAME, value: "sdtf-worker" }]
           resources: { requests: { cpu: "1", memory: "2Gi" }, limits: { cpu: "4", memory: "8Gi" } }
           volumeMounts: [{ name: evidence, mountPath: /app/data }]
       volumes:

@@ -25,6 +25,7 @@ from sqlalchemy import case, func, select, update
 from sqlalchemy.orm import Session
 
 from .. import config
+from .. import observability as obs
 from ..audit.service import record_event
 from ..catalog.store import RecordStore
 from ..models import ExtractionJob, MigrationRun, RuleSet, SapSystem, ScopeManifest
@@ -166,6 +167,8 @@ def requeue_stale(session: Session, now: datetime | None = None) -> int:
     for j in stale:
         j.status, j.worker_id, j.lease_until, j.error = "QUEUED", None, None, f"lease expired (previous worker {j.worker_id})"
     session.flush()
+    if stale:
+        obs.counter("sdtf.jobs.requeued", len(stale), reason="lease_expired")
     return len(stale)
 
 
@@ -188,6 +191,11 @@ def claim_job(session: Session, worker_id: str, lease_seconds: int | None = None
 
 
 def process_job(session: Session, job: ExtractionJob, cache: dict | None = None) -> int:
+    with obs.timed("sdtf.job", run_id=job.run_id, stage=job.stage, partition=job.partition_id, worker_id=job.worker_id, attempt=job.attempts):
+        return _process_job(session, job, cache)
+
+
+def _process_job(session: Session, job: ExtractionJob, cache: dict | None = None) -> int:
     run = session.get(MigrationRun, job.run_id)
     backend = get_backend(run.metrics.get("staging_backend"), session=session)
     try:
@@ -216,9 +224,12 @@ def process_job(session: Session, job: ExtractionJob, cache: dict | None = None)
         job = session.get(ExtractionJob, job.id)
         job.status, job.error, job.finished_at = "FAILED", f"{e}\n{traceback.format_exc(limit=3)}", _now()
         session.commit()
+        obs.counter("sdtf.jobs", 1, stage=job.stage, status="FAILED")
         raise
     job.status, job.records, job.finished_at, job.error, job.metrics = "DONE", n, _now(), "", metrics
     session.commit()
+    obs.counter("sdtf.jobs", 1, stage=job.stage, status="DONE")
+    obs.counter("sdtf.job.records", n, stage=job.stage)
     return n
 
 
@@ -281,6 +292,8 @@ def advance_run_if_stage_complete(session: Session, run_id: str, actor: str) -> 
         st.metrics, st.status, st.finished_at = metrics, "DONE", _now()
         st.duration_ms = round(metrics["duration_s"] * 1000, 1)
         st.checkpoint = {"partitions_done": sorted(j.partition_id for j in jobs)}
+        obs.histogram("sdtf.stage.duration", st.duration_ms, stage=current, execution="DISTRIBUTED")
+        obs.counter("sdtf.stage.closed", 1, stage=current, pipelined=pipelined)
         nxt = _next_stage(current)
         if nxt is None:
             reconcile_closed = True

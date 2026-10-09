@@ -12,6 +12,7 @@ from datetime import datetime, timezone
 from sqlalchemy.orm import Session
 
 from .. import config
+from .. import observability as obs
 from ..audit.service import record_event, write_evidence_package
 from ..catalog.store import RecordStore
 from ..models import (
@@ -122,6 +123,9 @@ def execute_run(session: Session, run: MigrationRun, actor: str) -> MigrationRun
     scope_ccs = set(m.definition["company_codes"])
     source_store = None
     backend = get_backend(run.metrics.get("staging_backend"), session=session)
+    run_span = obs.span("sdtf.run", run_id=run.id, mode=run.mode, execution=run.metrics.get("execution", "INLINE"), staging=backend.name)
+    run_span.__enter__()
+    stage_span = None
     try:
         for name in STAGES:
             st = _stage(run, name)
@@ -130,6 +134,8 @@ def execute_run(session: Session, run: MigrationRun, actor: str) -> MigrationRun
             st.status, st.started_at = "RUNNING", _now()
             session.flush()
             t0 = time.monotonic()
+            stage_span = obs.span(f"sdtf.stage.{name}", run_id=run.id, stage=name)
+            stage_span.__enter__()
             if name == "PRECHECK":
                 st.metrics = {"manifest_hash": m.content_hash, "ruleset_hash": rs_row.content_hash, "source": f"{src.sid}/{src.client}", "target": f"{tgt.sid}/{tgt.client}", "objects_in_scope": m.impact.get("objects_total", 0)}
             elif name == "EXTRACT":
@@ -155,7 +161,15 @@ def execute_run(session: Session, run: MigrationRun, actor: str) -> MigrationRun
             st.status, st.finished_at = "DONE", _now()
             st.duration_ms = max(st.duration_ms, round((time.monotonic() - t0) * 1000, 1))
             session.flush()
+            stage_span.__exit__(None, None, None)
+            stage_span = None
+            obs.histogram("sdtf.stage.duration", st.duration_ms, stage=name, execution=run.metrics.get("execution", "INLINE"))
+            for k in ("records", "loaded", "rejected", "conflicts", "checks"):
+                if isinstance(st.metrics.get(k), (int, float)):
+                    obs.counter(f"sdtf.stage.{k}", st.metrics[k], stage=name)
         run.status = "COMPLETED"
+        obs.counter("sdtf.runs", 1, status="COMPLETED", mode=run.mode)
+        run_span.__exit__(None, None, None)
         run.finished_at = _now()
         record_event(session, actor, "RUN_COMPLETED", "RUN", run.id, {"reconciliation": run.report.get("reconciliation", {}).get("overall")})
     except Exception as e:  # noqa: BLE001 - we persist the failure and re-raise
@@ -167,6 +181,12 @@ def execute_run(session: Session, run: MigrationRun, actor: str) -> MigrationRun
         run.finished_at = _now()
         session.flush()
         record_event(session, actor, "RUN_FAILED", "RUN", run.id, {"error": str(e)})
+        obs.counter("sdtf.runs", 1, status="FAILED", mode=run.mode)
+        import sys
+
+        if stage_span is not None:
+            stage_span.__exit__(*sys.exc_info())
+        run_span.__exit__(*sys.exc_info())
         raise
     session.flush()
     return run

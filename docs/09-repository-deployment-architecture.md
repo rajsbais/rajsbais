@@ -43,7 +43,10 @@ evidence; with `SDTF_STAGING_DIR=s3://…` or `gs://…` staging needs no shared
 | SDTF_STAGING_BACKEND, SDTF_STAGING_DIR | `relational` (default) or `columnar` Parquet staging at a local path, `s3://bucket/prefix`, `gs://bucket/prefix` or `memory://` |
 | SDTF_STAGING_FS_OPTIONS | JSON fsspec options for the staging filesystem, e.g. `{"endpoint_url": "http://minio:9000"}` |
 | SDTF_JOB_LEASE_SECONDS, SDTF_WORKER_POLL_SECONDS | distributed worker lease and poll interval |
+| OTEL_EXPORTER_OTLP_ENDPOINT, OTEL_SERVICE_NAME, SDTF_OTEL_ENABLED, SDTF_OTEL_CONSOLE, SDTF_LOG_FORMAT | telemetry export and log format (ADR-0011) |
 
-## Observability (partial)
-Structured stage metrics and durations are persisted per run (`run_stages.metrics`) and exposed in the UI;
-`/healthz` for probes. Planned: OpenTelemetry traces/metrics export, structured JSON logging, per-partition progress events.
+## Observability
+OpenTelemetry traces and metrics (ADR-0011) exported over OTLP/HTTP when `OTEL_EXPORTER_OTLP_ENDPOINT` is set
+(`SDTF_OTEL_CONSOLE=1` for stdout in development); FastAPI and SQLAlchemy auto-instrumented; JSON logs with
+`trace_id`/`span_id` via `SDTF_LOG_FORMAT=json`. Stage metrics and durations are also persisted per run
+(`run_stages.metrics`) and shown in the UI; `/healthz` reports telemetry status; `/api/v1/platform/telemetry` too.

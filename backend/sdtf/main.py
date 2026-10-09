@@ -5,10 +5,11 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from . import __version__
+from . import observability as obs
 from .api.routes_core import router as core_router
 from .api.routes_transform import router as transform_router
 from .config import settings
-from .db import init_schema, session_scope
+from .db import get_engine, init_schema, session_scope
 from .security.auth import seed_dev_users
 
 
@@ -28,13 +29,18 @@ def create_app() -> FastAPI:
 
     @app.on_event("startup")
     def _startup():
+        obs.setup(service_name=__import__("os").getenv("OTEL_SERVICE_NAME", "sdtf-api"))
         init_schema()
+        obs.instrument_engine(get_engine())
         with session_scope() as s:
             seed_dev_users(s)
 
+    obs.setup()
+    obs.instrument_app(app)
+
     @app.get("/healthz")
     def healthz():
-        return {"status": "ok", "version": __version__, "environment": settings.environment}
+        return {"status": "ok", "version": __version__, "environment": settings.environment, "telemetry": obs.status()}
 
     return app
 

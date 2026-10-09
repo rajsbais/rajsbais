@@ -18,7 +18,8 @@
 | Staging & workers (columnar contract, slice on columnar staging, two in-process workers over EXTRACT/TRANSFORM/LOAD jobs, lease expiry + re-queue, two `sdtf worker` subprocesses with concurrent load jobs and zero conflicts, pipelined vs barrier overlap, crash-between-jobs self-healing, reconciliation as per-table/functional/financial jobs with summary equal to the inline path) | 7 | pass |
 | Object-store staging (fsspec `memory://` URL: contract + full slice; `file://` URL; clear error when the S3 driver is missing) | 2 | pass |
 | Key-range index (Bloom filter has no false negatives, files outside the key range are never read, at most one file scanned for in-range keys, write-time dedup through the index, counts from sidecars, missing sidecar falls back to a scan) | 1 | pass |
-| **Total** | **80** | **79 passed, 1 skipped by default (e2e)** |
+| Observability (run/stage span tree and metrics for an inline run; job spans, staging-write child spans and pruning metrics for a distributed run; error status on a failed run; JSON logs carry trace ids; no-op when disabled; health reports telemetry status) | 6 | pass |
+| **Total** | **86** | **85 passed, 1 skipped by default (e2e)** |
 
 Lint: `ruff check backend/sdtf backend/tests` clean. Frontend: `tsc --noEmit` and `vite build` clean.
 

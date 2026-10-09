@@ -13,6 +13,7 @@ from collections import Counter, defaultdict
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from .. import observability as obs
 from ..catalog.business_objects import BUSINESS_OBJECTS, instance_status
 from ..catalog.store import RecordStore
 from ..models import MigrationRun, ReconciliationResult, ScopeManifest, TransformationException
@@ -184,6 +185,9 @@ def summarize(results: list[ReconciliationResult]) -> dict:
     by_layer: dict[str, Counter] = defaultdict(Counter)
     for r in results:
         by_layer[r.layer][r.status] += 1
+    for layer, c in by_layer.items():
+        for st, n in c.items():
+            obs.counter("sdtf.reconciliation.checks", n, layer=layer, status=st)
     overall = "PASS"
     for c in by_layer.values():
         if c["FAIL"]:

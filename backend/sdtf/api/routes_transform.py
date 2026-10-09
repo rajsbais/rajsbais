@@ -451,7 +451,8 @@ CAPABILITIES = [
     {"area": "Transformation rule DSL", "status": "IMPLEMENTED", "note": "YAML DSL, validation, embedded tests, dry run"},
     {"area": "Extraction", "status": "SIMULATED", "note": "Synthetic store extractor; RFC/OData/CDS adapters planned"},
     {"area": "Distributed extraction workers", "status": "IMPLEMENTED", "note": "Claim-based partition jobs with leases, crash re-queue, last-worker finalisation; `sdtf worker` processes / pods"},
-    {"area": "Columnar staging (Parquet on object-storage mount)", "status": "IMPLEMENTED", "note": "Per run/table/partition files, zstd; S3/GCS via CSI mount; fsspec backends planned"},
+    {"area": "Columnar staging (Parquet on local / S3 / GCS / Azure via fsspec, key-range sidecar index)", "status": "IMPLEMENTED", "note": "Per run/table/partition files, zstd; object-store path tested with the in-memory filesystem"},
+    {"area": "Observability (OpenTelemetry traces, metrics, trace-correlated JSON logs)", "status": "IMPLEMENTED", "note": "OTLP/HTTP export when OTEL_EXPORTER_OTLP_ENDPOINT is set; no-op otherwise"},
     {"area": "Target load", "status": "SIMULATED", "note": "Simulated loader with idempotent upsert; released-API loaders planned"},
     {"area": "Reconciliation (technical/functional/financial)", "status": "IMPLEMENTED", "note": "Runs on simulated data"},
     {"area": "Audit trail & evidence packages", "status": "IMPLEMENTED", "note": "Hash-chained events, evidence index"},
@@ -462,6 +463,13 @@ CAPABILITIES = [
     {"area": "SSO / enterprise identity", "status": "IMPLEMENTED", "note": "OIDC RS256 bearer tokens verified against JWKS with group-to-role mapping; dev users remain for local use"},
     {"area": "Production SAP migration", "status": "UNSUPPORTED", "note": "This build never connects to or writes into an SAP system"},
 ]
+
+
+@router.get("/platform/telemetry", tags=["platform"])
+def platform_telemetry(p: Principal = Depends(current_principal)):
+    from .. import observability as obs
+
+    return obs.status()
 
 
 @router.get("/platform/capabilities", tags=["platform"])

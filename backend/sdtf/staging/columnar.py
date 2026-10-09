@@ -20,6 +20,7 @@ import re
 from collections import defaultdict
 from typing import Iterable, Iterator
 
+from .. import observability as obs
 from .base import StagedRow
 from .index import FileIndex, index_path
 
@@ -123,6 +124,14 @@ class ColumnarStaging:
         wanted = set(keys)
         if not wanted:
             return set()
+        before = dict(self.stats)
+        try:
+            return self._contains(run_id, table, wanted)
+        finally:
+            obs.counter("sdtf.staging.files_pruned", self.stats["files_pruned"] - before["files_pruned"], table=table)
+            obs.counter("sdtf.staging.files_scanned", self.stats["files_scanned"] - before["files_scanned"], table=table)
+
+    def _contains(self, run_id: str, table: str, wanted: set[str]) -> set[str]:
         lo, hi = min(wanted), max(wanted)
         found: set[str] = set()
         import pyarrow.parquet as pq
@@ -174,6 +183,13 @@ class ColumnarStaging:
 
     # ------------------------------------------------------------------ contract
     def write_partition(self, run_id: str, partition: str, rows: Iterable[StagedRow]) -> int:
+        with obs.timed("sdtf.staging.write_partition", run_id=run_id, partition=partition, backend=self.name, protocol=self.protocol) as s:
+            n = self._write_partition(run_id, partition, rows)
+            s.set_attribute("records", n)
+            obs.counter("sdtf.staging.records_written", n, backend=self.name)
+            return n
+
+    def _write_partition(self, run_id: str, partition: str, rows: Iterable[StagedRow]) -> int:
         by_table: dict[str, list[StagedRow]] = defaultdict(list)
         for r in rows:
             by_table[r.table_name].append(r)

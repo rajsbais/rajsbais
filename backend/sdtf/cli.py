@@ -45,9 +45,12 @@ def main(argv=None):
                 print(f"project_id={out['project'].id} manifest_id={out['manifest'].id} run_id={run.id}")
         return 0
     if a.cmd == "worker":
-        from .db import get_session_factory
+        from . import observability as obs
+        from .db import get_engine, get_session_factory
         from .runtime.worker import Worker
 
+        obs.setup(service_name=__import__("os").getenv("OTEL_SERVICE_NAME", "sdtf-worker"))
+        obs.instrument_engine(get_engine())
         w = Worker(get_session_factory(), a.worker_id, a.lease_seconds)
         n = w.run(until_idle=a.until_idle, max_jobs=a.max_jobs)
         print(f"worker {w.worker_id} processed {n} job(s)")
