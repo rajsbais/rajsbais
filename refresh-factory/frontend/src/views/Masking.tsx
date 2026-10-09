@@ -14,7 +14,7 @@ export default function Masking() {
     <>
       <Card title="Policy templates">
         <div className="grid two">{tm.map((t) => (
-          <div key={t.id} className="tpl"><h4>{t.name}</h4><p className="muted">{t.description}</p><p>{t.rules.length} rules · {cls(t.rules[0])}</p></div>))}</div>
+          <div key={t.id} className="tpl"><h3>{t.name}</h3><p className="muted">{t.description}</p><p>{t.rules.length} rules · {cls(t.rules[0])}</p></div>))}</div>
         <p className="muted small">Pseudonymization is reversible by anyone holding the key plus candidate values and is never labelled “anonymization”. Per-run anonymization destroys its key after the run, and still carries residual inference risk from unmasked quasi-identifiers (city, dates, amounts).</p>
       </Card>
       {st?.policy && (

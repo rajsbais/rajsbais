@@ -23,7 +23,7 @@ export default function Landscape() {
       <Card title="Environments">
         <div className="env-row">
           {roles.map((r) => (
-            <div key={r} className="env-col"><h4>{r}</h4>
+            <div key={r} className="env-col"><h3>{r}</h3>
               {systems.filter((s) => s.role === r).map((s) => (
                 <button key={s.id} className={`env ${sel === s.id ? "active" : ""} ${r === "PRD" ? "prd" : ""}`} onClick={() => setSel(s.id)}>
                   <strong>{s.sid}/{s.client}</strong><span>{s.product}</span><Badge>{s.family}</Badge>

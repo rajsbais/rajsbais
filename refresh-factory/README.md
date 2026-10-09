@@ -11,6 +11,7 @@ cd backend && pip install -e '.[test]' && python -m pytest          # 242 tests
 cd ../frontend && npm install && npm run build                       # UI served by the API from frontend/dist
 cd ../backend && uvicorn rfactory.api.main:app --port 8000           # http://localhost:8000  (API docs at /docs)
 # UI dev server: cd frontend && npm run dev   (proxies /api to :8000)
+# UI end-to-end + accessibility tests (starts its own backend per test): cd frontend && npm run test:e2e
 ```
 Sign in with the sidebar user switcher (demo header auth). Walkthrough: *Control tower → Load synthetic landscape → Selective designer* (create project, scope company 1000 / 90 days,
 build plan, analyze conflicts, apply SKIP policy, apply masking advice, submit; switch to **Carol (Change approver)** to approve; switch back to execute) → *Reconciliation*.
@@ -27,5 +28,7 @@ approval with separation of duties · checkpointed load, resume, rollback · 34+
 **Lean client builder:** *Lean client* screen → create a template from a purpose preset (Alice), submit, approve (Carol), estimate lean vs full client copy, build client 320 into the QA system, then lock/unlock or decommission it.
 
 **Post-copy factory:** *Post-copy* screen → capture a profile of the clean QA target (Alice), submit, approve (Carol), *simulate a system copy*, plan a run, approve as Basis lead (Bastian), Integration owner (Ingrid) and Security officer (Sven), execute (Alice), review the verification gate, roll back if needed.
+
+**UI tests:** `frontend/e2e` (Playwright + axe-core). Journeys drive the real UI through each module with role switching (separation of duties, disabled controls, unmasked-data warning, agent restrictions); accessibility specs scan all 17 views in empty and loaded states and check landmarks, one `h1` per view, heading order, skip link, keyboard navigation and sorting, WAI-ARIA tabs, visible focus, colour-token contrast, alert announcements, 320/390px reflow and dark/light schemes. Automated checks find only part of the accessibility problems; a manual screen-reader review has not been done. Set `PW_CHROMIUM` to use a specific Chromium binary.
 
 Docs: [capability matrix](docs/01-capability-matrix.md) · [architecture](docs/02-architecture.md) · [backlog](docs/03-backlog.md) · [OpenAPI](docs/openapi.json) · [DB schema (design)](db/schema.sql).

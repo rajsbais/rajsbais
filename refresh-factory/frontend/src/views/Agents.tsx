@@ -101,13 +101,13 @@ export default function Agents() {
           <p><strong>{rep.summary}</strong></p>
           <p className="muted small">Subject: {rep.subject || "—"} · run by {rep.ran_by} · {rep.method}</p>
           {rep.narrative && <div className="callout"><strong>Model narration</strong> ({rep.narrative.model}): {rep.narrative.text}<p className="muted small">{rep.narrative.disclaimer}</p></div>}
-          {rep.findings.length > 0 && <><h4>Findings</h4><ul>{rep.findings.map((f: J, i: number) => <li key={i}><Badge kind={PRI[f.level] ?? (f.level === "blocking" ? "bad" : f.level === "warning" ? "warn" : "info")}>{f.level}</Badge> {f.text}</li>)}</ul></>}
+          {rep.findings.length > 0 && <><h3>Findings</h3><ul>{rep.findings.map((f: J, i: number) => <li key={i}><Badge kind={PRI[f.level] ?? (f.level === "blocking" ? "bad" : f.level === "warning" ? "warn" : "info")}>{f.level}</Badge> {f.text}</li>)}</ul></>}
           {rep.artifacts.controls && <DataTable pageSize={20} rows={rep.artifacts.controls} cols={[{ key: "id", title: "Control" }, { key: "name", title: "Check" }, { key: "status", title: "Result", render: (c: J) => <StatusBadge s={c.status} /> }, { key: "detail", title: "Detail" }]} />}
           {rep.artifacts.markdown && <pre className="small" style={{ whiteSpace: "pre-wrap" }}>{rep.artifacts.markdown}</pre>}
-          <h4>Recommendations ({rep.recommendations.length})</h4>
+          <h3>Recommendations ({rep.recommendations.length})</h3>
           {rep.recommendations.length === 0 && <p className="muted">Nothing to recommend — the agent found no evidence-backed reason to act.</p>}
           {rep.recommendations.map((r: J) => <Rec key={r.id} r={recs.find((x) => x.id === r.id) ?? r} onDone={() => loadRecs(rep.id)} />)}
-          <h4>Limitations</h4><ul className="muted small">{rep.limitations.map((l: string, i: number) => <li key={i}>{l}</li>)}</ul>
+          <h3>Limitations</h3><ul className="muted small">{rep.limitations.map((l: string, i: number) => <li key={i}>{l}</li>)}</ul>
         </Card>)}
     </>
   );

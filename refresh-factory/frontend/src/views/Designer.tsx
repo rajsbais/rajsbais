@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { api, J } from "../api";
-import { Bars, Badge, Card, ErrorNote, Stat, Stepper, StatusBadge, useAction } from "../components";
+import { Bars, Badge, Card, ErrorNote, Stat, Stepper, StatusBadge, TabList, TabPanel, useAction } from "../components";
 import { useApp } from "../ctx";
 
 const STEPS = ["Systems", "Scope", "Plan preview", "Conflicts", "Masking", "Approval", "Execute"];
@@ -36,10 +36,9 @@ export default function Designer() {
   return (
     <>
       <Stepper steps={STEPS} active={step} />
-      <div className="tabs" role="tablist">
-        {STEPS.map((s, i) => <button key={s} role="tab" aria-selected={tab === i} className={tab === i ? "tab on" : "tab"} onClick={() => setTab(i)}>{s}</button>)}
-      </div>
+      <TabList id="designer" tabs={STEPS} active={tab} onChange={setTab} label="Refresh design steps" />
       <ErrorNote error={act.error} />
+      <TabPanel id="designer" active={tab}>
 
       {tab === 0 && (
         <Card title="1 · Select source and target">
@@ -95,13 +94,13 @@ export default function Designer() {
                 <Stat label="Est. duration" value={`${plan.estimate.seconds}s`} hint="placeholder model, not a benchmark" />
               </div>
               <div className="grid two">
-                <div><h4>Objects by type</h4><Bars data={plan.by_type} /></div>
-                <div><h4>Why they are in scope</h4><Bars data={plan.by_origin} />
+                <div><h3>Objects by type</h3><Bars data={plan.by_type} /></div>
+                <div><h3>Why they are in scope</h3><Bars data={plan.by_origin} />
                   <p className="muted small">ROOT = selected · REQUIRED = master/upstream dependency · DOWNSTREAM = document-flow successor</p></div>
               </div>
-              <h4>Customizing the target must already contain</h4>
+              <h3>Customizing the target must already contain</h3>
               <p>{Object.entries(plan.config_prerequisites).map(([k, v]) => <Badge key={k}>{k}: {(v as string[]).join(", ")}</Badge>)}</p>
-              <h4>Issues</h4>
+              <h3>Issues</h3>
               {plan.issues.length ? <ul className="checks">{plan.issues.map((i: J, n: number) => <li key={n}><StatusBadge s={i.severity} /> {i.message}</li>)}</ul> : <p className="muted">None</p>}
             </>)}
         </Card>)}
@@ -111,7 +110,7 @@ export default function Designer() {
           {!conf ? <p className="muted">Analyze the target to detect duplicates, number-range overlaps and configuration gaps.</p> : (
             <>
               <p>{conf.blocking ? <Badge kind="bad">blocking conflicts</Badge> : <Badge kind="ok">no blocking conflicts</Badge>} · {conf.executable_instances} objects will be written</p>
-              <div className="grid two"><div><h4>Findings</h4><Bars data={conf.by_type} /></div><div><h4>Decisions</h4><Bars data={conf.decisions} /></div></div>
+              <div className="grid two"><div><h3>Findings</h3><Bars data={conf.by_type} /></div><div><h3>Decisions</h3><Bars data={conf.decisions} /></div></div>
               <div className="form"><label>When an object exists in the target with different content
                 <select value={dupPolicy} onChange={(e) => setDupPolicy(e.target.value)}>
                   <option value="FAIL">FAIL (block)</option><option value="SKIP">SKIP (keep target, quarantine dependent chain)</option>
@@ -161,6 +160,7 @@ export default function Designer() {
               <p className="muted small">Execution writes only to the simulated non-production target, applies masking in-flight and stops at a release gate.</p>
             </>)}
         </Card>)}
+      </TabPanel>
     </>
   );
 }

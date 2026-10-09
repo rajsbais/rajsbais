@@ -1,4 +1,4 @@
-import { ReactNode, useMemo, useState } from "react";
+import { createContext, ReactNode, useContext, useId, useMemo, useState } from "react";
 import type { J } from "./api";
 
 export function Badge({ kind, children }: { kind?: string; children: ReactNode }) {
@@ -17,11 +17,14 @@ export const SimBanner = () => (
   </div>
 );
 
+const CardTitle = createContext<string | undefined>(undefined);
+
 export function Card({ title, actions, children }: { title?: string; actions?: ReactNode; children: ReactNode }) {
+  const id = useId();
   return (
     <section className="card">
-      {(title || actions) && <header><h3>{title}</h3><div className="row">{actions}</div></header>}
-      {children}
+      {(title || actions) && <header><h2 id={id}>{title}</h2><div className="row">{actions}</div></header>}
+      <CardTitle.Provider value={title ? id : undefined}>{children}</CardTitle.Provider>
     </section>
   );
 }
@@ -42,6 +45,7 @@ export function DataTable({ rows, cols, empty = "Nothing to show", pageSize = 12
   const [q, setQ] = useState("");
   const [sort, setSort] = useState<{ key: string; dir: 1 | -1 } | null>(null);
   const [page, setPage] = useState(0);
+  const cardTitle = useContext(CardTitle);
   const filtered = useMemo(() => {
     const needle = q.trim().toLowerCase();
     let out = needle ? rows.filter((r) => JSON.stringify(r).toLowerCase().includes(needle)) : rows;
@@ -60,12 +64,14 @@ export function DataTable({ rows, cols, empty = "Nothing to show", pageSize = 12
         <input className="search" placeholder="Search…" value={q} aria-label="Search table" onChange={(e) => { setQ(e.target.value); setPage(0); }} />
         <span className="muted">{filtered.length} of {rows.length}</span>
       </div>
-      <div className="scroll">
+      <div className="scroll" tabIndex={0} role="region" aria-labelledby={cardTitle} aria-label={cardTitle ? undefined : "Table"}>
         <table>
           <thead><tr>{cols.map((c) => (
-            <th key={c.key} onClick={() => setSort((s) => (s?.key === c.key ? { key: c.key, dir: (-s.dir) as 1 | -1 } : { key: c.key, dir: 1 }))}
-                aria-sort={sort?.key === c.key ? (sort.dir === 1 ? "ascending" : "descending") : "none"}>
-              {c.title}{sort?.key === c.key ? (sort.dir === 1 ? " ▲" : " ▼") : ""}
+            <th key={c.key} aria-sort={sort?.key === c.key ? (sort.dir === 1 ? "ascending" : "descending") : "none"}>
+              {c.title ? (
+                <button className="sort" onClick={() => setSort((s) => (s?.key === c.key ? { key: c.key, dir: (-s.dir) as 1 | -1 } : { key: c.key, dir: 1 }))}>
+                  {c.title}{sort?.key === c.key ? (sort.dir === 1 ? " ▲" : " ▼") : ""}
+                </button>) : <span className="sr-only">Actions</span>}
             </th>))}</tr></thead>
           <tbody>
             {filtered.slice(cur * pageSize, (cur + 1) * pageSize).map((r, i) => (
@@ -112,4 +118,26 @@ export function useAction() {
     try { return await fn(); } catch (e) { setError((e as Error).message); } finally { setBusy(false); }
   };
   return { busy, error, run, setError };
+}
+
+/** WAI-ARIA tabs: roving tabindex, Left/Right/Home/End, tab <-> panel linkage. Render the active panel inside <TabPanel>. */
+export function TabList({ id, tabs, active, onChange, label }: { id: string; tabs: string[]; active: number; onChange: (i: number) => void; label: string }) {
+  const key = (e: React.KeyboardEvent) => {
+    const n = tabs.length;
+    const next = e.key === "ArrowRight" ? (active + 1) % n : e.key === "ArrowLeft" ? (active + n - 1) % n : e.key === "Home" ? 0 : e.key === "End" ? n - 1 : -1;
+    if (next < 0) return;
+    e.preventDefault(); onChange(next);
+    document.getElementById(`${id}-tab-${next}`)?.focus();
+  };
+  return (
+    <div className="tabs" role="tablist" aria-label={label} onKeyDown={key}>
+      {tabs.map((t, i) => (
+        <button key={t} id={`${id}-tab-${i}`} role="tab" aria-selected={active === i} aria-controls={`${id}-panel`} tabIndex={active === i ? 0 : -1}
+                className={active === i ? "tab on" : "tab"} onClick={() => onChange(i)}>{t}</button>))}
+    </div>
+  );
+}
+
+export function TabPanel({ id, active, children }: { id: string; active: number; children: ReactNode }) {
+  return <div role="tabpanel" id={`${id}-panel`} aria-labelledby={`${id}-tab-${active}`} tabIndex={0}>{children}</div>;
 }

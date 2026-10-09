@@ -96,8 +96,8 @@ export default function Delta() {
             <Stat label="Re-evaluated (deferred)" value={prev.retried_deferred} /><Stat label="Quarantined / skipped" value={`${prev.quarantined} / ${prev.skipped}`} />
             <Stat label="Out of window (kept)" value={prev.retained_out_of_scope} hint={`${prev.deleted_in_source} deleted in source: not propagated`} />
           </div>
-          <div className="grid two"><div><h4>By mechanism</h4><Bars data={prev.by_mechanism} /></div>
-            <div><h4>Blocking</h4>{prev.blocking.length ? <ul className="checks">{prev.blocking.map((b: string) => <li key={b}><StatusBadge s="blocking" /> {b}</li>)}</ul> : <Badge kind="ok">none</Badge>}
+          <div className="grid two"><div><h3>By mechanism</h3><Bars data={prev.by_mechanism} /></div>
+            <div><h3>Blocking</h3>{prev.blocking.length ? <ul className="checks">{prev.blocking.map((b: string) => <li key={b}><StatusBadge s="blocking" /> {b}</li>)}</ul> : <Badge kind="ok">none</Badge>}
               {prev.notes.map((n: string) => <p key={n} className="muted small">{n}</p>)}</div></div>
         </Card>)}
 

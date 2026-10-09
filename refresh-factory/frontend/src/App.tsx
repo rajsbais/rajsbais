@@ -67,16 +67,18 @@ export default function App() {
   };
   const current = VIEWS.find((v) => v.id === view) ?? VIEWS[0];
   const View = current.el;
+  useEffect(() => { document.title = `${current.label} · Keystone`; }, [current.label]);
 
   return (
     <AppCtx.Provider value={ctx}>
+      <a className="skip" href="#main">Skip to main content</a>
       <div className="shell">
         <aside className={nav ? "side open" : "side"}>
           <nav aria-label="Main">
             {GROUPS.map((g) => (
               <div key={g.group} className="nav-group"><div className="eyebrow">{g.group}</div>
                 {g.views.map((v) => (
-                  <button key={v.id} className={v.id === current.id ? "nav active" : "nav"} onClick={() => go(v.id)}
+                  <button key={v.id} className={v.id === current.id ? "nav active" : "nav"} aria-current={v.id === current.id ? "page" : undefined} onClick={() => go(v.id)}
                           disabled={!!v.perm && !!me && !ctx.can(v.perm)} title={v.perm && !ctx.can(v.perm) ? `requires ${v.perm}` : ""}>
                     {v.label}
                   </button>))}
@@ -90,7 +92,8 @@ export default function App() {
             <div className="muted small">{me?.roles?.join(", ")}</div>
           </div>
         </aside>
-        <main>
+        <main id="main" tabIndex={-1}>
+          <h1 className="sr-only">{current.label}</h1>
           <header className="top">
             <button className="menu" onClick={() => setNav(!nav)} aria-label="Toggle navigation">☰</button>
             <div className="brandbar"><div className="eyebrow brandname">Keystone</div><div>SAP refresh control tower · synthetic {project ? (project.source.family === "S4" ? "S/4HANA" : "ECC") : "ECC + S/4HANA"}</div></div>

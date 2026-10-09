@@ -37,7 +37,7 @@ export default function LeanClient() {
     <>
       <Card title="Three different workflows">
         <div className="grid two">{cat?.workflows.map((w: J) => (
-          <div key={w.id} className={`tpl ${w.id === "client_build" ? "" : "muted"}`}><h4>{w.name}</h4>
+          <div key={w.id} className={`tpl ${w.id === "client_build" ? "" : "muted"}`}><h3>{w.name}</h3>
             <p className="small"><strong>Scope:</strong> {w.scope}<br /><strong>Copies:</strong> {w.copies}<br /><strong>Typical use:</strong> {w.typical_use}</p>
             <Badge kind={w.implemented === "simulated" ? "warn" : "bad"}>{w.implemented}</Badge></div>))}</div>
         <p className="muted small">A lean client is a new client in an existing non-production system. Client-independent customizing, the repository, user master and authorizations are not modelled here; reserved clients 000, 001, 066 are never touched.</p>
@@ -47,7 +47,7 @@ export default function LeanClient() {
         {prds.map((s) => <option key={s.id} value={s.id}>{s.label} · {s.family}</option>)}</select>}>
         <p className="muted">Start from a purpose preset; the author reviews it, an approver (not the author) approves it, and then clients can be built from it.</p>
         <div className="grid two">{presets.map((p) => (
-          <div key={p.purpose} className="tpl"><h4>{p.name}</h4>
+          <div key={p.purpose} className="tpl"><h3>{p.name}</h3>
             <p className="small">{p.masters.map((m: J) => `${m.type} ≤${m.max}`).join(" · ")}<br />{p.transactions.length ? p.transactions.map((t: J) => `${t.count}× ${t.template_id} (${t.mode})`).join(" · ") : "no transactional data"}</p>
             <p className="small muted">masking {p.masking_policy_id} · limit {p.max_rows} rows · keep {p.retention_days}d · {p.protect_after_build ? "protected after build" : "stays writable"}</p>
             <button disabled={!app.can("plan:write") || act.busy} onClick={() => go(async () => { const t = await api.post("/api/lean/templates", { name: p.name, source_id: src, purpose: p.purpose, company_codes: p.customizing.company_codes,
@@ -79,8 +79,8 @@ export default function LeanClient() {
               <Stat label="Smaller by" value={`${est.savings.rows_pct}%`} hint={`${est.savings.bytes_pct}% by size`} />
               <Stat label="Est. duration" value={`${est.duration.lean.seconds}s`} hint={`vs ${est.duration.full_client_copy.seconds}s · placeholder model`} />
             </div>
-            <div className="grid two"><div><h4>What the lean client contains (rows per table)</h4><Bars data={est.lean.tables} /></div>
-              <div><h4>Plan</h4><ul className="checks">{est.lean.specs.map((s: J, i: number) => <li key={i}><Badge>{s.kind}</Badge> {s.type ?? s.template} · {s.objects} object(s)</li>)}</ul>
+            <div className="grid two"><div><h3>What the lean client contains (rows per table)</h3><Bars data={est.lean.tables} /></div>
+              <div><h3>Plan</h3><ul className="checks">{est.lean.specs.map((s: J, i: number) => <li key={i}><Badge>{s.kind}</Badge> {s.type ?? s.template} · {s.objects} object(s)</li>)}</ul>
                 {est.customizing_pulled_in_by_data.length > 0 && <p className="small">Customizing pulled in because the data needs it: {est.customizing_pulled_in_by_data.join(", ")}</p>}
                 {est.notes.map((n: string) => <p key={n} className="muted small">{n}</p>)}</div></div>
             <p className="muted small">{est.caveats.join(" ")}</p>

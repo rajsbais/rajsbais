@@ -1,0 +1,30 @@
+name: ci
+on: [push, pull_request]
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.13" }
+      - run: pip install -e 'refresh-factory/backend[test]'
+      - run: python -m pytest -q
+        working-directory: refresh-factory/backend
+  ui:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.13" }
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - run: pip install -e 'refresh-factory/backend[test]'
+      - run: npm ci
+        working-directory: refresh-factory/frontend
+      - run: npx playwright install --with-deps chromium
+        working-directory: refresh-factory/frontend
+      - run: npm run test:e2e
+        working-directory: refresh-factory/frontend
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with: { name: playwright-traces, path: refresh-factory/frontend/test-results }
