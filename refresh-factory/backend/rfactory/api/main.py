@@ -112,6 +112,11 @@ class GateIn(BaseModel):
     note: str = ""
 
 
+class ConnectIn(BaseModel):
+    system: dict
+    profile: dict
+
+
 class AgentRunIn(BaseModel):
     params: dict = Field(default_factory=dict)
     narrate: bool = False
@@ -387,6 +392,39 @@ def create_app(data_dir: Path | None = None, persist: bool | None = None, auth: 
     def systems(p: Principal = Depends(need("view"))):
         return [{**s.model_dump(mode="json"), "family": s.family, "label": s.label, "writable_target": s.can_be_write_target, "simulated": True}
                 for s in svc.systems.values() if authz.system_ok(p, s)]
+
+    @app.post("/api/systems/connect", status_code=201)
+    def connect_remote(b: ConnectIn, p: Principal = Depends(me)):
+        from ..sap.adapter import SapSystem
+        from ..sap.connectors.profile import ConnectionProfile
+        try:
+            system, profile = SapSystem(**{"id": "", **b.system}), ConnectionProfile(**b.profile)
+        except (TypeError, ValueError) as e:
+            raise HTTPException(422, f"invalid system or profile: {e}")
+        s = svc.connect_remote(p, system, profile)
+        return {**s.model_dump(mode="json"), "label": s.label, "remote": True, "writable_target": False}
+
+    @app.get("/api/systems/{sid}/remote")
+    def remote_info(sid: str, _: Principal = Depends(need("view"))):
+        svc.system(sid)
+        if svc.is_local(sid):
+            raise HTTPException(409, "this system is simulated, not remote")
+        a, prof = svc.adapters[sid], svc.remote_profiles.get(sid)
+        return {"profile": prof.public() if prof else None, "capabilities": a.capabilities(), "stats": a.stats.public(), "schema_drift": a.drift,
+                "validated_against_real_sap": False}
+
+    @app.post("/api/demo/connect-fake-rfc", status_code=201)
+    def demo_connect_fake(p: Principal = Depends(need("system:write"))):
+        """Registers a second ECC production source that is reached through the RFC adapter over a FAKE RFC transport (no SAP involved)."""
+        from ..sap.adapter import SapSystem
+        from ..sap.connectors.fake_rfc import FakeRfcTransport
+        from ..sap.connectors.profile import ConnectionProfile
+        from ..sap.synthetic import make_demo_pair
+        sim, _t = make_demo_pair()
+        system = SapSystem(sid="EP2", client="100", role="PRD", owner="finance-ops", tags=["remote-demo"])
+        prof = ConnectionProfile("EP2 via fake RFC", "rfc", ashost="fake.invalid", client="100", user="DEMO", password_ref="env:DEMO_NOT_USED", calls_per_minute=60_000)
+        s = svc.connect_remote(p, system, prof, transport=FakeRfcTransport(sim), reference=sim.reference_date)
+        return {**s.model_dump(mode="json"), "label": s.label, "remote": True, "simulated_transport": True}
 
     @app.get("/api/systems/{sid}/discovery")
     def discovery(sid: str, _: Principal = Depends(need("view"))):

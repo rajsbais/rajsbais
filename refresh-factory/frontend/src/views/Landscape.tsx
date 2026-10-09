@@ -4,7 +4,8 @@ import { Badge, Card, DataTable, ErrorNote, StatusBadge, useAction } from "../co
 import { useApp } from "../ctx";
 
 export default function Landscape() {
-  const { systems, project } = useApp();
+  const { systems, project, can, reload } = useApp();
+  const [remote, setRemote] = useState<J>(null);
   const [sel, setSel] = useState<string | null>(null);
   const [disc, setDisc] = useState<J>(null);
   const [ready, setReady] = useState<J>(null);
@@ -14,13 +15,17 @@ export default function Landscape() {
   useEffect(() => { if (systems.length) api.get("/api/landscape/combinations").then(setCombos).catch(() => undefined); }, [systems]);
   useEffect(() => {
     if (!sel) return;
-    void act.run(async () => { setDisc(await api.get(`/api/systems/${sel}/discovery`)); setReady(await api.get(`/api/systems/${sel}/readiness`)); });
+    void act.run(async () => {
+      setDisc(await api.get(`/api/systems/${sel}/discovery`)); setReady(await api.get(`/api/systems/${sel}/readiness`));
+      setRemote(systems.find((s) => s.id === sel)?.adapter === "rfc" ? await api.get(`/api/systems/${sel}/remote`) : null);
+    });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sel]);
   const roles = ["PRD", "QAS", "UAT", "DEV", "SBX", "TRN"];
   return (
     <>
-      <Card title="Environments">
+      <Card title="Environments" actions={<button disabled={!can("system:write") || act.busy} title="Registers a second ECC production source reached through the RFC adapter over a FAKE transport"
+        onClick={() => act.run(async () => { const r = await api.post("/api/demo/connect-fake-rfc"); await reload(); setSel(r.id); })}>Connect demo remote source (fake RFC)</button>}>
         <div className="env-row">
           {roles.map((r) => (
             <div key={r} className="env-col"><h3>{r}</h3>
@@ -28,6 +33,7 @@ export default function Landscape() {
                 <button key={s.id} className={`env ${sel === s.id ? "active" : ""} ${r === "PRD" ? "prd" : ""}`} onClick={() => setSel(s.id)}>
                   <strong>{s.sid}/{s.client}</strong><span>{s.product}</span><Badge>{s.family}</Badge>
                   {s.writable_target ? <Badge kind="ok">writable target</Badge> : <Badge kind="bad">read-only</Badge>}
+                  {s.adapter === "rfc" && <Badge kind="info">remote (RFC)</Badge>}
                 </button>))}
               {!systems.some((s) => s.role === r) && <span className="muted small">none</span>}
             </div>))}
@@ -44,13 +50,21 @@ export default function Landscape() {
               <dt>Company codes</dt><dd>{disc.company_codes.map((c: J) => `${c.code} ${c.name}`).join("; ")}</dd>
               <dt>Plants</dt><dd>{disc.plants.map((p: J) => `${p.plant} (${p.company_code})`).join(", ")}</dd>
             </dl>
-            <div className="chips">{Object.entries(disc.business_objects).map(([k, v]) => <Badge key={k}>{k.replace("_", " ")}: {String(v)}</Badge>)}</div>
+            {disc.business_objects ? <div className="chips">{Object.entries(disc.business_objects).map(([k, v]) => <Badge key={k}>{k.replace("_", " ")}: {String(v)}</Badge>)}</div>
+              : <p className="muted small">{disc.note}</p>}
           </Card>
           <Card title="Readiness assessment">
             {ready && <><p>{ready.ready ? <Badge kind="ok">ready</Badge> : <Badge kind="bad">not ready</Badge>}</p>
               <ul className="checks">{ready.checks.map((c: J) => <li key={c.id}>{c.ok ? "✓" : "✗"} {c.name}</li>)}</ul></>}
           </Card>
         </div>)}
+      {remote && (
+        <Card title="Remote connection (read-only)">
+          <p><Badge kind="warn">not validated against a real SAP system</Badge> <span className="muted small">{remote.capabilities.full_scan}; writes: {String(remote.capabilities.writes)}; change documents: {String(remote.capabilities.change_documents)}</span></p>
+          <p className="small">Calls {remote.stats.calls} · retries {remote.stats.retries} · rows read {remote.stats.rows} · full scans {remote.stats.scans} ({remote.stats.scanned_tables.join(", ") || "none"}) · guard trips {remote.stats.guard_trips}</p>
+          <p className="small">Pushed down to the system: {remote.capabilities.pushdown.join(", ")}.
+            {Object.keys(remote.schema_drift).length ? ` Schema drift: ${JSON.stringify(remote.schema_drift)}` : " The modelled DDIC fields and keys all exist remotely."}</p>
+        </Card>)}
       <Card title="Supported refresh combinations">
         <DataTable rows={combos} cols={[
           { key: "label", title: "Route" },

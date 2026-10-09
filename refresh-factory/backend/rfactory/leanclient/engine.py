@@ -304,6 +304,7 @@ class LeanClientService:
 
     def _estimate(self, t: EnvTemplate, host: SapSystem, p: dict) -> dict:
         svc = self.svc
+        svc.require_local(t.source_id, "a lean-client estimate (it compares with a full client copy of the source)")
         tables: dict[str, int] = {}
         data_rows, data_bytes = _size(provision.plan_rows(p["plan_a"])) if p["plan_a"] else (0, 0)
         if p["plan_a"]:
@@ -361,6 +362,8 @@ class LeanClientService:
         svc, now = self.svc, now or _now()
         from ..security import authz
         authz.require_systems(svc, actor, spec.get("host_id"), spec.get("source_id"))
+        if spec.get("source_id"):
+            svc.require_local(spec["source_id"], "a lean-client build")
         t = self.get_template(spec["template_id"])
         if t.status != "APPROVED" or not t.approval or t.approval["hash"] != t.hash():
             raise Conflict(f"template is {t.status}; it must be approved for its current definition")

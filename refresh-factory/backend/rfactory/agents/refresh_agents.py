@@ -41,6 +41,9 @@ def landscape_discovery(svc, params, rep: AgentReport) -> None:
                           "high", "high", "direct field check",
                           ["Writes to production are already blocked structurally; the flag is still on, which weakens defence in depth."],
                           [ev("landscape", tag, "writable_target_allowed=true on a production system")], "lock_system", {"system_id": s.id})
+        if not svc.is_local(s.id):
+            rep.finding("info", f"{s.label}: remote read-only source: outbound interfaces and technical state are not inspected.", [ev("adapter", tag, f"kind={getattr(a, 'kind', '?')}")])
+            continue
         if not s.is_production:
             active = [o.get("name") for o in a.outbound_interfaces() if o.get("active")]
             if active:
@@ -71,10 +74,14 @@ def refresh_strategy(svc, params, rep: AgentReport) -> None:
     s = svc.plan_summary(p.id)
     cfg_gaps = [i for i in p.plan.issues if i.code.startswith("CONFIG") or "customizing" in i.message.lower()]
     gb = float(params.get("source_gb", 0) or 0)
+    known = s["source_total_rows"] is not None
+    if not known:
+        s = {**s, "source_total_rows": s["total_rows"] * 10}  # unknown for a remote source: a neutral assumption, stated in the limitations
+        rep.limitations.append("The source is remote and its row counts are not read (they would need full scans): the scope/source ratio is NOT known, so the size rules ran on a neutral assumption.")
     adv = advisors.refresh_strategy(source_rows=s["source_total_rows"], scope_rows=s["total_rows"], source_gb=gb,
                                     config_change_needed=bool(cfg_gaps), freshness_days=int(params.get("freshness_days", 30)),
                                     masking_required=True)
-    base = [ev("plan", p.id, f"{s['total_rows']} of {s['source_total_rows']} source rows in scope"),
+    base = [ev("plan", p.id, f"{s['total_rows']} of {s['source_total_rows']} source rows in scope" if known else f"{s['total_rows']} rows in scope (source size unknown)"),
             ev("plan", p.id, f"{len(cfg_gaps)} customizing gap(s) in the plan")]
     if gb == 0:
         rep.limitations.append("source_gb was not supplied, so the size rules are inactive (the simulation has no real DB size).")
@@ -88,7 +95,7 @@ def refresh_strategy(svc, params, rep: AgentReport) -> None:
         rep.recommend("Consider a delta refresh scenario", "A short freshness window is better served by incremental refresh than repeated full selective copies.",
                       "low", "medium", "freshness_days<=7", ["Freshness need is 7 days or less and no delta scenario targets this system."],
                       base + [ev("delta", p.target_id, "no scenarios for this target")])
-    rep.summary = f"Recommended: {adv['recommendation']} (scope {s['total_rows']} rows = {s['total_rows'] / max(1, s['source_total_rows']):.1%} of source)."
+    rep.summary = f"Recommended: {adv['recommendation']} (scope {s['total_rows']} rows" + (f" = {s['total_rows'] / max(1, s['source_total_rows']):.1%} of source)." if known else "; source size unknown).")
 
 
 # ---------------------------------------------------------------- 3 business dependency
@@ -420,9 +427,9 @@ def compliance_verification(svc, params, rep: AgentReport) -> None:
     ctl("C09", "No datasets past retention", not over, f"{len(over)} overdue")
     ag = [e for e in svc.audit.entries() if e["actor"].startswith("refresh.") and e["action"] in ("plan.approved", "run.executed", "plan.approve")]
     ctl("C10", "Agent principals never approved or executed", not ag, f"{len(ag)} event(s)")
-    nonprod_ifc = [s.label for s in svc.systems.values() if not s.is_production and any(o.get("active") for o in svc.adapters[s.id].outbound_interfaces())]
+    nonprod_ifc = [s.label for s in svc.systems.values() if not s.is_production and svc.is_local(s.id) and any(o.get("active") for o in svc.adapters[s.id].outbound_interfaces())]
     ctl("C11", "Outbound interfaces inactive on non-production", not nonprod_ifc, ", ".join(nonprod_ifc) or "none active")
-    refs = [s.label for s in svc.systems.values() if not s.is_production and svc.postcopy.assess(s.id)["active_production_references"]]
+    refs = [s.label for s in svc.systems.values() if not s.is_production and svc.is_local(s.id) and svc.postcopy.assess(s.id)["active_production_references"]]
     ctl("C12", "Non-production systems free of active production references", not refs, ", ".join(refs) or "clean")
     full = [p.name for p in svc.projects.values() if p.manifest and not p.manifest.scope.dims() and not p.manifest.scope.explicit_keys and not (p.manifest.scope.date_from)]
     ctl("C13", "Data minimisation: no unbounded scopes", not full, ", ".join(full) or "all scopes bounded")

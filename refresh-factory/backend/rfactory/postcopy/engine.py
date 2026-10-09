@@ -129,12 +129,13 @@ class PostCopyService:
     # ------------------------------------------------------------ helpers
     def tech(self, system_id: str) -> TechState:
         self.svc.system(system_id)
+        self.svc.require_local(system_id, "post-copy automation")
         return self.svc.adapters[system_id].tech
 
     def prod_hosts(self) -> set[str]:
         out: set[str] = set()
         for s in self.svc.systems.values():
-            if s.is_production:
+            if s.is_production and self.svc.is_local(s.id):  # a remote production system's hosts are unknown to the platform
                 out |= self.svc.adapters[s.id].tech.hosts()
         return out
 

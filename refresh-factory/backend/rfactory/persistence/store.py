@@ -91,7 +91,10 @@ def collect(svc) -> dict[tuple[str, str], object]:
     """Every aggregate the platform holds, keyed by (kind, id). Objects inside one aggregate keep their mutual references."""
     out: dict[tuple[str, str], object] = {}
     for sid, s in svc.systems.items():
-        out[("system", sid)] = {"system": s, "adapter": svc.adapters[sid]}
+        if svc.is_local(sid):
+            out[("system", sid)] = {"system": s, "adapter": svc.adapters[sid]}
+        else:  # a remote source: only the profile (secret references, no secrets) is stored; the connection is re-made on start
+            out[("system", sid)] = {"system": s, "adapter": None, "profile": svc.remote_profiles.get(sid)}
     for pid, p in svc.projects.items():
         out[("project", pid)] = {"project": p, "sensitive": svc.required_sensitive.get(pid), "engine": svc.engines.get(pid)}
     for rid, r in svc.runs.items():
@@ -112,8 +115,13 @@ def apply(svc, objs: dict[tuple[str, str], object]) -> None:
     for (kind, k), v in objs.items():
         by.setdefault(kind, {})[k] = v
     for sid, pack in by.get("system", {}).items():
-        svc.systems[sid], svc.adapters[sid] = pack["system"], pack["adapter"]
-        pack["adapter"].system = pack["system"]
+        svc.systems[sid] = pack["system"]
+        if pack["adapter"] is None:
+            svc.remote_profiles[sid] = pack["profile"]
+            svc.adapters[sid] = svc.rebuild_remote(pack["system"], pack["profile"])
+        else:
+            svc.adapters[sid] = pack["adapter"]
+            pack["adapter"].system = pack["system"]
     for pid, pack in by.get("project", {}).items():
         svc.projects[pid] = pack["project"]
         if pack["sensitive"] is not None:

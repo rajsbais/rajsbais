@@ -115,7 +115,8 @@ class Planner:
                 continue
             table, fld = spec
             vals = set(values)
-            keysets.append({key_of_header(ot, r) for r in self.r.select(table, lambda x: x.get(fld) in vals)})
+            rows = self.r.select_in(table, fld, vals) if hasattr(self.r, "select_in") else self.r.select(table, lambda x: x.get(fld) in vals)
+            keysets.append({key_of_header(ot, r) for r in rows})
         if m.scope.date_from or m.scope.date_to:
             if ot.date_field is None:
                 issues.append(Issue("UNSUPPORTED_FILTER", "blocking", f"{ot.name} has no date field"))
@@ -123,7 +124,9 @@ class Planner:
                 table, fld = ot.date_field
                 lo = m.scope.date_from.isoformat() if m.scope.date_from else "0000-00-00"
                 hi = m.scope.date_to.isoformat() if m.scope.date_to else "9999-12-31"
-                keysets.append({key_of_header(ot, r) for r in self.r.select(table, lambda x: lo <= x.get(fld, "") <= hi)})
+                rows = (self.r.select_between(table, fld, lo, hi) if hasattr(self.r, "select_between")
+                        else self.r.select(table, lambda x: lo <= x.get(fld, "") <= hi))
+                keysets.append({key_of_header(ot, r) for r in rows})
         if m.scope.explicit_keys:
             keysets.append(set(m.scope.explicit_keys))
         if not keysets:

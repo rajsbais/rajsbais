@@ -400,6 +400,13 @@ class SimulatedSap:
     def select(self, table, predicate: Callable[[Row], bool] | None = None):
         return [r for r in self.data[table] if predicate is None or predicate(r)]
 
+    def select_in(self, table, field, values):
+        vals = set(values)
+        return [r for r in self.data[table] if r.get(field) in vals]
+
+    def select_between(self, table, field, lo, hi):
+        return [r for r in self.data[table] if lo <= r.get(field, "") <= hi]
+
     def lookup(self, table, field, value):
         ix = self._idx.get((table, field))
         if ix is None:

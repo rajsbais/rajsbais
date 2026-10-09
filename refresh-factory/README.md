@@ -7,7 +7,7 @@ Selective, business-consistent SAP non-production refresh with masking, conflict
 
 ## Run
 ```bash
-cd backend && pip install -e '.[test]' && python -m pytest          # 336 tests
+cd backend && pip install -e '.[test]' && python -m pytest          # 360 tests
 cd ../frontend && npm install && npm run build                       # UI served by the API from frontend/dist
 cd ../backend && uvicorn rfactory.api.main:app --port 8000           # http://localhost:8000  (API docs at /docs)
 # durable state (survives restarts, encrypted at rest):  RFACTORY_DATA_DIR=./data RFACTORY_STATE_KEY=$(python -c 'from cryptography.fernet import Fernet;print(Fernet.generate_key().decode())') uvicorn ...
@@ -23,6 +23,8 @@ conflict detection (identical/modified target objects, tester-owned documents, m
 approval with separation of duties · checkpointed load, resume, rollback · 34+ technical/business/security checks with a release gate · report + evidence ZIP + hash-chained audit.
 
 **Delta refresh:** *Delta refresh* screen → create the weekend QA sync, add the recommended masking rule (Dave), submit (Alice), approve (Carol), run; then *Simulate source activity* and preview/run again to see only the difference move.
+
+**Remote source (RFC):** *Landscape → Connect demo remote source (fake RFC)* registers a second ECC production source reached through the RFC adapter over a **fake** transport; use it as the source in the Selective designer. The adapter is read-only (allow-listed function modules, bounded scans, WHERE pushdown). It has never run against a real SAP system; connecting a real one needs `pyrfc` and the SAP NetWeaver RFC SDK, which this repository does not install or test (`POST /api/systems/connect`).
 
 **Manufacturing:** *Selective designer* → root business object `PRODUCTION_ORDER` (tick *MATERIAL_DOCUMENT* downstream) pulls the BOMs, component materials and goods issues/receipts; four production reconciliation checks run on the target. ECC uses MKPF/MSEG, S/4HANA uses MATDOC (one instance per document line). The test catalog adds make-to-stock templates (completed/open order, BOM) for subset and synthetic provisioning.
 

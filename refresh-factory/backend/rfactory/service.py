@@ -95,6 +95,7 @@ class RefreshService:
         self.full = FullRefreshService(self)
         from .orchestration.engine import OrchestrationService
         self.orch = OrchestrationService(self)
+        self.remote_profiles: dict = {}
         self.store = None
         if persist:
             from .persistence.store import StateStore
@@ -106,15 +107,68 @@ class RefreshService:
         return self.store.save() if self.store else None
 
     # ---------------- landscape ----------------
+    def is_local(self, sid: str) -> bool:
+        """True for systems the platform fully models (simulated: data, technical state, writable). Remote systems are read-only sources."""
+        a = self.adapters.get(sid)
+        return a is not None and hasattr(a, "data") and hasattr(a, "tech")
+
+    def require_local(self, sid: str, what: str) -> None:
+        if not self.is_local(sid):
+            raise Conflict(f"{what} is not available for the remote read-only system {self.system(sid).label}: it needs the platform to model or write the system")
+
     def register_system(self, actor: Principal, system: SapSystem, adapter: SimulatedSap | None = None) -> SapSystem:
         system.id = system.id or f"sys-{uuid.uuid4().hex[:8]}"
         if adapter is None:
-            raise Conflict("only simulated adapters exist in the MVP: pass a SimulatedSap")
+            raise Conflict("pass an adapter: a SimulatedSap, or a remote read-only adapter via connect_remote()")
         adapter.system = system
         self.systems[system.id] = system
         self.adapters[system.id] = adapter
         self.audit.append(actor.id, "system.registered", system.id, {"label": system.label, "adapter": system.adapter})
         return system
+
+    def connect_remote(self, actor: Principal, system: SapSystem, profile, transport=None, reference=None) -> SapSystem:
+        """Register a REMOTE system as a read-only source. It can never be a refresh target and no write path to it exists."""
+        from .sap.connectors.profile import ConnectionProfile, ProfileError
+        from .sap.connectors.rfc import RemoteError, RfcSourceAdapter
+        if actor.kind != "human" or not actor.can("system:write"):
+            raise Forbidden("a human with system:write is required to connect a system")
+        if not authz.system_ok(actor, system):
+            raise Forbidden(f"outside your scope: you may not connect system {system.label}")
+        try:
+            profile.validate()
+        except ProfileError as e:
+            raise Conflict(str(e))
+        if profile.kind != "rfc":
+            raise Conflict(f"the {profile.kind} connector is not built (only rfc exists, and only against a fake transport in this repository)")
+        if transport is None:
+            try:
+                from .sap.connectors.rfc import PyRfcTransport
+                transport = PyRfcTransport(profile)
+            except ImportError:
+                raise Conflict("pyrfc and the SAP NetWeaver RFC SDK are not installed: a real RFC connection is not possible here")
+            except Exception as e:  # noqa: BLE001 - credentials, network
+                raise Conflict(f"could not connect: {type(e).__name__}: {e}")
+        system.id = system.id or f"sys-{uuid.uuid4().hex[:8]}"
+        system.writable_target_allowed = False  # a remote source is never a write target
+        system.adapter = "rfc"
+        adapter = RfcSourceAdapter(system, transport, profile, **({"reference": reference} if reference else {}))
+        try:
+            adapter._call("RFC_PING")
+            drift = adapter.schema_drift()
+        except RemoteError as e:
+            raise Conflict(f"connection check failed: {e}")
+        self.systems[system.id], self.adapters[system.id] = system, adapter
+        self.remote_profiles[system.id] = profile
+        self.audit.append(actor.id, "system.connected", system.id, {"label": system.label, "kind": profile.kind, "profile": profile.public(), "schema_drift": {k: v[:3] for k, v in drift.items()}})
+        return system
+
+    def rebuild_remote(self, system: SapSystem, profile):
+        """Re-establish a remote connection after a restart; if that is impossible the system stays registered but disconnected."""
+        from .sap.connectors.rfc import DisconnectedAdapter, PyRfcTransport, RfcSourceAdapter
+        try:
+            return RfcSourceAdapter(system, PyRfcTransport(profile), profile)
+        except Exception as e:  # noqa: BLE001 - no SDK, no network, no credentials
+            return DisconnectedAdapter(system, profile, f"{type(e).__name__}: {e}"[:160])
 
     def bootstrap_demo(self, actor: Principal) -> dict:
         src, tgt = make_demo_pair()
@@ -142,6 +196,10 @@ class RefreshService:
 
     def discover(self, sid: str) -> dict:
         d = self.adapters[self.system(sid).id].discover()
+        if not self.is_local(sid):
+            d["business_objects"] = None
+            d["note"] = "row counts need full scans and are not read from remote systems"
+            return d
         cust = [r for r in self.adapters[sid].data["KNA1"]]
         d["business_objects"] = {
             "customers": len(cust), "vendors": self.adapters[sid].count("LFA1"), "materials": self.adapters[sid].count("MARA"),
@@ -154,6 +212,12 @@ class RefreshService:
 
     def readiness(self, sid: str) -> dict:
         s, a = self.system(sid), self.adapters[sid]
+        if not self.is_local(sid):
+            drift = getattr(a, "drift", {})
+            return {"system": s.label, "ready": not drift, "simulated": False, "checks": [
+                {"id": "R1", "name": "Remote read-only source (no write path exists)", "ok": True},
+                {"id": "R2", "name": "Modelled DDIC fields and keys exist in the remote system", "ok": not drift, "detail": drift},
+                {"id": "R3", "name": "Owner registered", "ok": bool(s.owner)}]}
         checks = [
             {"id": "R1", "name": "Connectivity (simulated adapter)", "ok": True},
             {"id": "R2", "name": "Read-only discovery", "ok": True},
@@ -255,7 +319,7 @@ class RefreshService:
         s = p.plan.summary()
         s["estimate"] = advisors.estimate_duration(bytes_total=s["bytes"], rows_total=s["total_rows"])
         s["simulated"] = True
-        s["source_total_rows"] = sum(self.adapters[p.source_id].table_counts().values())
+        s["source_total_rows"] = sum(self.adapters[p.source_id].table_counts().values()) if self.is_local(p.source_id) else None
         return s
 
     def instances(self, pid: str, type_: str | None, origin: str | None, offset: int, limit: int) -> dict:
@@ -529,7 +593,7 @@ class RefreshService:
     def strategy(self, actor: Principal, pid: str, **kw) -> dict:
         p = self.project(pid)
         plan_rows = p.plan.summary()["total_rows"] if p.plan else 0
-        src_rows = sum(self.adapters[p.source_id].table_counts().values())
+        src_rows = sum(self.adapters[p.source_id].table_counts().values()) if self.is_local(p.source_id) else max(plan_rows, 1) * 10
         return advisors.refresh_strategy(source_rows=src_rows, scope_rows=plan_rows, **kw)
 
     def masking_advice(self, pid: str) -> dict:
