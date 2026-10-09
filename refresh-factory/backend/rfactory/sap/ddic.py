@@ -97,6 +97,12 @@ TABLES: dict[str, TableDef] = {
         _t("QAMV", "Inspection characteristic of a lot", ["PRUEFLOS", "MERKNR"], ["PRUEFLOS", "MERKNR", "KURZTEXT", "SOLLWERT", "TOLUNL", "TOLOBL"]),
         _t("QASR", "Inspection result for a characteristic", ["PRUEFLOS", "MERKNR", "PROBENR"], ["PRUEFLOS", "MERKNR", "PROBENR", "MESSWERT", "PRUEFER", "PRUEFDATUV"]),
         _t("QAVE", "Usage decision of a lot", ["PRUEFLOS"], ["PRUEFLOS", "VCODE", "VDATUM", "VAENAME"]),
+        # Plant maintenance (PM): functional locations, equipment and maintenance notifications. Simplified: the location data that SAP keeps in
+        # ILOA/IFLOS is folded into the headers; no maintenance orders, task lists, measuring points or warranties.
+        _t("IFLOT", "Functional location", ["TPLNR"], ["TPLNR", "FLTYP", "SWERK", "TPLMA", "PLTXT", "ERDAT"]),
+        _t("EQUI", "Equipment master", ["EQUNR"], ["EQUNR", "EQART", "HERST", "SERGE", "MATNR", "TPLNR", "SWERK", "ANSDT", "ERDAT"]),
+        _t("EQKT", "Equipment short text", ["EQUNR", "SPRAS"], ["EQUNR", "SPRAS", "EQKTX"]),
+        _t("QMEL", "Maintenance notification", ["QMNUM"], ["QMNUM", "QMART", "EQUNR", "TPLNR", "QMTXT", "QMDAT", "SWERK", "ERNAM"]),
         # HR master data (infotypes), simplified keys: the real ones also carry object, lock and sequence fields. Special-category personal data:
         # see masking/engine.py (HR_TABLES) and the hr:copy permission.
         _t("PA0003", "HR master record: core data (one row per personnel number)", ["PERNR"], ["PERNR", "ABKRS", "ERDAT"]),
@@ -132,6 +138,8 @@ NUMBER_RANGE_OBJECTS: dict[str, tuple[str, str]] = {
     "AUFK": ("PP_ORDER", "AUFNR"),
     "PLKO": ("PP_ROUT", "PLNNR"),
     "QALS": ("QM_LOT", "PRUEFLOS"),
+    "EQUI": ("PM_EQUI", "EQUNR"),
+    "QMEL": ("PM_NOTIF", "QMNUM"),
     "MKPF": ("MM_MBLNR", "MBLNR"),
     "MATDOC": ("MM_MBLNR", "MBLNR"),
 }

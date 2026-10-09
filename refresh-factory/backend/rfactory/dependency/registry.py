@@ -113,6 +113,13 @@ OBJECT_TYPES: dict[str, ObjectType] = {o.name: o for o in [
     ObjectType("INSPECTION_LOT", "Inspection lot (QM)", "QM", "document",
                (L("QALS"), L("QAMV", "QALS", [("PRUEFLOS", "PRUEFLOS")]), L("QASR", "QALS", [("PRUEFLOS", "PRUEFLOS")]), L("QAVE", "QALS", [("PRUEFLOS", "PRUEFLOS")])),
                ("PRUEFLOS",), ("QALS", "ENSTEHDAT"), {"plants": ("QALS", "WERKS"), "materials": ("QALS", "MATNR")}, 38),
+    ObjectType("FUNC_LOCATION", "Functional location (PM)", "PM", "master",
+               (L("IFLOT"),), ("TPLNR",), None, {"plants": ("IFLOT", "SWERK")}, 36),
+    ObjectType("EQUIPMENT", "Equipment (PM)", "PM", "master",
+               (L("EQUI"), L("EQKT", "EQUI", [("EQUNR", "EQUNR")])),
+               ("EQUNR",), None, {"plants": ("EQUI", "SWERK"), "materials": ("EQUI", "MATNR")}, 37),
+    ObjectType("MAINT_NOTIFICATION", "Maintenance notification (PM)", "PM", "document",
+               (L("QMEL"),), ("QMNUM",), ("QMEL", "QMDAT"), {"plants": ("QMEL", "SWERK")}, 39),
     # --- HR master data: special-category personal data (needs hr:copy; masking must be per-run anonymization) ---
     ObjectType("EMPLOYEE", "Employee (HR master data)", "HR", "master",
                (L("PA0003"), L("PA0001", "PA0003", [("PERNR", "PERNR")], "company_codes", "BUKRS"), L("PA0002", "PA0003", [("PERNR", "PERNR")]),
@@ -176,6 +183,15 @@ RELATIONSHIPS: list[Relationship] = [
     Relationship("inspection lot→production order", "INSPECTION_LOT", "PRODUCTION_ORDER", R, "QALS", "AUFNR", reverse=True,
                  description="Lot created for a production order (goods receipt inspection); a lot without an order has no such requirement"),
     Relationship("inspection lot→plant", "INSPECTION_LOT", "PLANT", C, "QALS", "WERKS"),
+    Relationship("functional location→superior", "FUNC_LOCATION", "FUNC_LOCATION", R, "IFLOT", "TPLMA",
+                 description="A location below another one needs its parent (a hierarchy, never a cycle)"),
+    Relationship("functional location→plant", "FUNC_LOCATION", "PLANT", C, "IFLOT", "SWERK"),
+    Relationship("equipment→functional location", "EQUIPMENT", "FUNC_LOCATION", R, "EQUI", "TPLNR"),
+    Relationship("equipment→material", "EQUIPMENT", "MATERIAL", R, "EQUI", "MATNR", description="Only equipment that was made from a material has one"),
+    Relationship("equipment→plant", "EQUIPMENT", "PLANT", C, "EQUI", "SWERK"),
+    Relationship("notification→equipment", "MAINT_NOTIFICATION", "EQUIPMENT", R, "QMEL", "EQUNR"),
+    Relationship("notification→functional location", "MAINT_NOTIFICATION", "FUNC_LOCATION", R, "QMEL", "TPLNR"),
+    Relationship("notification→plant", "MAINT_NOTIFICATION", "PLANT", C, "QMEL", "SWERK"),
     Relationship("employee→company code", "EMPLOYEE", "COMPANY_CODE", C, "PA0001", "BUKRS"),
     Relationship("employee→plant", "EMPLOYEE", "PLANT", C, "PA0001", "WERKS"),
     Relationship("goods movement→material", "MATERIAL_DOCUMENT", "MATERIAL", R, "MSEG", "MATNR"),
@@ -253,7 +269,7 @@ class Registry:
     def type_edges(self) -> dict[str, set[str]]:
         e: dict[str, set[str]] = {t: set() for t in self.types}
         for r in self.relationships:
-            if r.kind == RelKind.REQUIRES:
+            if r.kind == RelKind.REQUIRES and r.src != r.dst:  # a type that refers to itself is a hierarchy; a loop among its instances is still found by the planner
                 e.setdefault(r.src, set()).add(r.dst)
         return e
 

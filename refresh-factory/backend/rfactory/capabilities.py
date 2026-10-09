@@ -80,4 +80,9 @@ CAPABILITIES = [
      "Synthetic data only, never run against a real system; no inspection plans or master inspection characteristics, sample management, certificates, defects or quality notifications; usage decisions are copied as the humans made them (no check that a decision agrees with the results); the table and field lists are the author's reading of QM and have not been checked against a real DDIC",
      "tests/test_qm.py, frontend/e2e/qm.spec.ts",
      "Inspection plans and master characteristics, quality notifications, certificates, validation of the field model on NPL/A4H"),
+    ("M26 Plant maintenance", "Functional locations (IFLOT, a plant > line > station hierarchy whose superiors always travel and load first), equipment (EQUI with short texts EQKT, optionally made from a material) and maintenance notifications (QMEL) as the FUNC_LOCATION, EQUIPMENT and MAINT_NOTIFICATION objects: refreshed by plant, equipment pulls its location chain and material, notifications pull their equipment; reporter user ids are pseudonymised (USER_ID); the equipment and notification number ranges (PM_EQUI, PM_NOTIF) are aligned; reconciliation BUS-PM-REFS checks hierarchy, references and texts in the target; a loop in the location hierarchy blocks the plan",
+     "implemented-simulated", "-",
+     "Synthetic data only, never run against a real system; NO maintenance orders (they share AUFK with production orders and need an order-type split), task lists, measuring points, warranties, permits or classification; location data that SAP keeps in ILOA/IFLOS is folded into the headers, so the field model is the author's simplification and has not been checked against a real DDIC",
+     "tests/test_pm.py, frontend/e2e/pm.spec.ts",
+     "Maintenance orders and operations (AUFK/AFIH with an order-type filter), task lists, measuring points and counters, validation of the field model on NPL/A4H"),
 ]

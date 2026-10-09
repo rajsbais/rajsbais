@@ -276,6 +276,36 @@ def reconcile(run: Run, plan: Plan, source: SourceAdapter, target: TargetAdapter
         checks.append(_chk("business", "BUS-QM-REFS", "Inspection lots are complete in the target and refer to existing materials, orders and characteristics", not qm_bad,
                            f"{len(qm_bad)} inconsistent", qm_bad))
 
+    # plant maintenance (against the TARGET): the hierarchy and the references of equipment and notifications must be whole
+    pm_bad = []
+    pm_any = False
+    for inst in docs("FUNC_LOCATION"):
+        pm_any = True
+        h = target.get("IFLOT", (inst.key,))
+        if h is None:
+            pm_bad.append(f"location {inst.key} missing in target")
+        elif h.get("TPLMA") and not target.get("IFLOT", (h["TPLMA"],)):
+            pm_bad.append(f"location {inst.key}: superior {h['TPLMA']} missing in target")
+    for inst in docs("EQUIPMENT"):
+        pm_any = True
+        h = inst.rows["EQUI"][0]
+        if h.get("TPLNR") and not target.get("IFLOT", (h["TPLNR"],)):
+            pm_bad.append(f"equipment {inst.key}: location {h['TPLNR']} missing in target")
+        if h.get("MATNR") and not target.get("MARA", (h["MATNR"],)):
+            pm_bad.append(f"equipment {inst.key}: material {h['MATNR']} missing in target")
+        if len(target.lookup("EQKT", "EQUNR", inst.key)) != len(inst.rows.get("EQKT", [])):
+            pm_bad.append(f"equipment {inst.key}: short texts differ from what was loaded")
+    for inst in docs("MAINT_NOTIFICATION"):
+        pm_any = True
+        h = inst.rows["QMEL"][0]
+        if h.get("EQUNR") and not target.get("EQUI", (h["EQUNR"],)):
+            pm_bad.append(f"notification {inst.key}: equipment {h['EQUNR']} missing in target")
+        if h.get("TPLNR") and not target.get("IFLOT", (h["TPLNR"],)):
+            pm_bad.append(f"notification {inst.key}: location {h['TPLNR']} missing in target")
+    if pm_any:
+        checks.append(_chk("business", "BUS-PM-REFS", "Functional locations, equipment and notifications are whole in the target (hierarchy, references, texts)", not pm_bad,
+                           f"{len(pm_bad)} inconsistent", pm_bad))
+
     # HR master data (evaluated against the TARGET)
     employees = docs("EMPLOYEE")
     if employees:

@@ -184,6 +184,7 @@ def build_source_dataset(seed: int = 42, family: str = "ECC") -> dict[str, list[
 
     _add_manufacturing(d, mats, plants)
     _add_qm(d)
+    _add_pm(d)
     _add_flight(d)
     _add_hr(d)
 
@@ -198,6 +199,8 @@ def build_source_dataset(seed: int = 42, family: str = "ECC") -> dict[str, list[
         {"OBJECT": "PP_ORDER", "NRRANGENR": "01", "FROMNUMBER": 1000000, "TONUMBER": 1999999, "NRLEVEL": mx("AUFK", "AUFNR")},
         {"OBJECT": "PP_ROUT", "NRRANGENR": "01", "FROMNUMBER": 50000000, "TONUMBER": 59999999, "NRLEVEL": mx("PLKO", "PLNNR")},
         {"OBJECT": "QM_LOT", "NRRANGENR": "01", "FROMNUMBER": 100000000, "TONUMBER": 199999999, "NRLEVEL": mx("QALS", "PRUEFLOS")},
+        {"OBJECT": "PM_EQUI", "NRRANGENR": "01", "FROMNUMBER": 10000000, "TONUMBER": 19999999, "NRLEVEL": mx("EQUI", "EQUNR")},
+        {"OBJECT": "PM_NOTIF", "NRRANGENR": "01", "FROMNUMBER": 300000000, "TONUMBER": 399999999, "NRLEVEL": mx("QMEL", "QMNUM")},
         {"OBJECT": "MM_MBLNR", "NRRANGENR": "01", "FROMNUMBER": 4900000000, "TONUMBER": 4999999999, "NRLEVEL": mx("MKPF", "MBLNR")},
     ]
     if family == "S4":
@@ -306,6 +309,43 @@ def _add_qm(d: dict[str, list[Row]]) -> None:
             d["QAMV"].append({"PRUEFLOS": pid, "MERKNR": mk, "KURZTEXT": rng.choice(["Diameter", "Weight", "Length", "Hardness"]), "SOLLWERT": soll, "TOLUNL": soll - tol, "TOLOBL": soll + tol})
             d["QASR"].append({"PRUEFLOS": pid, "MERKNR": mk, "PROBENR": "00000001", "MESSWERT": val, "PRUEFER": f"QA{rng.randint(1, 6):04d}", "PRUEFDATUV": min(erd, REF_DATE).isoformat()})
         d["QAVE"].append({"PRUEFLOS": pid, "VCODE": "A" if ok else "R", "VDATUM": min(erd + timedelta(days=1), REF_DATE).isoformat(), "VAENAME": f"QA{rng.randint(1, 6):04d}"})
+
+
+def _add_pm(d: dict[str, list[Row]]) -> None:
+    """Plant maintenance: a small location hierarchy per plant (plant > line > station), equipment on the stations (some made from a material),
+    and breakdown/malfunction notifications. Own random stream, so nothing generated before it changes."""
+    rng = random.Random(6262)
+    mats = {}
+    for m in d["MARC"]:
+        mats.setdefault(m["WERKS"], []).append(m["MATNR"])
+    makers = ["Siemens", "ABB", "Bosch", "Atlas Copco", "Grundfos"]
+    kinds = [("PUMP", "Pump"), ("MOTR", "Motor"), ("CONV", "Conveyor"), ("PRES", "Press")]
+    eq = 10000000
+    nt = 300000000
+    for w in sorted({r["WERKS"] for r in d["T001W"]}):
+        top = f"{w}-PLANT"
+        d["IFLOT"].append({"TPLNR": top, "FLTYP": "P", "SWERK": w, "TPLMA": "", "PLTXT": f"Plant {w}", "ERDAT": "2019-03-01"})
+        for ln in (1, 2):
+            line = f"{top}-L{ln}"
+            d["IFLOT"].append({"TPLNR": line, "FLTYP": "L", "SWERK": w, "TPLMA": top, "PLTXT": f"Line {ln}", "ERDAT": "2019-03-15"})
+            for st in (1, 2):
+                station = f"{line}-S{st}"
+                d["IFLOT"].append({"TPLNR": station, "FLTYP": "S", "SWERK": w, "TPLMA": line, "PLTXT": f"Station {st}", "ERDAT": "2019-04-01"})
+                for _ in range(rng.randint(1, 2)):
+                    eq += 1
+                    kind, kname = rng.choice(kinds)
+                    eid = f"{eq:012d}"
+                    ansdt = date(2019, 5, 1) + timedelta(days=rng.randint(0, 1500))
+                    d["EQUI"].append({"EQUNR": eid, "EQART": kind, "HERST": rng.choice(makers), "SERGE": f"SN{rng.randint(100000, 999999)}",
+                                      "MATNR": rng.choice(mats[w]) if mats.get(w) and rng.random() < 0.5 else "", "TPLNR": station, "SWERK": w,
+                                      "ANSDT": ansdt.isoformat(), "ERDAT": ansdt.isoformat()})
+                    d["EQKT"].append({"EQUNR": eid, "SPRAS": "E", "EQKTX": f"{kname} {station}"})
+                    for _ in range(rng.choice([0, 1, 2])):
+                        nt += 1
+                        qd = min(ansdt + timedelta(days=rng.randint(30, 1400)), REF_DATE)
+                        d["QMEL"].append({"QMNUM": f"{nt:012d}", "QMART": rng.choice(["M1", "M2"]), "EQUNR": eid, "TPLNR": station,
+                                          "QMTXT": rng.choice(["Leaking seal", "Abnormal vibration", "Overheating", "Belt worn", "Noise"]),
+                                          "QMDAT": qd.isoformat(), "SWERK": w, "ERNAM": f"PM{rng.randint(1, 5):04d}"})
 
 
 def _add_flight(d: dict[str, list[Row]]) -> None:
@@ -459,6 +499,8 @@ def build_target_dataset(source: dict[str, list[Row]], seed: int = 7) -> tuple[d
         {"OBJECT": "PP_ORDER", "NRRANGENR": "01", "FROMNUMBER": 1000000, "TONUMBER": 1999999, "NRLEVEL": max((int(n) for n in pp_clash), default=1000000)},
         {"OBJECT": "PP_ROUT", "NRRANGENR": "01", "FROMNUMBER": 50000000, "TONUMBER": 59999999, "NRLEVEL": 50000000},
         {"OBJECT": "QM_LOT", "NRRANGENR": "01", "FROMNUMBER": 100000000, "TONUMBER": 199999999, "NRLEVEL": 100000000},
+        {"OBJECT": "PM_EQUI", "NRRANGENR": "01", "FROMNUMBER": 10000000, "TONUMBER": 19999999, "NRLEVEL": 10000000},
+        {"OBJECT": "PM_NOTIF", "NRRANGENR": "01", "FROMNUMBER": 300000000, "TONUMBER": 399999999, "NRLEVEL": 300000000},
         {"OBJECT": "MM_MBLNR", "NRRANGENR": "01", "FROMNUMBER": 4900000000, "TONUMBER": 4999999999, "NRLEVEL": 4900000000},
     ]
     return d, owners
