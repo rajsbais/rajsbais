@@ -139,6 +139,11 @@ a CSRF token from `API_BUSINESS_PARTNER` and probes the configuration (company c
 self-signed certificate must be trusted by the machine's certificate store, or the base URL must be reachable
 through a reverse proxy with a trusted certificate.
 
+Then run the **metadata check** (Landscape page, or `sdtf metadata check --system <id> --out a4h-metadata.md`): it reads
+the gateway catalogue and the `$metadata` of every service the platform binds and reports, per entity set, the
+properties found, the ones missing with the closest names the service has, and the key fields; send the report back
+(`docs/metadata-verification.md` says what the public references confirmed and what only A4H can).
+
 Register the migration object templates of your release on the Runs page (download them from the *Migrate Your
 Data* app), check each with `sdtf cockpit-template check --file <download.xml> --object <BO>`, confirm the alias
 proposals, and import the app's object list (`sdtf migration-objects import`). Everything up to here is verified

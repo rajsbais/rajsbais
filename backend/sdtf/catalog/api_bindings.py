@@ -104,7 +104,7 @@ API_BINDINGS: dict[str, ApiBinding] = {
             _e("MARA", "A_Product", {"MATNR": "Product", "MTART": "ProductType", "MATKL": "ProductGroup", "MEINS": "BaseUnit", "MAKTX": "ProductDescription"}, ("Product",), updatable=("MATKL", "MAKTX")),
             {
                 "MARC": _e("MARC", "A_ProductPlant", {"MATNR": "Product", "WERKS": "Plant", "DISPO": "MRPResponsible", "EKGRP": "PurchasingGroup", "BESKZ": "ProcurementType"}, ("Product", "Plant"), updatable=("DISPO", "EKGRP", "BESKZ"), parent_props=("Product",)),
-                "MBEW": _e("MBEW", "A_ProductValuation", {"MATNR": "Product", "BWKEY": "ValuationArea", "BWTAR": "ValuationType", "VPRSV": "PriceControl", "VERPR": "MovingAveragePrice", "STPRS": "StandardPrice", "LBKUM": "ValuationQuantity", "SALK3": "TotalValue", "WAERS": "Currency"}, ("Product", "ValuationArea", "ValuationType"), updatable=("VPRSV", "VERPR", "STPRS"), parent_props=("Product",)),
+                "MBEW": _e("MBEW", "A_ProductValuation", {"MATNR": "Product", "BWKEY": "ValuationArea", "BWTAR": "ValuationType", "VPRSV": "PriceDeterminationControl", "VERPR": "MovingAveragePrice", "STPRS": "StandardPrice", "LBKUM": "ValuationQuantity", "SALK3": "TotalValue", "WAERS": "Currency"}, ("Product", "ValuationArea", "ValuationType"), updatable=("VPRSV", "VERPR", "STPRS"), parent_props=("Product",)),  # PriceDeterminationControl, StandardPrice, MovingAveragePrice, ValuationClass confirmed by the public SDK reference; ValuationQuantity / TotalValue / Currency are NOT confirmed (the product API exposes prices, the stock value may not be there): the metadata check reports it, the inventory check then says "not readable"
                 "MARD": _e("MARD", "A_ProductStorageLocation", {"MATNR": "Product", "WERKS": "Plant", "LGORT": "StorageLocation"}, ("Product", "Plant", "StorageLocation"), parent_props=("Product",)),
             },
             on_delete="BLOCK", deep_insert=False,
@@ -170,8 +170,11 @@ API_BINDINGS: dict[str, ApiBinding] = {
 
 
 # Read-only bindings: tables the reconciliation reads back from the target through released read services, but
-# never loads (values the target derives from its own postings). Same caveat as above: first mappings from the
-# public API reference, unverified against a target's $metadata.
+# never loads (values the target derives from its own postings). Caveat, stronger than above: no public reference
+# for a released on-premise OData read service of asset values was found (the public cloud lists
+# API_FIXEDASSET_G4BA for master data and the CDS view I_AssetValuationForLedger for values); this binding is a
+# placeholder the metadata check will confirm or refute on the target, and the asset check reports "not readable"
+# whenever the service is absent.
 READ_BINDINGS: dict[str, EntityBinding] = {
     "ANLC": _e("ANLC", "FixedAssetValuation", {"BUKRS": "CompanyCode", "ANLN1": "MasterFixedAsset", "ANLN2": "FixedAsset", "GJAHR": "FiscalYear", "AFABE": "AssetDepreciationArea", "KANSW": "AcquisitionValueAmount", "KNAFA": "AccumulatedDepreciationAmount", "NAFAG": "DepreciationAmountInFiscalYear"}, ("CompanyCode", "MasterFixedAsset", "FixedAsset", "FiscalYear", "AssetDepreciationArea")),
 }

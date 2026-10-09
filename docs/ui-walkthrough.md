@@ -45,7 +45,9 @@ operator, auditor, viewer; passwords equal the names), select the demo project a
 8. **Package rounds** (`cockpit-13-package-rounds.png`, same card): each export is a round; mark uploads and migrations by hand, and follow the
    burn-down of the still-rejected instances across retry rounds.
 9. **Delta monitor** (`cockpit-10-delta-monitor.png`): delta cycles through the same loaders, for context.
-10. **Cutover rehearsal checklist** (`cutover-14-rehearsal-checklist.png`, Cutover Command Center): a mock cutover
+10. **Metadata check** (Landscape page, API targets): reads the gateway catalogue and the `$metadata` of every bound
+    service and reports the bindings' deviations per entity set (docs/metadata-verification.md).
+11. **Cutover rehearsal checklist** (`cutover-14-rehearsal-checklist.png`, Cutover Command Center): a mock cutover
     created from the runbook; automatic items evaluated from the platform state, manual items ticked by hand, task
     timings and the approver's GO / NO-GO.
 

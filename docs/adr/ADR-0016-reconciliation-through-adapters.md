@@ -36,8 +36,9 @@ NPL / A4H test, docs/connect-real-systems.md).
 ## Consequences
 * Reconciliation against real systems is now possible, with its own read-integrity evidence; it is verified on
   the simulated add-on and gateway and on a mocked HTTPS endpoint, not on a live SAP system.
-* The journal item property names and the open-item derivation come from the public API reference; they must
-  be checked against the target's `$metadata` on A4H (unverified, like the other bindings).
+* The journal item property names and the open-item derivation come from the public API reference; what the
+  references confirm and what only A4H's `$metadata` can is recorded in `docs/metadata-verification.md`, and
+  `sdtf metadata check` runs that verification against a target or a downloaded EDMX.
 * Asset values are read back through the fixed-asset read service (`API_FIXEDASSET` / `FixedAssetValuation`)
   and material valuation through the product valuation entity (`API_PRODUCT_SRV` / `A_ProductValuation`,
   filtered by the valuation areas the source's T001K maps to); both are read-only bindings in

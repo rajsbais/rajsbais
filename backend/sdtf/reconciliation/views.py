@@ -414,7 +414,11 @@ class ApiTargetView(ViewStore):
             service, eb = _BOUND["MBEW"]
             try:
                 ents = self._collection(service, eb.entity_set, odata_filter(eb.fields["BWKEY"], self.valuation_areas))
-                by_table["MBEW"] = self.add_rows("MBEW", self._entity_rows(eb, ents))
+                rows = self._entity_rows(eb, ents)
+                by_table["MBEW"] = self.add_rows("MBEW", rows)
+                if rows and not any(r.get("SALK3") is not None for r in rows):  # the entity exposes prices, not the stock value
+                    self.unreadable.add("MBEW")
+                    self.metrics.setdefault("errors", {})["MBEW"] = "product valuation entity carries no stock value (TotalValue): inventory values not readable"
             except ApiError as e:
                 self.unreadable.add("MBEW")
                 self.metrics.setdefault("errors", {})["MBEW"] = str(e)

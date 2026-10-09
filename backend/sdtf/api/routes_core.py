@@ -233,6 +233,51 @@ def _test_api_connector(s: SapSystem, db: Session, p: Principal) -> dict:
     return out
 
 
+class MetadataCheckIn(BaseModel):
+    service: str = Field(min_length=3, max_length=60)
+    content: str = Field(min_length=10, description="the service's $metadata (EDMX) as downloaded from the target or the SAP API hub")
+
+
+@router.post("/metadata/check", tags=["systems"])
+def metadata_check_file(req: MetadataCheckIn, p: Principal = Depends(require("project:read"))):
+    """Check the platform's bindings for one service against an EDMX document (no system needed)."""
+    from ..runtime import metadata_check as mc
+
+    try:
+        md = mc.parse_edmx(req.content)
+    except ValueError as e:
+        raise HTTPException(422, str(e)) from None
+    res = mc.check_service(md, req.service)
+    return {**res, "markdown": mc.report_markdown(res)}
+
+
+@router.get("/metadata/expectations", tags=["systems"])
+def metadata_expectations(service: str | None = None, p: Principal = Depends(require("project:read"))):
+    """What the platform relies on per service: entity sets, properties, keys (the list a $metadata check verifies)."""
+    from ..runtime import metadata_check as mc
+
+    services = [service] if service else mc.bound_services()
+    return {"services": {s: mc.expectations(s) for s in services}}
+
+
+@router.post("/systems/{system_id}/connector/metadata-check", tags=["systems"])
+def connector_metadata_check(s: SapSystem = Depends(get_system), db: Session = Depends(get_db), p: Principal = Depends(require("project:write"))):
+    """Fetch the gateway catalogue and the $metadata of every bound service from an API target and check the
+    bindings against them (reads only)."""
+    from ..runtime import metadata_check as mc
+    from ..runtime import target_api as tapi
+
+    if s.connector != "API":
+        raise HTTPException(409, f"metadata check is only defined for API targets (this one is {s.connector})")
+    try:
+        transport = tapi.make_target_transport(db, s)
+    except tapi.ApiError as e:
+        raise HTTPException(502, f"{e.code}: {e.message}") from None
+    res = mc.check_target(transport)
+    record_event(db, p.username, "METADATA_CHECKED", "SYSTEM", s.id, {"transport": res["transport"], **res["summary"]})
+    return {**res, "markdown": mc.report_markdown(res)}
+
+
 @router.post("/systems/{system_id}/connector/test", tags=["systems"])
 def test_connector(s: SapSystem = Depends(get_system), db: Session = Depends(get_db), p: Principal = Depends(require("project:write"))):
     """Open a snapshot, read the metadata of T001 and one small package through the system's RFC transport.

@@ -144,6 +144,18 @@ class SimulatedS4Gateway:
             self._store._tables[table] = [r for r in self._store._tables[table] if r is not old]
         self._store._indexes = {k: v for k, v in self._store._indexes.items() if k[0] != table}
 
+    # -- service documents
+    def metadata(self, service: str) -> str:
+        """The EDMX the simulator serves: generated from the bindings (what the simulator answers, not a real target)."""
+        from .metadata_check import edmx_from_bindings
+
+        return edmx_from_bindings(service)
+
+    def catalog(self) -> list[str]:
+        from .metadata_check import bound_services
+
+        return bound_services()
+
     # -- helpers
     @staticmethod
     def _err(status: int, code: str, message: str) -> ApiResponse:
@@ -632,6 +644,26 @@ class S4ApiHttpTransport:
             except ValueError:
                 body = {"raw": r.text[:500]}
             return ApiResponse(r.status_code, body, {k.lower(): v for k, v in r.headers.items()})
+
+    def metadata(self, service: str) -> str:
+        """`$metadata` of a service as served by the target (EDMX text)."""
+        r = self._client.get(f"{self.base}/sap/opu/odata/sap/{service}/$metadata", headers={**self._auth_headers(), "Accept": "application/xml"})
+        if r.status_code >= 400:
+            raise ApiError(r.status_code, "METADATA", f"{service}/$metadata: {r.text[:200]}")
+        return r.text
+
+    def catalog(self) -> list[str]:
+        """Activated OData services from the gateway catalogue (service IDs, e.g. API_SALES_ORDER_SRV_0001 -> API_SALES_ORDER_SRV)."""
+        r = self._client.get(f"{self.base}/sap/opu/odata/iwfnd/catalogservice;v=2/ServiceCollection?$format=json&$select=ID,TechnicalServiceName", headers={**self._auth_headers(), "Accept": "application/json"})
+        if r.status_code >= 400:
+            raise ApiError(r.status_code, "CATALOG", f"catalogue service: {r.text[:200]}")
+        out = set()
+        for e in ((r.json().get("d") or {}).get("results") or []):
+            name = e.get("TechnicalServiceName") or e.get("ID") or ""
+            name = re.sub(r"_\d{4}$", "", name)
+            if name:
+                out.add(name)
+        return sorted(out)
 
     def _journal_lookup(self, payload: dict) -> ApiResponse:
         """Idempotency lookup through the released read service API_JOURNALENTRYITEMBASIC_SRV: the source reference is

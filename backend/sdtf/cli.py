@@ -123,6 +123,17 @@ def main(argv=None):
     crre = crsub.add_parser("report", help="write the checklist report (Markdown)")
     crre.add_argument("--id", required=True)
     crre.add_argument("--out", default=None)
+    mdp = sub.add_parser("metadata", help="verify the API bindings against a service's $metadata: from a downloaded EDMX file or fetched from a registered API target")
+    mdsub = mdp.add_subparsers(dest="mdcmd", required=True)
+    mdc = mdsub.add_parser("check", help="check one service against an EDMX file, or every bound service against a target")
+    mdc.add_argument("--file", default=None, help="EDMX ($metadata) file")
+    mdc.add_argument("--service", default=None, help="service name the file belongs to (e.g. API_JOURNALENTRYITEMBASIC_SRV)")
+    mdc.add_argument("--system", default=None, help="registered API target to fetch the catalogue and $metadata from")
+    mdc.add_argument("--out", default=None, help="write the Markdown report here")
+    mdc.add_argument("--json", action="store_true")
+    mde = mdsub.add_parser("expectations", help="list the entity sets and properties the platform relies on per service")
+    mde.add_argument("--service", default=None)
+    mde.add_argument("--json", action="store_true")
     rc = sub.add_parser("reconcile", help="re-run the three-layer reconciliation of a completed run through the adapters (source over the RFC add-on, target over the released APIs)")
     rc.add_argument("--run", required=True)
     rc.add_argument("--mode", choices=["auto", "rows", "aggregate"], default="auto", help="source read: rows through the add-on, aggregate (totals computed in the source), auto by scope size")
@@ -353,6 +364,57 @@ def main(argv=None):
                     print(f"  {ot}: {o['instances']} instances, {o['with_messages']} in log, {o['rejected']} rejected, {o['errors']} E / {o['warnings']} W; categories {o['categories'] or '-'}")
                 for reason, n in summ["unmatched_reasons"].items():
                     print(f"  unmatched x{n}: {reason}")
+        return 0
+    if a.cmd == "metadata":
+        from .runtime import metadata_check as mc
+
+        if a.mdcmd == "expectations":
+            services = [a.service] if a.service else mc.bound_services()
+            exp = {s_: mc.expectations(s_) for s_ in services}
+            if a.json:
+                print(json.dumps(exp, indent=2))
+            else:
+                for s_, items in exp.items():
+                    print(f"{s_}:")
+                    for e in items:
+                        print(f"  {e['entity_set']} ({e['table']}, {e['use']}): keys {', '.join(e['keys']) or '-'}; properties {', '.join(e['properties'])}")
+            return 0
+        if a.file:
+            if not a.service:
+                print("--service is required with --file", file=sys.stderr)
+                return 2
+            with open(a.file, encoding="utf-8") as fh:
+                content = fh.read()
+            try:
+                res = mc.check_service(mc.parse_edmx(content), a.service)
+            except ValueError as e:
+                print(str(e), file=sys.stderr)
+                return 2
+        elif a.system:
+            from .models import SapSystem
+            from .runtime import target_api as tapi
+
+            with session_scope() as session:
+                s_ = session.get(SapSystem, a.system)
+                if s_ is None or s_.connector != "API":
+                    print("system not found or not an API target", file=sys.stderr)
+                    return 2
+                try:
+                    res = mc.check_target(tapi.make_target_transport(session, s_))
+                except tapi.ApiError as e:
+                    print(f"{e.code}: {e.message}", file=sys.stderr)
+                    return 3
+        else:
+            print("give --file with --service, or --system", file=sys.stderr)
+            return 2
+        md = mc.report_markdown(res)
+        if a.out:
+            with open(a.out, "w", encoding="utf-8") as fh:
+                fh.write(md)
+        if a.json:
+            print(json.dumps(res, indent=2, default=str))
+        else:
+            print(md if not a.out else f"report written to {a.out}")
         return 0
     if a.cmd == "reconcile":
         from .runtime.pipeline import RunPrecondition, reconcile_again
