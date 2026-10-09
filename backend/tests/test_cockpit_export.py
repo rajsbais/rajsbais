@@ -79,7 +79,7 @@ def test_export_is_deterministic_and_rewrites_the_package(slice_result, session,
     assert csvs and csvs == {k: v["sha256"] for k, v in files_b.items() if k.endswith(".csv")}  # timestamps only in the workbooks' Introduction sheet
     assert set(files_a) == set(files_b)
     only_csv = export_cockpit_files(session, slice_result["run_id"], out_dir=str(tmp_path), formats=("csv",))
-    assert not any(k.endswith(".xml") for k in json.load(open(os.path.join(only_csv["dir"], "manifest.json")))["files"])
+    assert not any(k.endswith(".xml") and not k.endswith(".template.xml") for k in json.load(open(os.path.join(only_csv["dir"], "manifest.json")))["files"])  # filled templates are not a generic format
 
 
 def test_plan_cockpit_routes_like_the_loader():

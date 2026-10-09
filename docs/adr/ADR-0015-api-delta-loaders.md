@@ -75,9 +75,11 @@ by the target, derived prices and statuses.
   export** (`runtime/cockpit_templates.py`) closes that gap: a template downloaded from the app is registered per
   project and business object, parsed (Field List, technical-name rows), mapped automatically (same names,
   BAPI-style aliases, parent keys, recorded overrides) with a coverage report that names the mandatory fields still
-  unmapped, and filled with typed cells while everything else in the template is preserved. No real template has
-  been available here: the parser and mapping are verified against illustrative samples in the same layout, and
-  the migration object IDs remain a step to confirm on the target.
+  unmapped, and filled with typed cells while everything else in the template is preserved. No template
+  downloaded from a release has been available here; the parser recognises the layout SAP documents (hidden rows
+  4–6, key span in row 7, descriptions in row 8, hidden SAP Structure/SAP Field columns) and the filled files are
+  processed by SAP's own XML file splitter in the test suite (docs/cockpit-template-validation.md); `cockpit-template
+  check` reports what a download deviates in, and the migration object IDs remain a step to confirm on the target.
 * Pricing, statuses and open items are *modelled*, not SAP's: a real target prices from condition records and
   derives statuses from subsequent documents. The simulator's business activity is restricted to changes the
   released APIs can convey (quantities, master attributes, new documents, item deletions).

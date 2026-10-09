@@ -47,6 +47,10 @@ def main(argv=None):
     tr.add_argument("--json", action="store_true")
     tl = tsub.add_parser("list", help="list a project's templates with their mapping reports")
     tl.add_argument("--project", required=True)
+    tc = tsub.add_parser("check", help="check a downloaded template file against the documented layout (no database needed)")
+    tc.add_argument("--file", required=True)
+    tc.add_argument("--object", default=None, help="business object: also print the automatic mapping report")
+    tc.add_argument("--json", action="store_true")
     a = ap.parse_args(argv)
     if a.cmd == "fake-idp":
         from .security.fake_idp import main as fake_idp_main
@@ -79,6 +83,26 @@ def main(argv=None):
             templates_for,
         )
 
+        if a.tcmd == "check":
+            from .runtime.cockpit_templates import auto_map, check_template, mapping_report, parse_template
+
+            with open(a.file, encoding="utf-8") as fh:
+                content = fh.read()
+            chk = check_template(content)
+            rep = mapping_report(auto_map(parse_template(content), a.object)) if chk["ok"] and a.object else None
+            if a.json:
+                print(json.dumps({"check": chk, "mapping": rep}, indent=2, default=str))
+            elif not chk["ok"]:
+                print(f"not a usable template: {chk['error']}", file=sys.stderr)
+            else:
+                print(f"{a.file}: documented layout = {chk['documented_layout']}; sheets {chk['sheet_order']}; field list {chk['field_list']} (technical names in {chk['field_list_columns'].get('technical_names_in', '-')})")
+                for sh in chk["sheets"]:
+                    print(f"  {sh['name']}: {sh['fields']} fields, {sh['header_rows']} header rows, {sh['key_columns']} key column(s), structure {sh['structure'] or '-'}, rows found {sh['signals']}")
+                for w in chk["warnings"]:
+                    print(f"  WARNING {w}")
+                if rep:
+                    print(f"  mapping for {a.object}: {rep['mapped']}/{rep['total']} fields; mandatory unmapped: {rep['mandatory_missing'] or 'none'}; sheets without table: {rep['unmapped_sheets'] or 'none'}")
+            return 0 if chk["ok"] else 2
         if a.tcmd == "sample":
             try:
                 xml = sample_template(a.object)

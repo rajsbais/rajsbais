@@ -48,7 +48,8 @@ Legend: P0 next increment · P1 following · P2 later. Sizes are relative (S/M/L
 | ✅ | Initial load through the same API loaders (deep inserts, journal postings with target numbering and idempotent source reference, cockpit path for histories and cockpit objects; `load_mode=direct` kept) | M |
 | ✅ | Migration cockpit staging-file export (CSV per staging table, SpreadsheetML workbook per migration object, manifest with checksums, zip; API, UI and CLI) for real targets, since staging tables cannot be posted over HTTPS | M |
 | ✅ | Cockpit export from the target's own migration object templates: register the release's XML template per project, automatic column mapping with coverage report and overrides, filled template in the package (verified against illustrative samples) | M |
-| P3 | Validate the template parser and mapping against real migration object templates of a target release (layout variants, mandatory markers, data types) and extend the alias catalogue from their Field Lists | S |
+| ✅ | Validate the template parser and filler against the real template layout: parser aligned with SAP's documented layout (hidden rows 4–6, key span in row 7, descriptions in row 8, hidden SAP Structure/SAP Field columns), filled files processed by SAP's own XML file splitter in the test suite, `cockpit-template check` for downloads (docs/cockpit-template-validation.md) | S |
+| P3 | Run `sdtf cockpit-template check` on templates downloaded from a target release (needs system access; none available here) and extend the alias catalogue from their Field Lists | S |
 | P0 | Benchmark harness and benchmark report (docs/benchmarks.md) | M |
 | P1 | Cutover execution tracking, incident escalation, resource assignment, mock cutover management | M |
 

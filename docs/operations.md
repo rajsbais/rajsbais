@@ -67,7 +67,12 @@ Alembic (`backend/alembic.ini`, `backend/sdtf/migrations`). `alembic upgrade hea
   `<OBJECT>.template.xml`: the template itself with rows below each technical-name row, dates as DateTime cells,
   amounts and quantities as Number cells, keys as strings (leading zeros kept); styles and header rows are
   preserved. Illustrative samples (`sdtf cockpit-template sample --object FI.GLAccount`, also in
-  `docs/cockpit-templates/`) show the layout; they are not SAP files, and the mapping is verified only against them.
+  `docs/cockpit-templates/`) show the layout SAP documents; they are not SAP files. Check a downloaded template
+  before registering it: `sdtf cockpit-template check --file <download.xml> --object <BO>` (or
+  `POST /cockpit-templates/check`) reports whether the documented layout was recognised (8 header rows, key span
+  in row 7, hidden SAP Field column) and names every assumption otherwise; the Runs page shows the verdict per
+  template. Filled files are line oriented and go through SAP's own XML file splitter (see
+  docs/cockpit-template-validation.md).
 * **Delta synchronisation** (ADR-0014): after a completed baseline run on an RFC source, run cycles from the Delta
   Synchronization Monitor or `POST /runs/{baseline}/delta/cycles`; each cycle is a run with CAPTURE/TRANSFORM/APPLY/
   RECONCILE stages and an event ledger (`GET .../delta/events`: FILTERED reasons, REJECTED change sets, CONFLICT

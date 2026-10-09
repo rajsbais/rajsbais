@@ -458,6 +458,22 @@ def cockpit_template_sample(object_type: str, p: Principal = Depends(require("pr
     return Response(xml, media_type="application/xml", headers={"Content-Disposition": f'attachment; filename="{object_type}.sample-template.xml"'})
 
 
+class CockpitTemplateCheckIn(BaseModel):
+    content: str
+    object_type: str | None = None
+
+
+@router.post("/cockpit-templates/check", tags=["runs"])
+def cockpit_template_check(req: CockpitTemplateCheckIn, p: Principal = Depends(require("project:read"))):
+    """Check a downloaded template against the documented layout without storing it; with `object_type` the
+    automatic mapping report is included."""
+    from ..runtime.cockpit_templates import auto_map, check_template, mapping_report, parse_template
+
+    chk = check_template(req.content)
+    rep = mapping_report(auto_map(parse_template(req.content), req.object_type)) if chk["ok"] and req.object_type else None
+    return {"check": chk, "mapping": rep}
+
+
 @router.post("/projects/{project_id}/cockpit-templates", tags=["runs"], status_code=201)
 def cockpit_template_register(project_id: str, req: CockpitTemplateIn, db: Session = Depends(get_db), p: Principal = Depends(require("project:write"))):
     """Register (or replace) the migration object template of one business object for the project; the response
@@ -590,7 +606,7 @@ CAPABILITIES = [
     {"area": "Observability (OpenTelemetry traces, metrics, trace-correlated JSON logs)", "status": "IMPLEMENTED", "note": "OTLP/HTTP export when OTEL_EXPORTER_OTLP_ENDPOINT is set; no-op otherwise"},
     {"area": "Target load", "status": "SIMULATED", "note": "Initial load and delta cycles go through the released S/4HANA APIs (business partner, product, sales/purchase order, delivery, journal entry with target numbering) and the migration cockpit for histories and cockpit objects, on the simulated gateway or an HTTPS target; verified on the simulated gateway only (ADR-0015). load_mode=direct keeps the simulated direct loader"},
     {"area": "Migration cockpit staging-file export", "status": "IMPLEMENTED", "note": "CSV per staging table and SpreadsheetML workbook per migration object for the rows the initial load routes to the cockpit, with manifest, checksums and zip; generic workbooks are not the target's templates (migration object names are hints to verify)"},
-    {"area": "Template-driven cockpit export", "status": "IMPLEMENTED", "note": "Registered migration object templates (the app's XML workbooks) are parsed (Field List, technical-name rows), mapped automatically (same names, BAPI-style aliases, parent keys, recorded overrides) with a coverage report, and filled with typed cells; verified against illustrative sample templates only, not against a release's real template"},
+    {"area": "Template-driven cockpit export", "status": "IMPLEMENTED", "note": "Registered migration object templates (the app's XML workbooks) are parsed (Field List incl. hidden SAP Structure/SAP Field columns, hidden technical rows, merged key cell), mapped automatically (same names, BAPI-style aliases, parent/related keys, recorded overrides) with a coverage report, and filled with typed, line-oriented cells; verified against the layout SAP documents and SAP's own XML file splitter on filled files, not against a template downloaded from a release (check endpoint and CLI report deviations)"},
     {"area": "Reconciliation (technical/functional/financial)", "status": "IMPLEMENTED", "note": "Runs on simulated data"},
     {"area": "Audit trail & evidence packages", "status": "IMPLEMENTED", "note": "Hash-chained events, evidence index"},
     {"area": "AI agents", "status": "IMPLEMENTED", "note": "12 bounded heuristic agents; LLM reasoner planned"},
