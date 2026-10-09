@@ -41,6 +41,38 @@ def object_of(table: str, record_key: str, payload: dict | None = None) -> tuple
     return bo_id, "|".join(record_key.split("|")[: len(bo.key_fields)])
 
 
+def plan_cockpit(object_type: str, events: list, product: str = "S4HANA") -> tuple[list[tuple[list, str]], list]:
+    """Initial-load routing of one business object instance: `([(rows, label), ...], rows_for_the_api_path)`.
+
+    Rows go to the migration cockpit when the registry prescribes it for the object, when the object's API does not
+    expose their table (PO history, production order components and confirmations) or when the instance is a
+    history (completed sales order, fully delivered purchase order, goods-issued delivery) whose status the APIs
+    cannot set. Everything else (API objects, configuration, unsupported objects) is returned on the second side.
+    """
+    if not events:
+        return [], []
+    bo = BUSINESS_OBJECTS.get(object_type)
+    methods = load_methods_for(bo, product) if bo is not None else []
+    method, api = (methods[0].method, methods[0].api) if methods else ("UNKNOWN", "")
+    if method == "MIGRATION_COCKPIT":
+        return [(list(events), api or "migration object")], []
+    if method != "API":
+        return [], list(events)
+    b = binding_for(object_type)
+    if b is None:
+        return [], list(events)
+    groups: list[tuple[list, str]] = []
+    unbound = [e for e in events if b.entity_for(e.table) is None]
+    rest = [e for e in events if b.entity_for(e.table) is not None]
+    if unbound:
+        groups.append((unbound, f"{b.service} does not expose {', '.join(sorted({e.table for e in unbound}))}: history tables through the migration cockpit"))
+    hdr = next((e for e in rest if e.table == b.header.table), None)
+    if hdr is not None and b.history_when is not None and b.history_when(hdr.target_payload or {}, [e.target_payload or {} for e in rest if e.table != b.header.table]):
+        groups.append((rest, f"historical {b.header.entity_set} ({b.history_rule})"))
+        rest = []
+    return groups, rest
+
+
 @dataclass
 class LoadResult:
     status: str  # APPLIED | SKIPPED_DUPLICATE | SKIPPED_MISSING | UNSUPPORTED | REJECTED_BY_TARGET | MATCHED | CONFIG_MISSING
@@ -92,6 +124,12 @@ class DeltaLoader:
         m = methods[0]
         return m.method, m.api, m.note
 
+    def cockpit_plan(self, object_type: str, events: list[EventView]) -> tuple[list[tuple[list[EventView], str]], list[EventView]]:
+        """Which rows of one business object instance the *initial* load hands to the migration cockpit, with the
+        reason label, and which continue on the API path. One decision shared by the LOAD stage and the staging-file
+        export, so both agree: cockpit-only objects, tables the document APIs do not expose, and histories."""
+        return plan_cockpit(object_type, events, self.product)
+
     # ------------------------------------------------------------------------------------- execution
     def load_change_set(self, events: list[EventView], initial: bool = False) -> None:
         """Apply the events of one change set for one business object instance. Sets `result` on each event.
@@ -106,12 +144,15 @@ class DeltaLoader:
                 exists = self._exists(e.table, e.target_key) if e.target_key else False
                 e.result = LoadResult("MATCHED" if exists else "CONFIG_MISSING", "MATCHED" if exists else "", method, "", "configuration comes from the target shell; record matched, not loaded" if exists else "configuration object missing in the target shell: transport it, the load cannot create it", e.target_key)
             return
+        if initial:
+            cockpit, events = self.cockpit_plan(object_type, events)
+            for group, label in cockpit:
+                self._cockpit(object_type, group, label)
+            if not events:
+                return
         if method == "MIGRATION_COCKPIT":
-            if initial:
-                self._cockpit(object_type, events, api or "migration object")
-            else:
-                for e in events:
-                    e.result = LoadResult("UNSUPPORTED", "", method, "", f"{object_type} is loaded through the migration cockpit ({api or note or 'see registry'}); changes after the snapshot are not re-posted per event and must be re-migrated at the final delta", e.target_key)
+            for e in events:
+                e.result = LoadResult("UNSUPPORTED", "", method, "", f"{object_type} is loaded through the migration cockpit ({api or note or 'see registry'}); changes after the snapshot are not re-posted per event and must be re-migrated at the final delta", e.target_key)
             return
         if method != "API":
             for e in events:
@@ -122,15 +163,6 @@ class DeltaLoader:
             for e in events:
                 e.result = LoadResult("UNSUPPORTED", "", method, api, f"{api or object_type} has no API binding yet; add one in catalog/api_bindings.py", e.target_key)
             return
-        if initial:
-            unbound = [e for e in events if b.entity_for(e.table) is None]
-            if unbound:
-                self._cockpit(object_type, unbound, f"{b.service} does not expose {', '.join(sorted({e.table for e in unbound}))}: history tables through the migration cockpit")
-                events = [e for e in events if e.result is None]
-            hdr = next((e for e in events if e.table == b.header.table), None)
-            if hdr is not None and self._is_history(b, hdr, [e for e in events if e.table != b.header.table]):
-                self._cockpit(object_type, events, f"historical {b.header.entity_set} ({b.history_rule})")
-                return
         try:
             if b.protocol == "SOAP":
                 self._load_journal(b, events, initial=initial)
@@ -140,12 +172,6 @@ class DeltaLoader:
             for e in events:
                 if e.result is None:
                     e.result = LoadResult("REJECTED_BY_TARGET", "", "API", f"{b.service}", f"{ex.status} {ex.code}: {ex.message}", e.target_key)
-
-    @staticmethod
-    def _is_history(b: ApiBinding, hdr: EventView, items: list[EventView]) -> bool:
-        if b.history_when is None:
-            return False
-        return bool(b.history_when(hdr.target_payload or {}, [i.target_payload or {} for i in items]))
 
     def _cockpit(self, object_type: str, events: list[EventView], label: str) -> None:
         """Migration cockpit path (initial load only): rows posted as staging-table content. Rows the target already

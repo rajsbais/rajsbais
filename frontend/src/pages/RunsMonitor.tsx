@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { api, fmtNum } from "../api";
+import { api, fmtNum, getToken } from "../api";
 import { useApi, useProjectDetails } from "../hooks";
 import { Banner, Card, ErrorBox, KV, Pill, Select, Table } from "../components/ui";
 
@@ -18,6 +18,19 @@ export default function RunsMonitor() {
   const workersQ = useApi<any>("/platform/workers", undefined, [run?.status]);
   const requeue = async () => { setErr(null); try { await api(`/runs/${run.id}/jobs/requeue`, { method: "POST" }); jobs.reload(); } catch (e: any) { setErr(e.message); } };
   const start = async () => { setBusy(true); setErr(null); try { const r = await api(`/projects/${projectId}/runs`, { body: { manifest_id: mid, ruleset_id: rid, mode: "SIMULATED", workers, execution, staging_backend: staging || null, pipelined, load_mode: loadMode } }); runs.reload(); setSel(r.id); } catch (e: any) { setErr(e.message); } finally { setBusy(false); } };
+  const cockpit = useApi<any>(run ? `/runs/${run.id}/cockpit-export` : null, undefined, [run?.id, run?.status]);
+  const [exporting, setExporting] = useState(false);
+  const exportCockpit = async () => { setExporting(true); setErr(null); try { await api(`/runs/${run.id}/cockpit-export`, { method: "POST", body: { formats: ["csv", "xml"] } }); cockpit.reload(); } catch (e: any) { setErr(e.message); } finally { setExporting(false); } };
+  const downloadCockpit = async () => {
+    setErr(null);
+    try {
+      const base = (import.meta.env.VITE_API_BASE as string | undefined) || "/api/v1";
+      const res = await fetch(`${base}/runs/${run.id}/cockpit-export/download`, { headers: { Authorization: `Bearer ${getToken() || ""}` } });
+      if (!res.ok) throw new Error(`download failed: ${res.status}`);
+      const url = URL.createObjectURL(await res.blob());
+      const a = document.createElement("a"); a.href = url; a.download = `cockpit_${run.id}.zip`; a.click(); URL.revokeObjectURL(url);
+    } catch (e: any) { setErr(e.message); }
+  };
   const resume = async () => { setBusy(true); setErr(null); try { await api(`/runs/${run.id}/resume`, { method: "POST" }); runs.reload(); } catch (e: any) { setErr(e.message); } finally { setBusy(false); } };
   if (!projectId) return <Banner>Select a project.</Banner>;
   return (
@@ -35,8 +48,13 @@ export default function RunsMonitor() {
         <p className="muted">Start worker processes with <code>sdtf worker</code> (or scale the worker Deployment). Extraction, transformation and load run as per-partition jobs with stage barriers; jobs are leased; expired leases are re-queued; the worker that completes a stage advances the run.</p>
         <Table cols={[{ k: "stage", h: "Stage" }, { k: "partition", h: "Partition" }, { k: "object_type", h: "Object" }, { k: "status", h: "Status", r: (j) => <Pill value={j.status} /> }, { k: "worker", h: "Worker" }, { k: "attempts", h: "Attempts" }, { k: "records", h: "Records" }, { k: "error", h: "Error" }]} rows={jobs.data.jobs} />
       </Card>}
-      <div className="grid2">
-      </div>
+      {run && (run.status === "COMPLETED" || run.status === "FAILED") && <Card title="Migration cockpit staging files" actions={<><button className="secondary" disabled={exporting} onClick={exportCockpit}>{exporting ? "Exporting…" : cockpit.data?.exported ? "Re-export" : "Export cockpit files"}</button>{cockpit.data?.exported && <button onClick={downloadCockpit}>Download zip</button>}</>}>
+        <p className="muted">Rows the initial load routes to the migration cockpit (cockpit objects, tables the document APIs do not expose, histories) as one CSV per staging table and one SpreadsheetML workbook per migration object, with a manifest of checksums. A real target loads them through the <i>Migrate Your Data</i> app; the files are not generated from the target's own templates and migration object names are hints to verify.</p>
+        {cockpit.data?.exported ? <>
+          <KV obj={{ rows: fmtNum(cockpit.data.rows), files: cockpit.data.files, generated: cockpit.data.generated_at, manifest_sha256: String(cockpit.data.manifest_sha256).slice(0, 16) + "…", directory: cockpit.data.dir }} />
+          <Table cols={[{ k: "object", h: "Business object" }, { k: "migration_object", h: "Migration object (hint)" }, { k: "tables", h: "Tables", r: (o) => o.tables.join(", ") }, { k: "rows", h: "Rows", r: (o) => fmtNum(o.rows) }, { k: "load_status", h: "Load status", r: (o) => Object.entries(o.load_status || {}).map(([k, v]) => `${v} ${k}`).join(" · ") }, { k: "reasons", h: "Why the cockpit", r: (o) => o.reasons.join("; ") }]} rows={Object.entries(cockpit.data.objects || {}).map(([object, o]: any) => ({ object, ...o }))} />
+        </> : <p className="muted">No export yet for this run.</p>}
+      </Card>}
       {run && staged.data && <div className="grid2"><Card title="Staging by table and load status"><Table cols={[{ k: "table", h: "Table" }, { k: "status", h: "Status", r: (r) => <Pill value={r.status} /> }, { k: "count", h: "Records", r: (r) => fmtNum(r.count) }]} rows={staged.data.counts} /></Card><Card title="Staged record samples with lineage"><Table cols={[{ k: "table", h: "Table" }, { k: "key", h: "Source key" }, { k: "target_key", h: "Target key" }, { k: "status", h: "Status", r: (r) => <Pill value={r.status} /> }, { k: "lineage", h: "Lineage", r: (r) => r.lineage.map((l: any) => `${l.rule}:${l.field} ${l.from}→${l.to}`).join("; ") }]} rows={staged.data.items} /></Card></div>}
     </div>
   );

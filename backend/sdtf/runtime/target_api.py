@@ -534,7 +534,7 @@ class S4ApiHttpTransport:
         headers = dict(headers or {})
         with self._lock:
             if service == COCKPIT_SERVICE:
-                raise ApiUnavailable("migration cockpit staging tables are filled through a direct database connection or the file-based 'Migrate Your Data' app; posting them over HTTPS is not possible. Export of staging files is planned")
+                raise ApiUnavailable("migration cockpit staging tables are filled through a direct database connection or the file-based 'Migrate Your Data' app; posting them over HTTPS is not possible. Export the run's staging files (POST /runs/{run_id}/cockpit-export) and upload them in the app")
             if service == "API_JOURNALENTRY_SRV" and path == "JournalEntryLookup":
                 return self._journal_lookup(payload or {})
             if service == "API_JOURNALENTRY_SRV":

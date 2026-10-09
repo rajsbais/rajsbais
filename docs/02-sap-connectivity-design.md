@@ -51,7 +51,10 @@ properties, numbering and delete policy; unmapped fields travel as `YY1_` extens
 `env:NAME`) or `meta.api.dest`; `SDTF_S4_API_TRANSPORT=auto|http|simulated`. The initial load uses the same
 loaders (`runtime/api_load.py`, `SDTF_LOAD_MODE=api`, per-run `load_mode`): open documents through the document
 APIs, journal entries with target numbering and a source reference for idempotency, histories and cockpit objects
-through the (simulated) migration cockpit; `load_mode=direct` keeps the simulated direct loader.
+through the (simulated) migration cockpit; `load_mode=direct` keeps the simulated direct loader. For a real target
+the cockpit rows are exported as staging files (`POST /runs/{id}/cockpit-export`: CSV per table, SpreadsheetML per
+migration object, checksummed manifest, zip) for the *Migrate Your Data* app; the files are not generated from the
+target's release-specific templates.
 
 Verify on a real target before relying on the bindings: `$metadata` of each service (property names, key order,
 navigation names for deep inserts), address/role navigations of API_BUSINESS_PARTNER (flattened here), the journal

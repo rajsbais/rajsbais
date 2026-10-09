@@ -1,7 +1,7 @@
 """UI end-to-end smoke (Playwright). Runs only when SDTF_E2E=1 and the UI + API are up:
    SDTF_E2E=1 SDTF_E2E_URL=http://localhost:5173 pytest tests/e2e -q
 It signs in, opens all 18 applications, asserts no page errors and no failed API calls apart from
-role-restricted audit endpoints, and exercises graph traversal, scope preview and cutover risk."""
+role-restricted audit endpoints, and exercises graph traversal, scope preview, the cockpit staging-file export and cutover risk."""
 import os
 
 import pytest
@@ -49,6 +49,12 @@ def test_all_screens_render_against_live_api():
         pg.click("text=Preview impact")
         pg.wait_for_timeout(5000)
         assert "Objects in scope" in pg.inner_text("main")
+        pg.goto(base + "/runs")
+        pg.wait_for_timeout(1500)
+        pg.click("button:has-text('cockpit files'), button:has-text('Re-export')")
+        pg.wait_for_timeout(4000)
+        txt = pg.inner_text("main")
+        assert "Migration object (hint)" in txt and "SD.BillingDocument" in txt and "Download zip" in txt
         pg.goto(base + "/cutover")
         pg.wait_for_timeout(1000)
         pg.click("text=Assess cutover risk")

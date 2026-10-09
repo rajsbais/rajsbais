@@ -67,7 +67,12 @@ by the target, derived prices and statuses.
 * Direct and API load modes must not be mixed on one target: their keys differ for target-numbered documents.
 * The migration cockpit is simulated as a posting of staging-table content with the organisational checks a
   migration object performs. A real target fills staging tables through a database connection or the file-based
-  app, so the HTTPS transport refuses cockpit objects with that explanation; exporting staging files is planned.
+  app, so the HTTPS transport refuses cockpit objects with that explanation. The **staging-file export**
+  (`runtime/cockpit_export.py`, `POST /runs/{id}/cockpit-export`, `sdtf cockpit-export`) writes the rows the LOAD
+  stage routes to the cockpit (one decision, `plan_cockpit`, shared by loader and export) as a CSV per staging
+  table and a SpreadsheetML workbook per migration object with a checksummed manifest and a zip. It is not
+  generated from the target's own migration object templates, which are release specific; mapping onto them and
+  the migration object IDs remain a verified step on the target.
 * Pricing, statuses and open items are *modelled*, not SAP's: a real target prices from condition records and
   derives statuses from subsequent documents. The simulator's business activity is restricted to changes the
   released APIs can convey (quantities, master attributes, new documents, item deletions).

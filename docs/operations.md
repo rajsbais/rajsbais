@@ -47,8 +47,16 @@ Alembic (`backend/alembic.ini`, `backend/sdtf/migrations`). `alembic upgrade hea
 * **Load mode**: runs load through the released APIs by default (`SDTF_LOAD_MODE=api`, per run `load_mode`); the LOAD
   stage metrics show calls per service and operation, assigned keys and the cockpit share. `load_mode=direct` writes
   the simulated target directly (comparison runs only). On an HTTPS target, cockpit objects (histories, billing
-  documents, G/L accounts, assets, material documents, invoice receipts, custom tables) are refused with the reason
-  until the staging-file export exists; plan them for the migration cockpit separately.
+  documents, G/L accounts, assets, material documents, invoice receipts, custom tables) are refused with the reason:
+  export them instead.
+* **Migration cockpit staging files**: after a run, `POST /runs/{id}/cockpit-export` (or the *Export cockpit files*
+  button on the Runs page, or `sdtf cockpit-export --run <id>`) writes the rows the initial load routed to the
+  cockpit under `<SDTF_EVIDENCE_DIR>/cockpit/<run>/`: one CSV per staging table, one SpreadsheetML workbook per
+  migration object (Introduction, Field List, one sheet per table), `manifest.json` with a sha256 per file,
+  `README.md` with the upload steps, and a zip served by `GET /runs/{id}/cockpit-export/download`. The package is
+  rewritten on every export and recorded in the audit trail (`COCKPIT_EXPORTED`). The files are **not** generated
+  from the target's own migration object templates (those are release specific): download the template in the
+  *Migrate Your Data* app and map the columns; migration object names in the manifest are hints to verify.
 * **Delta synchronisation** (ADR-0014): after a completed baseline run on an RFC source, run cycles from the Delta
   Synchronization Monitor or `POST /runs/{baseline}/delta/cycles`; each cycle is a run with CAPTURE/TRANSFORM/APPLY/
   RECONCILE stages and an event ledger (`GET .../delta/events`: FILTERED reasons, REJECTED change sets, CONFLICT

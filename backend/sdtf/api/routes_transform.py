@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
@@ -387,6 +388,46 @@ def run_evidence(r: MigrationRun = Depends(get_run), db: Session = Depends(get_d
     return {"evidence": ev, "audit_events": [{"ts": e.ts, "actor": e.actor, "action": e.action, "hash": e.hash} for e in events], "approvals": [{"subject_type": a.subject_type, "subject_id": a.subject_id, "decision": a.decision, "decided_by": a.decided_by, "kind": a.kind} for a in appr], "markdown": (r.report or {}).get("markdown", "")}
 
 
+class CockpitExportRequest(BaseModel):
+    formats: list[str] = Field(["csv", "xml"], description="csv: one file per staging table; xml: one SpreadsheetML workbook per migration object")
+
+
+@router.post("/runs/{run_id}/cockpit-export", tags=["runs"], status_code=201)
+def run_cockpit_export(req: CockpitExportRequest | None = None, r: MigrationRun = Depends(get_run), db: Session = Depends(get_db), p: Principal = Depends(require("run:start"))):
+    """Write the migration cockpit staging-file package for this run (the rows the initial load routes to the
+    cockpit: cockpit objects, tables the document APIs do not expose, histories) and return its summary."""
+    from ..runtime.cockpit_export import export_cockpit_files
+
+    formats = tuple(f for f in (req.formats if req else ["csv", "xml"]) if f in ("csv", "xml"))
+    if not formats:
+        raise HTTPException(422, "formats must include csv and/or xml")
+    if r.status not in ("COMPLETED", "FAILED"):
+        raise HTTPException(409, f"run is {r.status}; export after the TRANSFORM stage has finished")
+    return export_cockpit_files(db, r.id, actor=p.username, formats=formats)
+
+
+@router.get("/runs/{run_id}/cockpit-export", tags=["runs"])
+def run_cockpit_export_get(r: MigrationRun = Depends(get_run), p: Principal = Depends(require("project:read"))):
+    from ..runtime.cockpit_export import cockpit_export_summary
+
+    s = cockpit_export_summary(r)
+    if s is None:
+        return {"exported": False, "run_id": r.id}
+    return {"exported": True, **s}
+
+
+@router.get("/runs/{run_id}/cockpit-export/download", tags=["runs"])
+def run_cockpit_export_download(r: MigrationRun = Depends(get_run), p: Principal = Depends(require("project:read"))):
+    import os
+
+    from ..runtime.cockpit_export import cockpit_export_summary
+
+    s = cockpit_export_summary(r)
+    if s is None or not os.path.isfile(s["zip"]):
+        raise HTTPException(404, "no cockpit export package on disk for this run; export it first")
+    return FileResponse(s["zip"], media_type="application/zip", filename=os.path.basename(s["zip"]))
+
+
 # -------------------------------------------------------------------------------------------- agents
 @router.get("/agents", tags=["agents"])
 def agents(p: Principal = Depends(current_principal)):
@@ -455,6 +496,7 @@ CAPABILITIES = [
     {"area": "Columnar staging (Parquet on local / S3 / GCS / Azure via fsspec, key-range sidecar index)", "status": "IMPLEMENTED", "note": "Per run/table/partition files, zstd; object-store path tested with the in-memory filesystem"},
     {"area": "Observability (OpenTelemetry traces, metrics, trace-correlated JSON logs)", "status": "IMPLEMENTED", "note": "OTLP/HTTP export when OTEL_EXPORTER_OTLP_ENDPOINT is set; no-op otherwise"},
     {"area": "Target load", "status": "SIMULATED", "note": "Initial load and delta cycles go through the released S/4HANA APIs (business partner, product, sales/purchase order, delivery, journal entry with target numbering) and the migration cockpit for histories and cockpit objects, on the simulated gateway or an HTTPS target; verified on the simulated gateway only (ADR-0015). load_mode=direct keeps the simulated direct loader"},
+    {"area": "Migration cockpit staging-file export", "status": "IMPLEMENTED", "note": "CSV per staging table and SpreadsheetML workbook per migration object for the rows the initial load routes to the cockpit, with manifest, checksums and zip; not generated from the target's own templates (migration object names are hints to verify)"},
     {"area": "Reconciliation (technical/functional/financial)", "status": "IMPLEMENTED", "note": "Runs on simulated data"},
     {"area": "Audit trail & evidence packages", "status": "IMPLEMENTED", "note": "Hash-chained events, evidence index"},
     {"area": "AI agents", "status": "IMPLEMENTED", "note": "12 bounded heuristic agents; LLM reasoner planned"},

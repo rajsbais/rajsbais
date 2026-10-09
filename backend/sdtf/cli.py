@@ -29,6 +29,11 @@ def main(argv=None):
     f.add_argument("--host", default="127.0.0.1")
     f.add_argument("--port", type=int, default=9400)
     f.add_argument("--issuer", default=None)
+    c = sub.add_parser("cockpit-export", help="write the migration cockpit staging files (CSV + SpreadsheetML) of a completed run")
+    c.add_argument("--run", required=True, help="run id")
+    c.add_argument("--out", default=None, help="output directory (default: <evidence dir>/cockpit)")
+    c.add_argument("--format", choices=["csv", "xml", "both"], default="both")
+    c.add_argument("--json", action="store_true")
     a = ap.parse_args(argv)
     if a.cmd == "fake-idp":
         from .security.fake_idp import main as fake_idp_main
@@ -52,6 +57,23 @@ def main(argv=None):
             else:
                 print(run.report["markdown"])
                 print(f"project_id={out['project'].id} manifest_id={out['manifest'].id} run_id={run.id}")
+        return 0
+    if a.cmd == "cockpit-export":
+        from .runtime.cockpit_export import export_cockpit_files
+
+        formats = ("csv", "xml") if a.format == "both" else (a.format,)
+        with session_scope() as session:
+            try:
+                out = export_cockpit_files(session, a.run, out_dir=a.out, actor="cli", formats=formats)
+            except ValueError as e:
+                print(str(e), file=sys.stderr)
+                return 2
+        if a.json:
+            print(json.dumps(out, indent=2, default=str))
+        else:
+            print(f"cockpit package: {out['zip']} ({out['files']} files, {out['rows']} rows, {len(out['objects'])} objects)")
+            for ot, o in out["objects"].items():
+                print(f"  {ot}: {o['rows']} rows in {', '.join(o['tables'])} -> {o['migration_object']}")
         return 0
     if a.cmd == "worker":
         from . import observability as obs
