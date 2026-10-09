@@ -158,6 +158,13 @@ class WriteRequestIn(BaseModel):
     attest_outbound_inactive: bool = False  # "I checked that the system's outbound interfaces / jobs are inactive"
 
 
+class RevokeIn(BaseModel):
+    subject: str | None = None
+    jti: str | None = None
+    exp: float | None = None  # when the token would have expired (so the entry can be dropped afterwards)
+    reason: str = ""
+
+
 class AgentRunIn(BaseModel):
     params: dict = Field(default_factory=dict)
     narrate: bool = False
@@ -337,6 +344,8 @@ def create_app(data_dir: Path | None = None, persist: bool | None = None, auth: 
                   description="MVP control plane. All SAP interaction is SIMULATED; see /api/capabilities.")
     app.state.svc = svc
     app.state.verifier = verifier
+    if verifier is not None:
+        verifier.revocations = svc.revocations
 
     write_lock = asyncio.Lock()
 
@@ -383,7 +392,9 @@ def create_app(data_dir: Path | None = None, persist: bool | None = None, auth: 
             if not authorization or not authorization.lower().startswith("bearer "):
                 raise _auth_failed(request, "missing", "a bearer token is required")
             try:
-                p = verifier.verify(authorization[7:].strip())
+                claims = verifier.verify_claims(authorization[7:].strip())
+                p = verifier.principal(claims)
+                request.state.claims = claims
             except AuthError as e:
                 raise _auth_failed(request, e.reason, f"invalid token ({e.reason})")
         else:
@@ -409,6 +420,48 @@ def create_app(data_dir: Path | None = None, persist: bool | None = None, auth: 
     def whoami(p: Principal = Depends(me)):
         return {"id": p.id, "name": p.name, "roles": p.roles, "kind": p.kind, "permissions": sorted(p.permissions()), "scope": p.attrs or None,
                 "auth": auth.mode}
+
+    def _need_oidc():
+        if verifier is None:
+            raise HTTPException(409, "token revocation applies to oidc mode only (demo authentication has no tokens)")
+
+    @app.post("/api/auth/logout")
+    def logout(request: Request, p: Principal = Depends(me)):
+        """Revokes the token this request was made with (so a stolen copy stops working too)."""
+        _need_oidc()
+        c = request.state.claims
+        if not c.get("jti"):
+            return {"revoked": False, "reason": "this token has no jti, so it cannot be revoked individually: use logout-all"}
+        svc.revocations.revoke_token(str(c["jti"]), c.get("exp", 0), p.id, "logout")
+        svc.audit.append(p.id, "auth.logout", p.id, {"jti": str(c["jti"])[:8]})
+        return {"revoked": True}
+
+    @app.post("/api/auth/logout-all")
+    def logout_all(p: Principal = Depends(me)):
+        """Revokes every token this person holds that was issued up to now."""
+        _need_oidc()
+        cut = svc.revocations.revoke_subject(p.id, p.id, "logout-all")
+        svc.audit.append(p.id, "auth.logout_all", p.id, {"cutoff": cut})
+        return {"revoked": True, "cutoff": cut}
+
+    @app.post("/api/auth/revoke")
+    def revoke(b: RevokeIn, p: Principal = Depends(need("token:revoke"))):
+        _need_oidc()
+        if p.kind != "human":
+            raise HTTPException(403, "a human is required")
+        if bool(b.subject) == bool(b.jti):
+            raise HTTPException(422, "give either a subject or a jti")
+        if b.subject:
+            cut = svc.revocations.revoke_subject(b.subject, p.id, b.reason)
+            svc.audit.append(p.id, "auth.revoked", b.subject, {"kind": "subject", "reason": b.reason[:100], "cutoff": cut})
+            return {"revoked": True, "subject": b.subject, "cutoff": cut}
+        svc.revocations.revoke_token(b.jti, b.exp or (__import__("time").time() + 86_400), p.id, b.reason)
+        svc.audit.append(p.id, "auth.revoked", b.jti[:8], {"kind": "token", "reason": b.reason[:100]})
+        return {"revoked": True, "jti": b.jti[:8] + "…"}
+
+    @app.get("/api/auth/revocations")
+    def revocations(_: Principal = Depends(need("token:revoke"))):
+        return svc.revocations.public()
 
     @app.get("/api/auth/config")
     def auth_config():

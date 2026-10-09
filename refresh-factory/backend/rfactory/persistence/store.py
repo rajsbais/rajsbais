@@ -105,6 +105,7 @@ def collect(svc) -> dict[tuple[str, str], object]:
         for k, v in mapping.items():
             out[(kind, k)] = v
     out[("agents", "all")] = {"reports": svc.agents.reports, "recs": svc.agents.recs}
+    out[("revoke", "all")] = {"jtis": svc.revocations.jtis, "subjects": svc.revocations.subjects}
     out[("writereq", "all")] = dict(svc.write_requests)
     out[("bench", "all")] = {"samples": svc.bench.samples, "accuracy": svc.bench.accuracy, "bindings": svc.bench.bindings}
     o = svc.orch
@@ -138,6 +139,8 @@ def apply(svc, objs: dict[tuple[str, str], object]) -> None:
     if "agents" in by:
         a = by["agents"]["all"]
         svc.agents.reports, svc.agents.recs = a["reports"], a["recs"]
+    if "revoke" in by:
+        svc.revocations.jtis, svc.revocations.subjects = by["revoke"]["all"]["jtis"], by["revoke"]["all"]["subjects"]
     if "writereq" in by:
         svc.write_requests = dict(by["writereq"]["all"])
     if "bench" in by:

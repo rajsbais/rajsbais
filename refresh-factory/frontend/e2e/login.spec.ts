@@ -18,7 +18,7 @@ async function fakeIdp(opts: { lifetime?: number } = {}) {
   const mint = (claims: Record<string, unknown>) => {
     const now = Math.floor(Date.now() / 1000);
     const head = b64(JSON.stringify({ alg: "RS256", kid: "e2e-1", typ: "JWT" }));
-    const body = b64(JSON.stringify({ iss: "https://idp.e2e.test", aud: "keystone", iat: now, exp: now + (opts.lifetime ?? 300), ...claims }));
+    const body = b64(JSON.stringify({ iss: "https://idp.e2e.test", aud: "keystone", iat: now, exp: now + (opts.lifetime ?? 300), jti: Math.random().toString(36).slice(2), ...claims }));
     return `${head}.${body}.${b64(sign("RSA-SHA256", Buffer.from(`${head}.${body}`), privateKey))}`;
   };
   const st = { mode: "ok" as "ok" | "tamper" | "deny", authorize: [] as URLSearchParams[], token: [] as URLSearchParams[], logout: 0, redirectUri: "", codes: new Map<string, { challenge: string; nonce: string; used: boolean }>() };
@@ -106,9 +106,15 @@ test("browser login with Authorization Code + PKCE: signed in, scoped, nothing s
     await expect(page.getByText("Lena Login")).toBeVisible();
     expect(idp.st.token).toHaveLength(1); // and no second exchange happened
 
-    await page.getByRole("button", { name: "Sign out" }).click();
+    const issued = await page.evaluate(() => sessionStorage.getItem("rf.token"));
+    expect((await fetch(`${be.url}/api/me`, { headers: { Authorization: `Bearer ${issued}` } })).status).toBe(200);
+    await page.getByRole("button", { name: "Sign out", exact: true }).click();
+    await expect.poll(() => idp.st.logout).toBe(1); // the browser is sent to the identity provider's logout and back
+    await page.waitForLoadState("load");
     await expect(page.getByRole("button", { name: "Sign in with your identity provider" })).toBeVisible();
-    expect(idp.st.logout).toBe(1);
+    const dead = await fetch(`${be.url}/api/me`, { headers: { Authorization: `Bearer ${issued}` } }); // a copy of the token no longer works
+    expect(dead.status).toBe(401);
+    expect(JSON.stringify(await dead.json())).toContain("revoked");
     expect(await page.evaluate(() => sessionStorage.getItem("rf.session"))).toBeNull();
     expect(await page.evaluate(() => sessionStorage.getItem("rf.token"))).toBeNull();
 
@@ -146,7 +152,7 @@ test("a refusal at the identity provider is explained, and a replayed callback U
     const used = new URL(idp.st.authorize[1].get("redirect_uri")!);
     used.searchParams.set("code", [...idp.st.codes.keys()][0]);
     used.searchParams.set("state", idp.st.authorize[1].get("state")!);
-    await page.getByRole("button", { name: "Sign out" }).click();
+    await page.getByRole("button", { name: "Sign out", exact: true }).click();
     await page.goto(used.toString()); // replay the spent callback in a fresh sign-in state
     await expect(page.getByRole("alert").filter({ hasText: /not started in this browser tab/ })).toBeVisible();
     expect(idp.st.token).toHaveLength(1);

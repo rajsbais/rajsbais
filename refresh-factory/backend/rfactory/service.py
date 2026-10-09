@@ -103,6 +103,8 @@ class RefreshService:
         self.remote_profiles: dict = {}
         self.plan_extract_s: dict = {}
         self.write_requests: dict = {}
+        from .security.revocation import RevocationList
+        self.revocations = RevocationList()
         self.store = None
         if persist:
             from .persistence.store import StateStore

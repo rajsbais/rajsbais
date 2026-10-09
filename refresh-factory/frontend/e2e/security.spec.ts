@@ -99,7 +99,7 @@ test("OIDC mode: no demo user switcher, token sign-in, scope shown, sign-out, ba
     await expect(page.getByText("EQ1/200").first()).toBeVisible();
     await expectAccessible(page, "oidc session");
 
-    await page.getByRole("button", { name: "Sign out" }).click();
+    await page.getByRole("button", { name: "Sign out", exact: true }).click();
     await expect(page.getByLabel("Bearer token (OIDC)")).toBeVisible();
     expect(await page.evaluate(() => sessionStorage.getItem("rf.token"))).toBeNull();
 

@@ -91,7 +91,8 @@ export default function App() {
   }, [expiresAt]);
   const redirectUri = `${location.origin}${location.pathname}`;
   const startLogin = async () => { setNotice(null); location.assign(await beginLogin(login, redirectUri, browserEnv())); };
-  const signOut = () => {
+  const signOut = async () => {
+    try { await api.post("/api/auth/logout"); } catch { /* the token may already be invalid: signing out locally still proceeds */ }  // the platform revokes this token, so a copy of it stops working too
     const out = login ? logoutUrl(login, browserEnv(), redirectUri) : null;
     setToken(null); setMe(null); setTokenIn(""); setExpiresAt(null);
     if (out) location.assign(out); else void reload();
@@ -130,7 +131,8 @@ export default function App() {
                 <>
                   <div>Signed in as <strong>{me.name}</strong></div>
                   <div className="muted small">{me.roles?.join(", ") || "no roles"}{me.kind !== "human" ? ` · ${me.kind}` : ""}</div>
-                  <button onClick={signOut}>Sign out</button>
+                  <button onClick={() => void signOut()}>Sign out</button>
+                  <button onClick={() => { void api.post("/api/auth/logout-all").catch(() => undefined).then(() => signOut()); }} title="Revoke every token issued to you so far, on every device">Sign out everywhere</button>
                 </>) : (
                 <>
                   {login && <button className="primary" onClick={() => void startLogin()}>Sign in with your identity provider</button>}

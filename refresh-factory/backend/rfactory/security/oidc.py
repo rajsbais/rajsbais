@@ -12,8 +12,9 @@ Browser login: the platform advertises an Authorization Code + PKCE (S256) login
 client id are configured. The flow itself runs in the browser as a PUBLIC client (no client secret exists anywhere in the platform); the API only
 ever sees the resulting bearer token. A pasted token still works.
 
-NOT provided: refresh tokens or silent renewal (a session ends when the access token expires), token revocation lists and introspection (tokens are
-trusted until they expire, so keep them short-lived). Fetching a JWKS from a URL and the browser flow itself have not been exercised against a
+Revocation (security/revocation.py): a token can be revoked by jti and a subject by cutoff, kept across restarts. NOT provided: refresh tokens or silent
+renewal (a session ends when the access token expires) and introspection against the identity provider (tokens are trusted until they expire
+unless revoked here, so keep them short-lived). Fetching a JWKS from a URL and the browser flow itself have not been exercised against a
 real identity provider; the flow is tested against a fake one.
 """
 from __future__ import annotations
@@ -59,6 +60,7 @@ class AuthConfig:
     client_id: str = ""
     scope: str = "openid profile"
     end_session_url: str = ""
+    require_jti: bool = False  # refuse tokens without a jti: every accepted token can then be revoked individually
 
     def login_configured(self) -> bool:
         return bool(self.authorize_url and self.token_url and self.client_id)
@@ -73,6 +75,7 @@ class AuthConfig:
                 e("RFACTORY_OIDC_ROLE_CLAIM", "roles"))
         c.authorize_url, c.token_url, c.client_id = e("RFACTORY_OIDC_AUTHORIZE_URL", ""), e("RFACTORY_OIDC_TOKEN_URL", ""), e("RFACTORY_OIDC_CLIENT_ID", "")
         c.scope, c.end_session_url = e("RFACTORY_OIDC_SCOPE", "openid profile"), e("RFACTORY_OIDC_END_SESSION_URL", "")
+        c.require_jti = e("RFACTORY_OIDC_REQUIRE_JTI", "") in ("1", "true", "yes")
         if mode == "oidc" and not (c.issuer and c.audience and (c.jwks_file or c.jwks_url)):
             raise ValueError("oidc mode needs RFACTORY_OIDC_ISSUER, RFACTORY_OIDC_AUDIENCE and RFACTORY_OIDC_JWKS_FILE or _URL")
         c.check_login()
@@ -99,6 +102,7 @@ class AuthConfig:
 class OidcVerifier:
     def __init__(self, cfg: AuthConfig, jwks: dict | None = None):
         self.cfg = cfg
+        self.revocations = None  # a RevocationList, attached by the application
         self._jwks = jwks
         self._loaded = 0.0
         self._lock = threading.Lock()
@@ -126,6 +130,9 @@ class OidcVerifier:
         raise AuthError("key", "no signing key for this token")
 
     def verify(self, token: str) -> Principal:
+        return self.principal(self.verify_claims(token))
+
+    def verify_claims(self, token: str) -> dict:
         if len(token.encode()) > MAX_TOKEN_BYTES:
             raise AuthError("malformed", "token too large")
         try:
@@ -149,7 +156,11 @@ class OidcVerifier:
             raise AuthError("signature", "bad signature")
         except jwt.PyJWTError as e:
             raise AuthError("claims", str(e)[:120])
-        return self.principal(claims)
+        if self.cfg.require_jti and not claims.get("jti"):
+            raise AuthError("claims", "the token has no jti (required: it could not be revoked)")
+        if self.revocations is not None:
+            self.revocations.check(claims)
+        return claims
 
     def principal(self, claims: dict) -> Principal:
         sub = str(claims.get("sub", "")).strip()
