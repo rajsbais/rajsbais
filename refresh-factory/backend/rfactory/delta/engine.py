@@ -393,9 +393,18 @@ class DeltaService:
             else:
                 cand.add(iid)
         cand |= {i for i in sc.stale if i in plan.instances}  # changes that were skipped earlier stay pending
+        try:
+            covered = src.change_coverage()  # None: the source's change log reports everything (simulator) or is unused (the engine compares)
+        except AttributeError:
+            covered = None
+        uncovered = 0
         for iid, i in plan.instances.items():
-            if sweep or PROFILES.get(i.type, DEFAULT_PROFILE) == "full_compare":
-                cand.add(iid)
+            not_logged = covered is not None and not initial and reg.types[i.type].header not in covered
+            uncovered += not_logged and not sweep
+            if sweep or not_logged or PROFILES.get(i.type, DEFAULT_PROFILE) == "full_compare":
+                cand.add(iid)  # not in the change documents (or immutable-by-profile): compare by content every run
+        if uncovered:
+            notes.append(f"{uncovered} object(s) of types not covered by change documents were compared by content")
         if ignored and not sweep:
             notes.append(f"{ignored} modification(s) to immutable documents ignored (picked up by the next full sweep)")
 
@@ -447,7 +456,7 @@ class DeltaService:
             "skipped": sum(1 for a in report.decisions.values() if a == Action.SKIP),
             "quarantined": sum(1 for a in report.decisions.values() if a == Action.QUARANTINE),
             "retained_out_of_scope": len(retained) - len(deleted), "deleted_in_source": len(deleted),
-            "ignored_modifications": ignored, "changes_read": len(changes), "notes": notes, "blocking": blocking,
+            "ignored_modifications": ignored, "changes_read": len(changes), "uncovered_compared": uncovered, "notes": notes, "blocking": blocking,
             "findings": [f.to_dict() for f in report.findings],
         }
         by_mech: dict[str, int] = {}
@@ -479,7 +488,7 @@ class DeltaService:
         ctx = self._prepare(sc, full_sweep)
         rec = {"version": ctx["run_no"], **{k: ctx["summary"][k] for k in (
             "kind", "mode", "from_seq", "to_seq", "scope_objects", "new", "retried_deferred", "changed", "target_drift", "skipped", "quarantined",
-            "retained_out_of_scope", "deleted_in_source", "ignored_modifications", "notes")},
+            "retained_out_of_scope", "deleted_in_source", "ignored_modifications", "changes_read", "uncovered_compared", "notes")},
             "trigger": trigger, "actor": actor.id, "started": _iso(now), "finished": None, "status": "BLOCKED", "run_id": None,
             "release": "NOT_EVALUATED", "loaded": 0, "blocking": ctx["blocking"]}
         sc.history.append(rec)

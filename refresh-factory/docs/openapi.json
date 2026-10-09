@@ -440,6 +440,16 @@
     "operationId": "demo_connect_fake_api_demo_connect_fake_rfc_post",
     "parameters": [
      {
+      "name": "change_documents",
+      "in": "query",
+      "required": false,
+      "schema": {
+       "type": "boolean",
+       "default": false,
+       "title": "Change Documents"
+      }
+     },
+     {
       "name": "x-demo-user",
       "in": "header",
       "required": false,

@@ -11,14 +11,29 @@ import re
 from typing import Any
 
 from ..ddic import TABLES
+from .changedocs import CLASSES
 from .rfc import RemoteAuthError, RemoteError, RemoteTableMissing, RfcCommunicationError
 
 _DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 _TOKEN = re.compile(r"\s*(?:('(?:[^']|'')*')|(<>|<=|>=|=|<|>|\(|\)|,)|([A-Za-z_][A-Za-z0-9_/]*))")
 
 
+def _d(name, pos, key, dt, ln):
+    return {"FIELDNAME": name, "POSITION": f"{pos:04d}", "KEYFLAG": "X" if key else "", "DATATYPE": dt, "LENG": str(ln), "DECIMALS": "0", "INTTYPE": "C"}
+
+
+# system tables that are not part of the platform's DDIC model but are served for the change-document reader
+EXTRA_DFIES = {
+    "CDHDR": [_d("MANDANT", 1, 1, "CLNT", 3), _d("OBJECTCLAS", 2, 1, "CHAR", 15), _d("OBJECTID", 3, 1, "CHAR", 90), _d("CHANGENR", 4, 1, "NUMC", 10),
+              _d("USERNAME", 5, 0, "CHAR", 12), _d("UDATE", 6, 0, "DATS", 8), _d("UTIME", 7, 0, "TIMS", 6), _d("TCODE", 8, 0, "CHAR", 20), _d("CHANGE_IND", 9, 0, "CHAR", 1)],
+    "TCDOB": [_d("OBJECT", 1, 1, "CHAR", 15), _d("TABNAME", 2, 1, "CHAR", 30)],
+}
+
+
 class FakeRfcTransport:
-    def __init__(self, sap, *, denied: set[str] | None = None, unstable: set[str] | None = None, widen: dict[str, int] | None = None, seed: int = 11):
+    def __init__(self, sap, *, denied: set[str] | None = None, unstable: set[str] | None = None, widen: dict[str, int] | None = None, seed: int = 11,
+                 unlogged_classes: set[str] | None = None, no_clock: bool = False):
+        self.unlogged_classes, self.no_clock = unlogged_classes or set(), no_clock  # classes TCDOB does not list; a system that reports no date/time
         self.sap, self.denied, self.unstable = sap, denied or set(), unstable or set()
         self.widen = widen or {}  # table -> extra width added to its widest text field (to force field grouping)
         self.calls: list[dict] = []
@@ -40,7 +55,9 @@ class FakeRfcTransport:
             return {}
         if function == "RFC_SYSTEM_INFO":
             s = self.sap.system
-            return {"RFCSI_EXPORT": {"RFCSYSID": s.sid, "RFCHOST": f"{s.sid.lower()}app01", "RFCSAPRL": s.release, "RFCDBSYS": s.db_type}}
+            now = getattr(self.sap, "sim_now", None)
+            return {"RFCSI_EXPORT": {"RFCSYSID": s.sid, "RFCHOST": f"{s.sid.lower()}app01", "RFCSAPRL": s.release, "RFCDBSYS": s.db_type,
+                                     **({"RFCDATE": now.strftime("%Y%m%d"), "RFCTIME": now.strftime("%H%M%S")} if now and not self.no_clock else {})}}
         if function == "DDIF_FIELDINFO_GET":
             return {"DFIES_TAB": self._dfies(p["TABNAME"])}
         if function == "RFC_READ_TABLE":
@@ -55,8 +72,10 @@ class FakeRfcTransport:
 
     def _dfies_raw(self, table: str) -> list[dict]:
         td = TABLES.get(table)
-        if td is None:
+        if td is None and table not in EXTRA_DFIES:
             return []
+        if table in EXTRA_DFIES:
+            return EXTRA_DFIES[table]
         if table in self._meta_cache:
             return self._meta_cache[table]
         rows = self.sap.data.get(table, [])
@@ -198,12 +217,38 @@ class FakeRfcTransport:
             a, b = raw.rstrip(), literal.rstrip()
         return {"=": a == b, "<>": a != b, "<": a < b, ">": a > b, "<=": a <= b, ">=": a >= b}[op]
 
+    # --- change documents served from the simulated change log
+    def _rows(self, table: str) -> list[dict]:
+        if table == "TCDOB":
+            return [{"OBJECT": c, "TABNAME": t} for c, (_h, tabs) in CLASSES.items() if c not in self.unlogged_classes for t in tabs]
+        if table != "CDHDR":
+            return self.sap.data.get(table, [])
+        now = getattr(self.sap, "sim_now", None)
+        owner = {t: c for c, (_h, tabs) in CLASSES.items() for t in tabs if t != "ADRC"}
+        out = []
+        for e in self.sap.changelog:
+            if not e.get("ts") or not now or e["visible_at"] > now.isoformat():
+                continue  # written but not committed yet: invisible to other sessions
+            targets = []
+            if e["table"] == "ADRC":
+                for t, f, cls in (("KNA1", "KUNNR", "DEBI"), ("LFA1", "LIFNR", "KRED")):
+                    targets += [(cls, t, {f: r[f]}) for r in self.sap.data.get(t, []) if r.get("ADRNR") == e["key"].get("ADDRNUMBER")]
+            elif e["table"] in owner:
+                cls = owner[e["table"]]
+                targets = [(cls, CLASSES[cls][0], e["key"])]
+            for cls, header, key in targets:
+                oid = "".join(self._fmt(d, key.get(d["FIELDNAME"])) for d in self._dfies_raw(header) if d["KEYFLAG"] == "X")
+                ts = e["ts"]
+                out.append({"MANDANT": self.sap.system.client, "OBJECTCLAS": cls, "OBJECTID": oid, "CHANGENR": f"{e['seq']:010d}", "USERNAME": "SIMUSER",
+                            "UDATE": ts[:10], "UTIME": ts[11:19].replace(":", ""), "TCODE": "SIM", "CHANGE_IND": e["op"]})
+        return out
+
     # --- RFC_READ_TABLE
     def _read(self, p: dict) -> dict:
         table = p["QUERY_TABLE"]
         if table in self.denied:
             raise RemoteAuthError("NOT_AUTHORIZED")
-        if table not in TABLES:
+        if table not in TABLES and table not in EXTRA_DFIES:
             raise RemoteTableMissing("TABLE_NOT_AVAILABLE")
         dfies = {d["FIELDNAME"]: d for d in self._dfies_raw(table)}
         fields = [f["FIELDNAME"] for f in p.get("FIELDS", [])] or list(dfies)
@@ -216,7 +261,7 @@ class FakeRfcTransport:
             raise RemoteError("DATA_BUFFER_EXCEEDED")
         pred = self._compile(table, p.get("OPTIONS", []))
         order = self._order.setdefault(table, [])
-        rows = self.sap.data.get(table, [])
+        rows = self._rows(table)
         if len(order) != len(rows):
             order[:] = list(range(len(rows)))
             self._rng.shuffle(order)  # a stable but key-unrelated order

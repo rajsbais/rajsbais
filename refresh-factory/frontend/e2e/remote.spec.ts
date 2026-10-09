@@ -43,3 +43,14 @@ test("a remote read-only source (fake RFC transport) can be connected, inspected
   expect(info.stats.guard_trips).toBe(0);
   expect(app.errors).toEqual([]);
 });
+
+test("a remote source with the change-document reader on says what it covers and what it compares by content", async ({ app }) => {
+  const { page } = app;
+  await app.loadLandscape();
+  await app.nav("Landscape");
+  await app.click("Demo remote source with change documents");
+  await expect(page.getByText(/Change documents \(CDHDR\) are read: covered/)).toBeVisible();
+  await expect(page.getByText(/BOMs, production orders, material documents\) are always compared by content/)).toBeVisible();
+  await expect(page.getByText(/Reads stop 120s behind the system clock/)).toBeVisible();
+  await expectAccessible(page, "landscape with change documents");
+});

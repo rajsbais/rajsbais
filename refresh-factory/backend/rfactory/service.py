@@ -167,6 +167,17 @@ class RefreshService:
         self.audit.append(actor.id, "system.connected", system.id, {"label": system.label, "kind": profile.kind, "profile": profile.public(), "schema_drift": {k: v[:3] for k, v in drift.items()}})
         return system
 
+    def change_doc_info(self, sid: str) -> dict:
+        """What the change-document reader of a remote system covers, and what it did last."""
+        a = self.adapters[sid]
+        r = getattr(a, "cdr", None)
+        if r is None:
+            return {"enabled": False, "note": "Off: the delta engine compares every scoped object by content (set options.change_documents on the connection profile to read CDHDR)."}
+        cov = r.coverage()
+        from .sap.connectors.changedocs import HEADER_CLASS
+        return {"enabled": True, "covered": sorted(cov), "not_logged": sorted(set(HEADER_CLASS) - set(cov)), "lag_seconds": r.lag, "overlap_seconds": r.overlap,
+                "retention_days": r.retention, "last_read": r.last, "error": r.unreadable or getattr(a, "cd_error", None)}
+
     def rebuild_remote(self, system: SapSystem, profile):
         """Re-establish a remote connection after a restart; if that is impossible the system stays registered but disconnected."""
         from .sap.connectors.rfc import DisconnectedAdapter, PyRfcTransport, RfcSourceAdapter

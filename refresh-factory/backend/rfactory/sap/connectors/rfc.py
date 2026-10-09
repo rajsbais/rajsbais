@@ -192,6 +192,12 @@ class RfcSourceAdapter:
         self.stats = Stats()
         self._last_call = 0.0
         self.drift: dict[str, list[str]] = {}
+        cd = self.profile.options.get("change_documents")
+        self.cdr = None
+        if cd:  # opt-in: reading CDHDR needs authorisations the connecting user may not have
+            from .changedocs import ChangeDocReader
+            self.cdr = ChangeDocReader(self, **{k: v for k, v in (cd if isinstance(cd, dict) else {}).items() if k in ("lag_seconds", "overlap_seconds", "retention_days")})
+        self.cd_error: str | None = None
 
     # ------------------------------------------------------------ transport with throttle and retry
     def _call(self, function: str, **params) -> dict:
@@ -370,16 +376,36 @@ class RfcSourceAdapter:
                 "table_counts": {}, "custom_fields": [], "installed_components": [{"name": "SAP_BASIS", "release": info.get("RFCSAPRL", "?")}],
                 "remote": {"kind": "rfc", "host": info.get("RFCHOST", ""), "database": info.get("RFCDBSYS", ""), "stats": self.stats.public()}}
 
-    # change documents are NOT read: the delta engine falls back to a full compare of the scoped objects
+    # change documents: read through CDHDR when the profile opts in (see changedocs.py); otherwise the delta engine compares by content
     def change_seq(self) -> int:
-        return 0
+        if self.cdr is None:
+            return 0
+        try:
+            self.cd_error = None
+            return self.cdr.watermark()
+        except Exception as e:  # noqa: BLE001 - the engine then finds no usable watermark and falls back to a full sweep
+            self.cd_error = f"{type(e).__name__}: {e}"
+            return 0
 
     def changes_since(self, seq: int) -> list[dict]:
-        raise ChangeLogGap("the RFC adapter does not read change documents (CDHDR/CDPOS); a full compare is needed")
+        if self.cdr is None:
+            raise ChangeLogGap("change documents are not enabled for this connection (profile option change_documents); a full compare is needed")
+        if not seq or seq <= 0:
+            raise ChangeLogGap(self.cd_error or "no change-document watermark is available")
+        try:
+            return self.cdr.read(seq)
+        except ChangeLogGap:
+            raise
+        except RemoteError as e:
+            raise ChangeLogGap(f"change documents could not be read ({e})") from e
+
+    def change_coverage(self) -> set[str] | None:
+        """Header tables whose changes the change documents report. None = change documents are not used (everything is compared)."""
+        return set(self.cdr.coverage()) if self.cdr is not None else None
 
     def capabilities(self) -> dict:
         return {"pushdown": ["lookup", "get", "select_in", "select_between"], "full_scan": f"bounded to {self.profile.max_scan_rows} rows",
-                "change_documents": False, "writes": False, "validated_against_real_sap": False}
+                "change_documents": self.cdr is not None, "writes": False, "validated_against_real_sap": False}
 
 
 class DisconnectedAdapter:
@@ -395,7 +421,7 @@ class DisconnectedAdapter:
     def _down(self, *a, **k):
         raise RemoteError(f"{self.system.label} is disconnected ({self.reason}); reconnect it before use")
 
-    select = lookup = get = count = table_counts = discover = reference_date = change_seq = changes_since = select_in = select_between = _down
+    select = lookup = get = count = table_counts = discover = reference_date = change_seq = changes_since = change_coverage = select_in = select_between = _down
 
     def capabilities(self) -> dict:
         return {"connected": False, "reason": self.reason}

@@ -24,8 +24,10 @@ export default function Landscape() {
   const roles = ["PRD", "QAS", "UAT", "DEV", "SBX", "TRN"];
   return (
     <>
-      <Card title="Environments" actions={<button disabled={!can("system:write") || act.busy} title="Registers a second ECC production source reached through the RFC adapter over a FAKE transport"
-        onClick={() => act.run(async () => { const r = await api.post("/api/demo/connect-fake-rfc"); await reload(); setSel(r.id); })}>Connect demo remote source (fake RFC)</button>}>
+      <Card title="Environments" actions={<div className="row"><button disabled={!can("system:write") || act.busy} title="Registers a second ECC production source reached through the RFC adapter over a FAKE transport"
+        onClick={() => act.run(async () => { const r = await api.post("/api/demo/connect-fake-rfc"); await reload(); setSel(r.id); })}>Connect demo remote source (fake RFC)</button>
+        <button disabled={!can("system:write") || act.busy} title="Same, with the change-document (CDHDR) reader switched on"
+        onClick={() => act.run(async () => { const r = await api.post("/api/demo/connect-fake-rfc?change_documents=true"); await reload(); setSel(r.id); })}>Demo remote source with change documents</button></div>}>
         <div className="env-row">
           {roles.map((r) => (
             <div key={r} className="env-col"><h3>{r}</h3>
@@ -61,6 +63,11 @@ export default function Landscape() {
       {remote && (
         <Card title="Remote connection (read-only)">
           <p><Badge kind="warn">not validated against a real SAP system</Badge> <span className="muted small">{remote.capabilities.full_scan}; writes: {String(remote.capabilities.writes)}; change documents: {String(remote.capabilities.change_documents)}</span></p>
+          {remote.change_documents.enabled
+            ? <p className="small">Change documents (CDHDR) are read: covered {remote.change_documents.covered.join(", ") || "nothing"}; {remote.change_documents.not_logged.length ? `not logged by the system (compared by content): ${remote.change_documents.not_logged.join(", ")}; ` : ""}
+                types without change documents (BOMs, production orders, material documents) are always compared by content. Reads stop {remote.change_documents.lag_seconds}s behind the system clock and re-read {remote.change_documents.overlap_seconds}s.
+                {remote.change_documents.error && <> <Badge kind="warn">{remote.change_documents.error}</Badge></>}</p>
+            : <p className="small muted">Change documents: off. {remote.change_documents.note}</p>}
           <p className="small">Calls {remote.stats.calls} · retries {remote.stats.retries} · rows read {remote.stats.rows} · full scans {remote.stats.scans} ({remote.stats.scanned_tables.join(", ") || "none"}) · guard trips {remote.stats.guard_trips}</p>
           <p className="small">Pushed down to the system: {remote.capabilities.pushdown.join(", ")}.
             {Object.keys(remote.schema_drift).length ? ` Schema drift: ${JSON.stringify(remote.schema_drift)}` : " The modelled DDIC fields and keys all exist remotely."}</p>

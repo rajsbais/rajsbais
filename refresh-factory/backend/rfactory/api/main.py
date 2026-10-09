@@ -439,10 +439,10 @@ def create_app(data_dir: Path | None = None, persist: bool | None = None, auth: 
             raise HTTPException(409, "this system is simulated, not remote")
         a, prof = svc.adapters[sid], svc.remote_profiles.get(sid)
         return {"profile": prof.public() if prof else None, "capabilities": a.capabilities(), "stats": a.stats.public(), "schema_drift": a.drift,
-                "validated_against_real_sap": False}
+                "change_documents": svc.change_doc_info(sid), "validated_against_real_sap": False}
 
     @app.post("/api/demo/connect-fake-rfc", status_code=201)
-    def demo_connect_fake(p: Principal = Depends(need("system:write"))):
+    def demo_connect_fake(change_documents: bool = False, p: Principal = Depends(need("system:write"))):
         """Registers a second ECC production source that is reached through the RFC adapter over a FAKE RFC transport (no SAP involved)."""
         from ..sap.adapter import SapSystem
         from ..sap.connectors.fake_rfc import FakeRfcTransport
@@ -450,7 +450,8 @@ def create_app(data_dir: Path | None = None, persist: bool | None = None, auth: 
         from ..sap.synthetic import make_demo_pair
         sim, _t = make_demo_pair()
         system = SapSystem(sid="EP2", client="100", role="PRD", owner="finance-ops", tags=["remote-demo"])
-        prof = ConnectionProfile("EP2 via fake RFC", "rfc", ashost="fake.invalid", client="100", user="DEMO", password_ref="env:DEMO_NOT_USED", calls_per_minute=60_000)
+        prof = ConnectionProfile("EP2 via fake RFC", "rfc", ashost="fake.invalid", client="100", user="DEMO", password_ref="env:DEMO_NOT_USED", calls_per_minute=60_000,
+                                 options={"change_documents": True} if change_documents else {})
         s = svc.connect_remote(p, system, prof, transport=FakeRfcTransport(sim), reference=sim.reference_date)
         return {**s.model_dump(mode="json"), "label": s.label, "remote": True, "simulated_transport": True}
 

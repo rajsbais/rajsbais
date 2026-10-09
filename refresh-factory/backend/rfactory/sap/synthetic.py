@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import copy
 import random
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from typing import Any, Callable
 
 from .adapter import ChangeLogGap, ProductionWriteBlocked, Row, SapSystem
@@ -348,6 +348,9 @@ class SimulatedSap:
         # change-document stand-in (CDHDR/CDPOS): every source mutation made through sim_* is logged
         self.changelog: list[dict] = []
         self.log_floor = 0  # oldest retained position; older positions raise ChangeLogGap
+        # clock of the simulated source: change documents carry the date and time they were written (UDATE/UTIME)
+        self.sim_now = datetime(REF_DATE.year, REF_DATE.month, REF_DATE.day, 8, 0, 0)
+        self.commit_delay = 0  # seconds between writing a change document and its commit (a long-running transaction); invisible to readers until then
 
     def __getstate__(self):
         """Fault injectors are test hooks (closures): never persisted."""
@@ -369,9 +372,15 @@ class SimulatedSap:
         return [dict(c) for c in self.changelog if c["seq"] > seq]
 
     # --- SIMULATION helpers: business users posting/changing documents in the source ---
+    def sim_advance(self, seconds: float) -> None:
+        self.sim_now = getattr(self, "sim_now", datetime(REF_DATE.year, REF_DATE.month, REF_DATE.day, 8, 0, 0)) + timedelta(seconds=seconds)
+
     def _log(self, table: str, key: tuple, op: str) -> None:
+        now = getattr(self, "sim_now", None)
         self.changelog.append({"seq": self.change_seq() + 1, "table": table, "op": op,
-                               "key": dict(zip(TABLES[table].keys, key))})
+                               "key": dict(zip(TABLES[table].keys, key)),
+                               "ts": now.isoformat() if now else None,
+                               "visible_at": (now + timedelta(seconds=getattr(self, "commit_delay", 0))).isoformat() if now else None})
 
     def sim_insert(self, table: str, row: Row) -> None:
         self.data[table].append(copy.deepcopy(row)); self._invalidate(table)
