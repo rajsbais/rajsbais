@@ -302,8 +302,28 @@ def reconcile(run: Run, plan: Plan, source: SourceAdapter, target: TargetAdapter
             pm_bad.append(f"notification {inst.key}: equipment {h['EQUNR']} missing in target")
         if h.get("TPLNR") and not target.get("IFLOT", (h["TPLNR"],)):
             pm_bad.append(f"notification {inst.key}: location {h['TPLNR']} missing in target")
+    for inst in docs("MAINT_ORDER"):
+        pm_any = True
+        o = target.get("AUFK", (inst.key,))
+        if o is None or not str(o.get("AUART", "")).startswith("PM"):
+            pm_bad.append(f"maintenance order {inst.key} missing in target or not of a maintenance order type")
+            continue
+        h = target.get("AFIH", (inst.key,))
+        if h is None:
+            pm_bad.append(f"maintenance order {inst.key}: PM header (AFIH) missing in target")
+            continue
+        if h.get("EQUNR") and not target.get("EQUI", (h["EQUNR"],)):
+            pm_bad.append(f"maintenance order {inst.key}: equipment {h['EQUNR']} missing in target")
+        if h.get("QMNUM") and not target.get("QMEL", (h["QMNUM"],)):
+            pm_bad.append(f"maintenance order {inst.key}: notification {h['QMNUM']} missing in target")
+        ops = {x["VORNR"] for x in target.lookup("AFVC", "AUFNR", inst.key)}
+        if len(ops) != len(inst.rows.get("AFVC", [])):
+            pm_bad.append(f"maintenance order {inst.key}: {len(ops)} operations in the target, {len(inst.rows.get('AFVC', []))} were loaded")
+        conf = target.lookup("AFRU", "AUFNR", inst.key)
+        if len(conf) != len(inst.rows.get("AFRU", [])) or any(c["VORNR"] not in ops for c in conf):
+            pm_bad.append(f"maintenance order {inst.key}: confirmations differ from what was loaded or refer to a missing operation")
     if pm_any:
-        checks.append(_chk("business", "BUS-PM-REFS", "Functional locations, equipment and notifications are whole in the target (hierarchy, references, texts)", not pm_bad,
+        checks.append(_chk("business", "BUS-PM-REFS", "Functional locations, equipment, notifications and maintenance orders are whole in the target (hierarchy, references, operations, confirmations)", not pm_bad,
                            f"{len(pm_bad)} inconsistent", pm_bad))
 
     # HR master data (evaluated against the TARGET)

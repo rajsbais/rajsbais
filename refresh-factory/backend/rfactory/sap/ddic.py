@@ -103,6 +103,7 @@ TABLES: dict[str, TableDef] = {
         _t("EQUI", "Equipment master", ["EQUNR"], ["EQUNR", "EQART", "HERST", "SERGE", "MATNR", "TPLNR", "SWERK", "ANSDT", "ERDAT"]),
         _t("EQKT", "Equipment short text", ["EQUNR", "SPRAS"], ["EQUNR", "SPRAS", "EQKTX"]),
         _t("QMEL", "Maintenance notification", ["QMNUM"], ["QMNUM", "QMART", "EQUNR", "TPLNR", "QMTXT", "QMDAT", "SWERK", "ERNAM"]),
+        _t("AFIH", "Maintenance order header (PM part of the order; simplified)", ["AUFNR"], ["AUFNR", "ILART", "EQUNR", "TPLNR", "QMNUM", "PRIOK", "GSTRP"]),
         # HR master data (infotypes), simplified keys: the real ones also carry object, lock and sequence fields. Special-category personal data:
         # see masking/engine.py (HR_TABLES) and the hr:copy permission.
         _t("PA0003", "HR master record: core data (one row per personnel number)", ["PERNR"], ["PERNR", "ABKRS", "ERDAT"]),

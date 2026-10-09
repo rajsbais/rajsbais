@@ -131,16 +131,25 @@ class Planner:
         if m.scope.explicit_keys:
             keysets.append(set(m.scope.explicit_keys))
         if not keysets:
-            return [key_of_header(ot, r) for r in self.r.select(ot.header)]
+            return [key_of_header(ot, r) for r in self.r.select(ot.header) if self._is_type(ot, r)]
         keys = set.intersection(*keysets)
+        if ot.header_prefix:  # item-level or shared-header hits may belong to another object type
+            keys = {k for k in keys if (h := self.r.get(ot.header, tuple(k.split("/")))) is None or self._is_type(ot, h)}
         # intersect with existing headers (item-level hits always have a header, explicit keys may not)
         return sorted(keys)
+
+    @staticmethod
+    def _is_type(ot, header: Row) -> bool:
+        if not ot.header_prefix:
+            return True
+        f, pre = ot.header_prefix
+        return str(header.get(f, "")).startswith(pre)
 
     # ---- row collection -------------------------------------------------
     def collect(self, type_name: str, key: str, m: Manifest) -> PlanInstance | None:
         ot = self.reg.types[type_name]
         hdr = self.r.get(ot.header, tuple(key.split("/")))
-        if hdr is None:
+        if hdr is None or not self._is_type(ot, hdr):
             return None
         rows: dict[str, list[Row]] = {ot.header: [hdr]}
         for link in ot.tables[1:]:

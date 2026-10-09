@@ -368,7 +368,8 @@ class RefreshService:
             "sales_orders": self.adapters[sid].count("VBAK"), "deliveries": self.adapters[sid].count("LIKP"),
             "billing_documents": self.adapters[sid].count("VBRK"), "accounting_documents": self.adapters[sid].count("BKPF"),
             "purchase_orders": self.adapters[sid].count("EKKO"), "boms": self.adapters[sid].count("STKO"),
-            "production_orders": self.adapters[sid].count("AUFK"),
+            "production_orders": sum(1 for o in self.adapters[sid].data["AUFK"] if str(o["AUART"]).startswith("PP")),
+            "maintenance_orders": sum(1 for o in self.adapters[sid].data["AUFK"] if str(o["AUART"]).startswith("PM")),
             "material_documents": len({(r["MBLNR"], r["MJAHR"]) for r in self.adapters[sid].data["MATDOC" if family_is_s4(self.system(sid)) else "MKPF"]})}
         return d
 

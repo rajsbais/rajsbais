@@ -346,6 +346,40 @@ def _add_pm(d: dict[str, list[Row]]) -> None:
                         d["QMEL"].append({"QMNUM": f"{nt:012d}", "QMART": rng.choice(["M1", "M2"]), "EQUNR": eid, "TPLNR": station,
                                           "QMTXT": rng.choice(["Leaking seal", "Abnormal vibration", "Overheating", "Belt worn", "Noise"]),
                                           "QMDAT": qd.isoformat(), "SWERK": w, "ERNAM": f"PM{rng.randint(1, 5):04d}"})
+    _add_pm_orders(d)
+
+
+def _add_pm_orders(d: dict[str, list[Row]]) -> None:
+    """Maintenance orders (AUFK with order type PM01/PM02 + AFIH + operations + time confirmations) for malfunction notifications, plus a few
+    planned orders without a notification. Own random stream. Order numbers continue after the production orders (one shared number range)."""
+    rng = random.Random(6363)
+    cc_of = {p["WERKS"]: p["BUKRS"] for p in d["T001W"]}
+    aufnr = max(int(o["AUFNR"]) for o in d["AUFK"])
+    rueck = max([int(r["RUECK"]) for r in d["AFRU"]] or [0])
+    equi = {e["EQUNR"]: e for e in d["EQUI"]}
+
+    def make(eq, qmnum, when, art):
+        nonlocal aufnr, rueck
+        aufnr += 1
+        oid = f"{aufnr:012d}"
+        d["AUFK"].append({"AUFNR": oid, "AUART": art, "ERDAT": when.isoformat(), "BUKRS": cc_of[eq["SWERK"]], "WERKS": eq["SWERK"], "ERNAM": f"PM{rng.randint(1, 5):04d}"})
+        d["AFIH"].append({"AUFNR": oid, "ILART": rng.choice(["001", "002", "003"]), "EQUNR": eq["EQUNR"], "TPLNR": eq["TPLNR"], "QMNUM": qmnum,
+                          "PRIOK": rng.choice(["1", "2", "3"]), "GSTRP": min(when + timedelta(days=2), REF_DATE).isoformat()})
+        done = rng.random() < 0.7
+        for k in range(1, rng.randint(1, 2) + 1):
+            vornr = f"{k * 10:04d}"
+            d["AFVC"].append({"AUFNR": oid, "VORNR": vornr, "ARBPL": rng.choice(["MECH01", "ELEC01"]), "STEUS": "PM01",
+                              "LTXA1": rng.choice(["Inspect", "Replace part", "Lubricate", "Test run"]), "VGW01": rng.randint(1, 6)})
+            if done:
+                rueck += 1
+                d["AFRU"].append({"AUFNR": oid, "VORNR": vornr, "RMZHL": "00000001", "RUECK": f"{rueck:010d}", "LMNGA": 0,
+                                  "ISM01": float(rng.randint(1, 8)), "BUDAT": min(when + timedelta(days=rng.randint(3, 10)), REF_DATE).isoformat(),
+                                  "ERNAM": f"PM{rng.randint(1, 5):04d}"})
+    for q in list(d["QMEL"]):
+        if q["QMART"] == "M2" and rng.random() < 0.7:
+            make(equi[q["EQUNR"]], q["QMNUM"], min(date.fromisoformat(q["QMDAT"]) + timedelta(days=rng.randint(1, 4)), REF_DATE), "PM01")
+    for e in rng.sample(list(equi.values()), 6):  # planned maintenance: no notification
+        make(e, "", REF_DATE - timedelta(days=rng.randint(5, 200)), "PM02")
 
 
 def _add_flight(d: dict[str, list[Row]]) -> None:

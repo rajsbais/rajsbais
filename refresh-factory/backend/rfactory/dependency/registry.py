@@ -30,6 +30,7 @@ class ObjectType:
     date_field: tuple[str, str] | None = None  # (table, field)
     filters: dict = field(default_factory=dict)  # scope dimension -> (table, field)
     load_rank: int = 50  # tie-break for load order within a dependency level
+    header_prefix: tuple[str, str] | None = None  # (field, prefix): only headers whose field starts with the prefix are this type (order types share AUFK)
 
     @property
     def header(self) -> str:
@@ -132,7 +133,13 @@ OBJECT_TYPES: dict[str, ObjectType] = {o.name: o for o in [
                (L("AUFK"), L("AFKO", "AUFK", [("AUFNR", "AUFNR")]), L("AFPO", "AUFK", [("AUFNR", "AUFNR")]), L("RESB", "AUFK", [("AUFNR", "AUFNR")]),
                 L("AFVC", "AUFK", [("AUFNR", "AUFNR")]), L("AFRU", "AUFK", [("AUFNR", "AUFNR")])),
                ("AUFNR",), ("AUFK", "ERDAT"),
-               {"company_codes": ("AUFK", "BUKRS"), "plants": ("AUFK", "WERKS"), "materials": ("AFPO", "MATNR"), "document_types": ("AUFK", "AUART")}, 35),
+               {"company_codes": ("AUFK", "BUKRS"), "plants": ("AUFK", "WERKS"), "materials": ("AFPO", "MATNR"), "document_types": ("AUFK", "AUART")}, 35,
+               header_prefix=("AUART", "PP")),
+    ObjectType("MAINT_ORDER", "Maintenance order (PM)", "PM", "document",
+               (L("AUFK"), L("AFIH", "AUFK", [("AUFNR", "AUFNR")]), L("AFVC", "AUFK", [("AUFNR", "AUFNR")]), L("AFRU", "AUFK", [("AUFNR", "AUFNR")])),
+               ("AUFNR",), ("AUFK", "ERDAT"),
+               {"company_codes": ("AUFK", "BUKRS"), "plants": ("AUFK", "WERKS"), "document_types": ("AUFK", "AUART")}, 40,
+               header_prefix=("AUART", "PM")),
     ObjectType("MATERIAL_DOCUMENT", "Material document (goods movement)", "MM", "document",
                (L("MKPF"), L("MSEG", "MKPF", [("MBLNR", "MBLNR"), ("MJAHR", "MJAHR")])),
                ("MBLNR", "MJAHR"), ("MKPF", "BUDAT"),
@@ -192,6 +199,12 @@ RELATIONSHIPS: list[Relationship] = [
     Relationship("notification→equipment", "MAINT_NOTIFICATION", "EQUIPMENT", R, "QMEL", "EQUNR"),
     Relationship("notification→functional location", "MAINT_NOTIFICATION", "FUNC_LOCATION", R, "QMEL", "TPLNR"),
     Relationship("notification→plant", "MAINT_NOTIFICATION", "PLANT", C, "QMEL", "SWERK"),
+    Relationship("maintenance order→notification", "MAINT_ORDER", "MAINT_NOTIFICATION", R, "AFIH", "QMNUM", reverse=True,
+                 description="Order created from a notification; an order without one has no such requirement"),
+    Relationship("maintenance order→equipment", "MAINT_ORDER", "EQUIPMENT", R, "AFIH", "EQUNR"),
+    Relationship("maintenance order→functional location", "MAINT_ORDER", "FUNC_LOCATION", R, "AFIH", "TPLNR"),
+    Relationship("maintenance order→plant", "MAINT_ORDER", "PLANT", C, "AUFK", "WERKS"),
+    Relationship("maintenance order→company code", "MAINT_ORDER", "COMPANY_CODE", C, "AUFK", "BUKRS"),
     Relationship("employee→company code", "EMPLOYEE", "COMPANY_CODE", C, "PA0001", "BUKRS"),
     Relationship("employee→plant", "EMPLOYEE", "PLANT", C, "PA0001", "WERKS"),
     Relationship("goods movement→material", "MATERIAL_DOCUMENT", "MATERIAL", R, "MSEG", "MATNR"),

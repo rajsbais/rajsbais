@@ -134,7 +134,7 @@ CATALOG: dict[tuple[str, str], tuple[str, str]] = {
     # QM: the people who inspected and decided
     ("QASR", "PRUEFER"): ("user", "USER_ID"), ("QAVE", "VAENAME"): ("user", "USER_ID"),
     # PM: the people who reported a malfunction
-    ("QMEL", "ERNAM"): ("user", "USER_ID"),
+    ("QMEL", "ERNAM"): ("user", "USER_ID"), ("AFRU", "ERNAM"): ("user", "USER_ID"),
     # HR infotypes: special-category data. Pay is perturbed, identifiers and bank details are replaced, dates of birth shifted.
     ("PA0002", "NACHN"): ("name", "LAST_NAME"), ("PA0002", "VORNA"): ("name", "FIRST_NAME"), ("PA0002", "GBDAT"): ("birthdate", "BIRTHDATE"),
     ("PA0002", "PERID"): ("national_id", "TAX_ID"), ("PA0006", "STRAS"): ("street", "STREET"), ("PA0006", "TELNR"): ("phone", "PHONE"),
