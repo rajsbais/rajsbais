@@ -9,6 +9,42 @@ writes to SAP until step 5, and step 5 is yours to start.
 > cloud session cannot reach them. Secrets are never stored in the platform's database: destinations reference
 > environment variables (`env:NAME`), and the registration refuses passwords in the request body.
 
+## Your landscape: NPL and A4H on Hyper-V, one at a time
+
+Two VMs on the Windows host (Hyper-V switch `SAP-Net`), only one running at a time because of memory:
+
+| VM | What it is | What it can play |
+|---|---|---|
+| `SAP-NPL-15.2` (SID **NPL**, instance 00, client 001) | SAP NetWeaver AS ABAP 7.52 developer edition on openSUSE Leap 15.2: **basis only** (SAP_BASIS / SAP_ABA, Flight model). No ECC application layer: no FI/SD/MM transactions, no business data in BKPF/BSEG/VBAK/MARA (the tables of SAP_APPL are not installed) | the **add-on bench**: create and test the `Z_SDTF_*` function modules, prove the RFC contract (connector test, discovery). It cannot be the ECC source of a carve-out: there is nothing to carve out |
+| **A4H** (S/4HANA fully activated appliance, client 100) | full S/4HANA application with demo company codes (1010, 1710, ...), Fiori launchpad (`https://vhcala4hci...:44300`), released OData/SOAP services, the *Migrate Your Data* app | **source and target**: source through the same `Z_SDTF_*` add-on (A4H allows Z development), target through the released APIs and the migration cockpit |
+
+So the honest plan is not "ECC first, S/4HANA second" but:
+
+1. **NPL up**: build the add-on (`sap-abap/`), run the connector test and discovery against NPL. Expect T001 with at most the
+   delivery company code 0001 and no business objects; what this step proves is the RFC path (SDK, destination, authorisations,
+   the four function modules, snapshot token, checksums). Keep the transport request: the same objects go into A4H.
+2. **A4H up, as source**: create the add-on in A4H (or import the transport), register A4H a second time with role SOURCE and
+   connector RFC, discover it (real company codes, plants, sales organisations, table statistics), design a scope on one demo
+   company code, run with the target **simulated**: extraction over RFC with real volumes, transformation, cockpit export.
+3. **A4H up, as target**: register A4H with role TARGET and connector API, connector test, download the migration object
+   templates from its *Migrate Your Data* app and check them (`sdtf cockpit-template check`), import its object list, upload
+   a package and import the simulation log. A real API load into A4H only against a copied client (SCCL), never client 100.
+
+A run that needs the other VM fails at that stage with a connection error (EXTRACT needs the source, LOAD the target);
+switch VMs and *Resume from checkpoint*: completed stages and completed extraction partitions are skipped.
+
+> **Reconciliation on real systems is not wired yet.** The RECONCILE stage reads source and target through the platform's
+> record store, i.e. the simulated systems. With a pyrfc source and an HTTPS target it has no data: expect FAIL / zero
+> totals there, and treat the extraction metrics (rows, partitions, checksums, snapshot id) and the cockpit simulation log as
+> the real evidence of these steps. Reconciliation through the adapters (aggregates over `Z_SDTF_READ_PACKAGE`, OData reads
+> on the target) is the next increment and is listed in the backlog.
+
+Networking: the platform runs on the Windows host (Python, the SAP NW RFC SDK for Windows, `pyrfc`; if no `pyrfc` wheel
+exists for your Python, use a 3.12 virtual environment for the API process) or inside the `docker-host` VM through
+`deploy/docker-compose.yml` with the SDK mounted. The VMs' hostnames (`vhcalnplci`, `vhcala4hci`) must resolve from where the
+platform runs (hosts file), the RFC gateway port is 3300 for instance 00 on both, and A4H's HTTPS port is 44300; its
+self-signed certificate must be in the machine's trust store.
+
 ## 0. Prerequisites on your machine
 
 | Need | Why | How |
@@ -75,7 +111,8 @@ from the real ECC over RFC, transforms, loads into the simulated gateway and rec
 
 * EXTRACT metrics: `adapter=RFC`, partitions, records per second, `snapshot_id` equal to the one the connector test
   returned;
-* RECONCILE: the three layers PASS or explain every variance;
+* RECONCILE: on the simulated target this is the three layers PASS or explained; **on a pyrfc source the source side is
+  not read through RFC yet** (see the note above), so do not expect a meaningful result there until that increment lands;
 * the cockpit export: the staging files for the cockpit objects, now carrying real data.
 
 Start with a small company code or a date-bounded scope: the first extraction measures the real throughput.
