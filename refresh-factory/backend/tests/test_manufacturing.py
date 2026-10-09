@@ -15,7 +15,7 @@ from .test_delta import approved as approved_delta
 from .test_tdm import TINA, ask, bootstrap_masters, ids, policy
 
 FAMILIES = ["ECC", "S4"]
-PP_CHECKS = {"BUS-PP-STRUCT", "BUS-PP-BOM", "BUS-PP-COMPONENTS", "BUS-PP-MOVEMENTS"}
+PP_CHECKS = {"BUS-PP-STRUCT", "BUS-PP-BOM", "BUS-PP-COMPONENTS", "BUS-PP-MOVEMENTS", "BUS-PP-ROUTING", "BUS-PP-CONFIRM"}
 
 
 def pair(svc, family):
@@ -249,7 +249,7 @@ def test_delta_refresh_picks_up_a_new_order_and_a_changed_reservation(svc):
     prod = next(b for b in src.data["STKO"] if b["WERKS"] == "1000")
     n = "000001099999"
     src.sim_insert("AUFK", {"AUFNR": n, "AUART": "PP01", "ERDAT": REF_DATE.isoformat(), "BUKRS": "1000", "WERKS": "1000", "ERNAM": "BATCHUSR"})
-    src.sim_insert("AFKO", {"AUFNR": n, "GAMNG": 12, "GMEIN": "EA", "GSTRP": REF_DATE.isoformat(), "GLTRP": REF_DATE.isoformat(), "STLNR": prod["STLNR"]})
+    src.sim_insert("AFKO", {"AUFNR": n, "GAMNG": 12, "GMEIN": "EA", "GSTRP": REF_DATE.isoformat(), "GLTRP": REF_DATE.isoformat(), "STLNR": prod["STLNR"], "PLNNR": ""})  # an order without a routing is valid
     src.sim_insert("AFPO", {"AUFNR": n, "POSNR": "0001", "MATNR": prod["MATNR"], "PSMNG": 12, "WEMNG": 0, "WERKS": "1000"})
     for k, comp in enumerate(src.lookup("STPO", "STLNR", prod["STLNR"]), start=1):
         src.sim_insert("RESB", {"AUFNR": n, "RSPOS": f"{k:04d}", "MATNR": comp["IDNRK"], "WERKS": "1000", "BDMNG": comp["MENGE"] * 12, "ENMNG": 0})

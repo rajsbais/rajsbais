@@ -81,6 +81,7 @@ def generate(template_stage: str, target: SourceAdapter, family: str, n: int, pa
     f_next = max(1_900_000_001, _mx(target, "BKPF", "BELNR", 1_900_000_001) + 1)
     ao_next = (target.number_level("PP_ORDER") or 1_000_000) + 1
     mb_next = (target.number_level("MM_MBLNR") or 4_900_000_000) + 1
+    pl_next = (target.number_level("PP_ROUT") or 50_000_000) + 1
     st_next = max(90_000_001, _mx(target, "STKO", "STLNR", 90_000_001) + 1)  # synthetic BOM numbers live in their own space
     matdoc = s4 or bool(target.select("MATDOC"))
     inst: dict[str, PlanInstance] = {}
@@ -127,18 +128,28 @@ def generate(template_stage: str, target: SourceAdapter, family: str, n: int, pa
             stpo = [{"STLNR": sid, "STLKN": f"{k * 10:08d}", "IDNRK": c, "MENGE": rng.randint(1, 4), "MEINS": "EA"} for k, c in enumerate(comps, start=1)]
             add(_inst("BOM", sid, {"STKO": [{"STLNR": sid, "MATNR": prod, "WERKS": plant, "STLAN": "1", "BMENG": 1, "DATUV": ref}], "STPO": stpo},
                       [f"MATERIAL:{prod}"] + [f"MATERIAL:{c}" for c in comps], [f"PLANT:{plant}"]))
+            while target.get("PLKO", (f"{pl_next:08d}",)):
+                pl_next += 1
+            gid = f"{pl_next:08d}"; pl_next += 1
+            ops = [{"PLNNR": gid, "VORNR": f"{k * 10:04d}", "ARBPL": wc, "STEUS": "PP01", "LTXA1": f"Operation {k * 10} at {wc}", "VGW01": rng.randint(1, 8)}
+                   for k, wc in enumerate(rng.sample(["CUT01", "ASM01", "PNT01", "QC01"], rng.randint(2, 3)), start=1)]
+            add(_inst("ROUTING", gid, {"PLKO": [{"PLNNR": gid, "PLNAL": "01", "MATNR": prod, "WERKS": plant, "DATUV": ref}], "PLPO": ops},
+                      [f"MATERIAL:{prod}"], [f"PLANT:{plant}"]))
             while target.get("AUFK", (f"{ao_next:012d}",)):
                 ao_next += 1
             order_no = f"{ao_next:012d}"; ao_next += 1
             qty, done = rng.randint(10, 100), template_stage == "mfg_completed"
             resb = [{"AUFNR": order_no, "RSPOS": f"{k:04d}", "MATNR": b["IDNRK"], "WERKS": plant, "BDMNG": b["MENGE"] * qty, "ENMNG": b["MENGE"] * qty if done else 0}
                     for k, b in enumerate(stpo, start=1)]
-            req = [f"BOM:{sid}", f"MATERIAL:{prod}"] + [f"MATERIAL:{c}" for c in comps]
+            req = [f"BOM:{sid}", f"ROUTING:{gid}", f"MATERIAL:{prod}"] + [f"MATERIAL:{c}" for c in comps]
+            afvc = [{"AUFNR": order_no, "VORNR": o["VORNR"], "ARBPL": o["ARBPL"], "STEUS": o["STEUS"], "LTXA1": o["LTXA1"], "VGW01": o["VGW01"]} for o in ops]
+            afru = [{"AUFNR": order_no, "VORNR": o["VORNR"], "RMZHL": "00000001", "RUECK": f"{9_000_000 + int(order_no) % 1_000_000 * 10 + k:010d}",
+                     "LMNGA": qty, "ISM01": round(o["VGW01"] * qty / 10, 2), "BUDAT": ref, "ERNAM": "TDM_SYNTH"} for k, o in enumerate(ops, start=1)] if done else []
             add(_inst("PRODUCTION_ORDER", order_no, {
                 "AUFK": [{"AUFNR": order_no, "AUART": "PP01", "ERDAT": ref, "BUKRS": cc, "WERKS": plant, "ERNAM": "TDM_SYNTH"}],
-                "AFKO": [{"AUFNR": order_no, "GAMNG": qty, "GMEIN": "EA", "GSTRP": ref, "GLTRP": ref, "STLNR": sid}],
+                "AFKO": [{"AUFNR": order_no, "GAMNG": qty, "GMEIN": "EA", "GSTRP": ref, "GLTRP": ref, "STLNR": sid, "PLNNR": gid}],
                 "AFPO": [{"AUFNR": order_no, "POSNR": "0001", "MATNR": prod, "PSMNG": qty, "WEMNG": qty if done else 0, "WERKS": plant}],
-                "RESB": resb}, req, [f"COMPANY_CODE:{cc}", f"PLANT:{plant}"], "ROOT", f"BOM:{sid}"))
+                "RESB": resb, "AFVC": afvc, "AFRU": afru}, req, [f"COMPANY_CODE:{cc}", f"PLANT:{plant}"], "ROOT", f"BOM:{sid}"))
             roots.append(f"PRODUCTION_ORDER:{order_no}")
             if not done:
                 continue

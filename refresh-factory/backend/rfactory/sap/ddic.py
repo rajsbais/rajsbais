@@ -67,13 +67,20 @@ TABLES: dict[str, TableDef] = {
            ["EBELN", "BUKRS", "LIFNR", "BEDAT", "EKORG", "BSART"]),
         _t("EKPO", "Purchasing document item", ["EBELN", "EBELP"],
            ["EBELN", "EBELP", "MATNR", "WERKS", "MENGE", "NETPR"]),
-        # Manufacturing (PP) and inventory management (MM-IM). Reduced views: no routings/operations, confirmations, costing or batches.
+        # Manufacturing (PP) and inventory management (MM-IM). Reduced views: simplified keys, no work-centre master, costing or batches.
         _t("STKO", "BOM header (simplified: material and plant on the header, as MAST+STKO)", ["STLNR"], ["STLNR", "MATNR", "WERKS", "STLAN", "BMENG", "DATUV"]),
         _t("STPO", "BOM item", ["STLNR", "STLKN"], ["STLNR", "STLKN", "IDNRK", "MENGE", "MEINS"]),
         _t("AUFK", "Order master data", ["AUFNR"], ["AUFNR", "AUART", "ERDAT", "BUKRS", "WERKS", "ERNAM"]),
-        _t("AFKO", "Production order header", ["AUFNR"], ["AUFNR", "GAMNG", "GMEIN", "GSTRP", "GLTRP", "STLNR"]),
+        _t("AFKO", "Production order header", ["AUFNR"], ["AUFNR", "GAMNG", "GMEIN", "GSTRP", "GLTRP", "STLNR", "PLNNR"]),
         _t("AFPO", "Production order item", ["AUFNR", "POSNR"], ["AUFNR", "POSNR", "MATNR", "PSMNG", "WEMNG", "WERKS"]),
         _t("RESB", "Order component reservation (simplified key AUFNR/RSPOS)", ["AUFNR", "RSPOS"], ["AUFNR", "RSPOS", "MATNR", "WERKS", "BDMNG", "ENMNG"]),
+        # Routings (task lists) and what orders and shop-floor confirmations take from them. Simplified keys: the real ones are task-list type /
+        # group / counter (PLKO, PLPO), order routing number / counter (AFVC) and confirmation number / counter (AFRU).
+        _t("PLKO", "Routing header (simplified: group number, material and plant on the header, as MAPL+PLKO)", ["PLNNR"], ["PLNNR", "PLNAL", "MATNR", "WERKS", "DATUV"]),
+        _t("PLPO", "Routing operation (simplified key PLNNR/VORNR)", ["PLNNR", "VORNR"], ["PLNNR", "VORNR", "ARBPL", "STEUS", "LTXA1", "VGW01"]),
+        _t("AFVC", "Order operation (copied from the routing when the order is created; simplified key AUFNR/VORNR)", ["AUFNR", "VORNR"],
+           ["AUFNR", "VORNR", "ARBPL", "STEUS", "LTXA1", "VGW01"]),
+        _t("AFRU", "Order confirmation (simplified key AUFNR/VORNR/RMZHL)", ["AUFNR", "VORNR", "RMZHL"], ["AUFNR", "VORNR", "RMZHL", "RUECK", "LMNGA", "ISM01", "BUDAT", "ERNAM"]),
         # ECC material documents: header + item. In S/4HANA these are views on MATDOC, so MKPF/MSEG hold no rows there.
         _t("MKPF", "Material document header", ["MBLNR", "MJAHR"], ["MBLNR", "MJAHR", "BLDAT", "BUDAT", "USNAM"]),
         _t("MSEG", "Material document item", ["MBLNR", "MJAHR", "ZEILE"],
@@ -96,6 +103,7 @@ NUMBER_RANGE_OBJECTS: dict[str, tuple[str, str]] = {
     "VBRK": ("SD_BILL", "VBELN"),
     "EKKO": ("MM_PO", "EBELN"),
     "AUFK": ("PP_ORDER", "AUFNR"),
+    "PLKO": ("PP_ROUT", "PLNNR"),
     "MKPF": ("MM_MBLNR", "MBLNR"),
     "MATDOC": ("MM_MBLNR", "MBLNR"),
 }

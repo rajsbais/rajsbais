@@ -7,7 +7,7 @@ Selective, business-consistent SAP non-production refresh with masking, conflict
 
 ## Run
 ```bash
-cd backend && pip install -e '.[test]' && python -m pytest          # 470 tests
+cd backend && pip install -e '.[test]' && python -m pytest          # 491 tests
 cd ../frontend && npm install && npm run build                       # UI served by the API from frontend/dist
 cd ../backend && uvicorn rfactory.api.main:app --port 8000           # http://localhost:8000  (API docs at /docs)
 # durable state (survives restarts, encrypted at rest):  RFACTORY_DATA_DIR=./data RFACTORY_STATE_KEY=$(python -c 'from cryptography.fernet import Fernet;print(Fernet.generate_key().decode())') uvicorn ...
@@ -38,4 +38,4 @@ approval with separation of duties · checkpointed load, resume, rollback · 34+
 
 **UI tests:** `frontend/e2e` (Playwright + axe-core). Journeys drive the real UI through each module with role switching (separation of duties, disabled controls, unmasked-data warning, agent restrictions); accessibility specs scan all 17 views in empty and loaded states and check landmarks, one `h1` per view, heading order, skip link, keyboard navigation and sorting, WAI-ARIA tabs, visible focus, colour-token contrast, alert announcements, 320/390px reflow and dark/light schemes. Automated checks find only part of the accessibility problems; a manual screen-reader review has not been done. Set `PW_CHROMIUM` to use a specific Chromium binary.
 
-Docs: [capability matrix](docs/01-capability-matrix.md) · [architecture](docs/02-architecture.md) · [backlog](docs/03-backlog.md) · [OpenAPI](docs/openapi.json) · [DB schema (design)](db/schema.sql).
+Docs: [capability matrix](docs/01-capability-matrix.md) · [architecture](docs/02-architecture.md) · [backlog](docs/03-backlog.md) · [OpenAPI](docs/openapi.json) · [first contact with a real system](docs/04-real-system-test.md) · [DB schema (design)](db/schema.sql).

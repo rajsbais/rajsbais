@@ -193,6 +193,7 @@ def build_source_dataset(seed: int = 42, family: str = "ECC") -> dict[str, list[
         {"OBJECT": "SD_BILL", "NRRANGENR": "01", "FROMNUMBER": 90000000, "TONUMBER": 99999999, "NRLEVEL": mx("VBRK", "VBELN")},
         {"OBJECT": "MM_PO", "NRRANGENR": "01", "FROMNUMBER": 4500000000, "TONUMBER": 4599999999, "NRLEVEL": mx("EKKO", "EBELN")},
         {"OBJECT": "PP_ORDER", "NRRANGENR": "01", "FROMNUMBER": 1000000, "TONUMBER": 1999999, "NRLEVEL": mx("AUFK", "AUFNR")},
+        {"OBJECT": "PP_ROUT", "NRRANGENR": "01", "FROMNUMBER": 50000000, "TONUMBER": 59999999, "NRLEVEL": mx("PLKO", "PLNNR")},
         {"OBJECT": "MM_MBLNR", "NRRANGENR": "01", "FROMNUMBER": 4900000000, "TONUMBER": 4999999999, "NRLEVEL": mx("MKPF", "MBLNR")},
     ]
     if family == "S4":
@@ -208,6 +209,9 @@ def _add_manufacturing(d: dict[str, list[Row]], mats: dict[str, list[str]], plan
     roh = {"1000": [_mat(100003), _mat(100006)], "2000": [_mat(100009), _mat(100012)]}  # RAW materials per company (MTART ROH)
     fert = {"1000": [_mat(100000 + i) for i in (1, 2, 4, 5, 7, 8)], "2000": [_mat(100010), _mat(100011)]}
     bom_of: dict[tuple[str, str], tuple[str, list[dict]]] = {}
+    route_of: dict[tuple[str, str], tuple[str, list[dict]]] = {}
+    rrng = random.Random(4343)  # routings use their own stream too: the data generated before routings existed is unchanged
+    plnnr = 50000000
     stlnr = 100
     for cc, products in fert.items():
         plant = plants[cc][0]
@@ -221,7 +225,16 @@ def _add_manufacturing(d: dict[str, list[Row]], mats: dict[str, list[str]], plan
                 d["STPO"].append(it)
                 items.append(it)
             bom_of[(cc, prod)] = (sid, items)
-    aufnr, mblnr = 1000001, 4900000001
+            plnnr += 1
+            gid = f"{plnnr:08d}"
+            d["PLKO"].append({"PLNNR": gid, "PLNAL": "01", "MATNR": prod, "WERKS": plant, "DATUV": (REF_DATE - timedelta(days=500)).isoformat()})
+            ops = []
+            for n, wc in enumerate(rrng.sample(["CUT01", "ASM01", "PNT01", "QC01"], rrng.randint(2, 3)), start=1):
+                op = {"PLNNR": gid, "VORNR": f"{n * 10:04d}", "ARBPL": wc, "STEUS": "PP01", "LTXA1": f"Operation {n * 10} at {wc}", "VGW01": rrng.randint(1, 8)}
+                d["PLPO"].append(op)
+                ops.append(op)
+            route_of[(cc, prod)] = (gid, ops)
+    aufnr, mblnr, rueck = 1000001, 4900000001, 8000000
     for cc, count in (("1000", 14), ("2000", 4)):
         plant = plants[cc][0]
         for _ in range(count):
@@ -229,18 +242,26 @@ def _add_manufacturing(d: dict[str, list[Row]], mats: dict[str, list[str]], plan
             aufnr += 1
             prod = rng.choice(fert[cc])
             sid, items = bom_of[(cc, prod)]
+            gid, ops = route_of[(cc, prod)]
             erdat = REF_DATE - timedelta(days=rng.randint(5, 120))
             qty = rng.randint(10, 100)
             done = rng.random() < 0.6
             d["AUFK"].append({"AUFNR": order, "AUART": "PP01", "ERDAT": erdat.isoformat(), "BUKRS": cc, "WERKS": plant, "ERNAM": "BATCHUSR"})
             d["AFKO"].append({"AUFNR": order, "GAMNG": qty, "GMEIN": "EA", "GSTRP": (erdat + timedelta(days=2)).isoformat(),
-                              "GLTRP": (erdat + timedelta(days=9)).isoformat(), "STLNR": sid})
+                              "GLTRP": (erdat + timedelta(days=9)).isoformat(), "STLNR": sid, "PLNNR": gid})
+            for op in ops:  # the order carries its own copy of the routing's operations
+                d["AFVC"].append({"AUFNR": order, "VORNR": op["VORNR"], "ARBPL": op["ARBPL"], "STEUS": op["STEUS"], "LTXA1": op["LTXA1"], "VGW01": op["VGW01"]})
             d["AFPO"].append({"AUFNR": order, "POSNR": "0001", "MATNR": prod, "PSMNG": qty, "WEMNG": qty if done else 0, "WERKS": plant})
             for n, it in enumerate(items, start=1):
                 need = it["MENGE"] * qty
                 d["RESB"].append({"AUFNR": order, "RSPOS": f"{n:04d}", "MATNR": it["IDNRK"], "WERKS": plant, "BDMNG": need, "ENMNG": need if done else 0})
             if done:
                 budat = min(erdat + timedelta(days=rng.randint(9, 20)), REF_DATE)
+                for k, op in enumerate(ops, start=1):  # a confirmation per operation; the last one reports the finished quantity
+                    rueck += 1
+                    d["AFRU"].append({"AUFNR": order, "VORNR": op["VORNR"], "RMZHL": "00000001", "RUECK": f"{rueck:010d}",
+                                      "LMNGA": qty if k == len(ops) else qty - rrng.randint(0, min(5, qty - 1)), "ISM01": round(op["VGW01"] * qty / 10, 2),
+                                      "BUDAT": budat.isoformat(), "ERNAM": "BATCHUSR"})
                 for lines, bwart in (([(it["IDNRK"], it["MENGE"] * qty) for it in items], "261"), ([(prod, qty)], "101")):
                     mb = f"{mblnr:010d}"
                     mblnr += 1
@@ -327,6 +348,7 @@ def build_target_dataset(source: dict[str, list[Row]], seed: int = 7) -> tuple[d
         {"OBJECT": "SD_BILL", "NRRANGENR": "01", "FROMNUMBER": 90000000, "TONUMBER": 99999999, "NRLEVEL": 90000000},
         {"OBJECT": "MM_PO", "NRRANGENR": "01", "FROMNUMBER": 4500000000, "TONUMBER": 4599999999, "NRLEVEL": 4500000000},
         {"OBJECT": "PP_ORDER", "NRRANGENR": "01", "FROMNUMBER": 1000000, "TONUMBER": 1999999, "NRLEVEL": max((int(n) for n in pp_clash), default=1000000)},
+        {"OBJECT": "PP_ROUT", "NRRANGENR": "01", "FROMNUMBER": 50000000, "TONUMBER": 59999999, "NRLEVEL": 50000000},
         {"OBJECT": "MM_MBLNR", "NRRANGENR": "01", "FROMNUMBER": 4900000000, "TONUMBER": 4999999999, "NRLEVEL": 4900000000},
     ]
     return d, owners

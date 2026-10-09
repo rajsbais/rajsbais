@@ -34,7 +34,7 @@ test("manufacturing: design a production-order refresh, see the BOM and goods mo
   const run = (await app.api("alice.basis").get(`/api/projects/${project.id}`)).body.runs.at(-1);
   const rec = (await app.api("alice.basis").get(`/api/runs/${run}/reconciliation`)).body;
   const pp = rec.checks.filter((c: { id: string }) => c.id.startsWith("BUS-PP-"));
-  expect(pp.map((c: { id: string }) => c.id).sort()).toEqual(["BUS-PP-BOM", "BUS-PP-COMPONENTS", "BUS-PP-MOVEMENTS", "BUS-PP-STRUCT"]);
+  expect(pp.map((c: { id: string }) => c.id).sort()).toEqual(["BUS-PP-BOM", "BUS-PP-COMPONENTS", "BUS-PP-CONFIRM", "BUS-PP-MOVEMENTS", "BUS-PP-ROUTING", "BUS-PP-STRUCT"]);
   expect(pp.every((c: { status: string }) => c.status === "pass")).toBe(true);
   await expectAccessible(page, "reconciliation with manufacturing checks");
   expect(app.errors).toEqual([]);

@@ -165,7 +165,7 @@ def reconcile(run: Run, plan: Plan, source: SourceAdapter, target: TargetAdapter
     mdocs = docs("MATERIAL_DOCUMENT")
     if orders or mdocs:
         item_t = "MATDOC" if registry.types["MATERIAL_DOCUMENT"].header == "MATDOC" else "MSEG"
-        struct_bad, bom_bad, comp_bad, move_bad = [], [], [], []
+        struct_bad, bom_bad, comp_bad, move_bad, route_bad, conf_bad = [], [], [], [], [], []
         for inst in orders:
             n = inst.key
             afko, afpo, resb = target.get("AFKO", (n,)), target.lookup("AFPO", "AUFNR", n), target.lookup("RESB", "AUFNR", n)
@@ -182,6 +182,27 @@ def reconcile(run: Run, plan: Plan, source: SourceAdapter, target: TargetAdapter
                     got = sum(r["BDMNG"] for r in resb if r["MATNR"] == comp["IDNRK"])
                     if abs(need - got) > 0.001:
                         comp_bad.append(f"order {n}: component {comp['IDNRK']} reserves {got}, BOM needs {need}")
+            plnnr = afko.get("PLNNR")
+            ops = {o["VORNR"] for o in target.lookup("AFVC", "AUFNR", n)}
+            if plnnr:
+                if not target.get("PLKO", (plnnr,)):
+                    route_bad.append(f"order {n}: routing {plnnr} missing in target")
+                else:
+                    want = {o["VORNR"] for o in target.lookup("PLPO", "PLNNR", plnnr)}
+                    if ops != want:
+                        route_bad.append(f"order {n}: operations {sorted(ops)} differ from routing {plnnr} operations {sorted(want)}")
+            confs = target.lookup("AFRU", "AUFNR", n)
+            for c in confs:
+                if c["VORNR"] not in ops:
+                    conf_bad.append(f"order {n}: confirmation {c['RUECK']} is for operation {c['VORNR']}, which the order does not have")
+            received = sum(a["WEMNG"] for a in afpo)
+            if ops and received > 0 and not confs:
+                conf_bad.append(f"order {n}: {received} received but no operation was confirmed")
+            elif confs and ops:
+                last = max(ops)
+                yielded = sum(c["LMNGA"] for c in confs if c["VORNR"] == last)
+                if received > 0 and abs(yielded - received) > 0.001:
+                    conf_bad.append(f"order {n}: yield confirmed at the last operation {yielded} != received quantity {received}")
             lines = target.lookup(item_t, "AUFNR", n)
             for bwart in ("101", "261"):
                 sel = [l for l in lines if l["BWART"] == bwart]
@@ -207,6 +228,10 @@ def reconcile(run: Run, plan: Plan, source: SourceAdapter, target: TargetAdapter
                            f"{len(bom_bad)} missing", bom_bad))
         checks.append(_chk("business", "BUS-PP-COMPONENTS", "Component reservations equal the BOM explosion for the order quantity", not comp_bad,
                            f"{len(comp_bad)} deviations", comp_bad))
+        checks.append(_chk("business", "BUS-PP-ROUTING", "Order operations are a complete copy of the order's routing, and the routing exists in the target", not route_bad,
+                           f"{len(route_bad)} inconsistent", route_bad))
+        checks.append(_chk("business", "BUS-PP-CONFIRM", "Confirmations belong to the order's operations and the last operation's yield equals the received quantity", not conf_bad,
+                           f"{len(conf_bad)} inconsistent", conf_bad))
         checks.append(_chk("business", "BUS-PP-MOVEMENTS", "Goods movements agree with order progress and reference existing orders", not move_bad,
                            f"{len(move_bad)} inconsistent", move_bad))
 
