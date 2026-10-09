@@ -276,6 +276,35 @@ def reconcile(run: Run, plan: Plan, source: SourceAdapter, target: TargetAdapter
         checks.append(_chk("business", "BUS-QM-REFS", "Inspection lots are complete in the target and refer to existing materials, orders and characteristics", not qm_bad,
                            f"{len(qm_bad)} inconsistent", qm_bad))
 
+    # project system (against the TARGET): the WBS must be a whole hierarchy of the project and its costs must add up to what was loaded
+    ps_bad = []
+    projects = docs("PROJECT")
+    for inst in projects:
+        if target.get("PROJ", (inst.key,)) is None:
+            ps_bad.append(f"project {inst.key} missing in target")
+            continue
+        wbs_loaded = {w["POSID"] for w in inst.rows.get("PRPS", [])}
+        wbs = target.lookup("PRPS", "PSPID", inst.key)
+        got = {w["POSID"] for w in wbs}
+        if got != wbs_loaded:
+            ps_bad.append(f"project {inst.key}: WBS elements in target {len(got)}, loaded {len(wbs_loaded)}")
+        for w in wbs:
+            if w.get("POSID_UP") and not target.get("PRPS", (w["POSID_UP"],)):
+                ps_bad.append(f"WBS {w['POSID']}: superior {w['POSID_UP']} missing in target")
+        want = {}
+        for c in inst.rows.get("COSP", []):
+            want[c["POSID"]] = round(want.get(c["POSID"], 0) + float(c["WKGBTR"]), 2)
+        have = {}
+        for w in got:
+            for c in target.lookup("COSP", "POSID", w):
+                have[w] = round(have.get(w, 0) + float(c["WKGBTR"]), 2)
+        for w in sorted(set(want) | set(have)):
+            if abs(want.get(w, 0) - have.get(w, 0)) > 0.005:
+                ps_bad.append(f"WBS {w}: costs in target {have.get(w, 0)}, loaded {want.get(w, 0)}")
+    if projects:
+        checks.append(_chk("business", "BUS-PS-REFS", "Projects are whole in the target: WBS hierarchy complete and costs equal to what was loaded", not ps_bad,
+                           f"{len(ps_bad)} inconsistent", ps_bad))
+
     # plant maintenance (against the TARGET): the hierarchy and the references of equipment and notifications must be whole
     pm_bad = []
     pm_any = False

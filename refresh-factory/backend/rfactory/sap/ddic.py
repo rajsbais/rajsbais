@@ -104,6 +104,11 @@ TABLES: dict[str, TableDef] = {
         _t("EQKT", "Equipment short text", ["EQUNR", "SPRAS"], ["EQUNR", "SPRAS", "EQKTX"]),
         _t("QMEL", "Maintenance notification", ["QMNUM"], ["QMNUM", "QMART", "EQUNR", "TPLNR", "QMTXT", "QMDAT", "SWERK", "ERNAM"]),
         _t("AFIH", "Maintenance order header (PM part of the order; simplified)", ["AUFNR"], ["AUFNR", "ILART", "EQUNR", "TPLNR", "QMNUM", "PRIOK", "GSTRP"]),
+        # Project system (PS): project definition, WBS elements (a hierarchy inside the project) and actual cost lines. Simplified: external keys
+        # (PSPID, POSID) instead of the internal PSPNR numbers, no networks, milestones, budgets or commitments.
+        _t("PROJ", "Project definition", ["PSPID"], ["PSPID", "POST1", "VBUKR", "WERKS", "ERNAM", "ERDAT"]),
+        _t("PRPS", "WBS element", ["POSID"], ["POSID", "PSPID", "POST1", "POSID_UP", "STUFE", "PBUKR", "WERKS", "ERNAM"]),
+        _t("COSP", "Actual cost line of a WBS element (simplified key WBS/year/cost element)", ["POSID", "GJAHR", "KSTAR"], ["POSID", "GJAHR", "KSTAR", "WRTTP", "WKGBTR", "TWAER"]),
         # HR master data (infotypes), simplified keys: the real ones also carry object, lock and sequence fields. Special-category personal data:
         # see masking/engine.py (HR_TABLES) and the hr:copy permission.
         _t("PA0003", "HR master record: core data (one row per personnel number)", ["PERNR"], ["PERNR", "ABKRS", "ERDAT"]),

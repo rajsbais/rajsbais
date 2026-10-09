@@ -185,6 +185,7 @@ def build_source_dataset(seed: int = 42, family: str = "ECC") -> dict[str, list[
     _add_manufacturing(d, mats, plants)
     _add_qm(d)
     _add_pm(d)
+    _add_ps(d)
     _add_flight(d)
     _add_hr(d)
 
@@ -380,6 +381,37 @@ def _add_pm_orders(d: dict[str, list[Row]]) -> None:
             make(equi[q["EQUNR"]], q["QMNUM"], min(date.fromisoformat(q["QMDAT"]) + timedelta(days=rng.randint(1, 4)), REF_DATE), "PM01")
     for e in rng.sample(list(equi.values()), 6):  # planned maintenance: no notification
         make(e, "", REF_DATE - timedelta(days=rng.randint(5, 200)), "PM02")
+
+
+def _add_ps(d: dict[str, list[Row]]) -> None:
+    """Projects with a WBS hierarchy (project > level 1 > level 2 elements) and actual costs on the leaf elements. Own random stream. Two
+    projects per plant."""
+    rng = random.Random(8181)
+    names = ["Line extension", "Warehouse upgrade", "Energy savings", "Packaging redesign", "Safety retrofit"]
+    kstar = ["400000", "410000", "620000", "630000"]
+    cur = {"1000": "EUR", "2000": "USD"}
+    for pl in sorted(d["T001W"], key=lambda r: r["WERKS"]):
+        w, cc = pl["WERKS"], pl["BUKRS"]
+        for n in (1, 2):
+            pid = f"P-{w}-{n:02d}"
+            created = REF_DATE - timedelta(days=rng.randint(40, 400))
+            nm = rng.choice(names)
+            who = f"PS{rng.randint(1, 5):04d}"
+            d["PROJ"].append({"PSPID": pid, "POST1": f"{nm} {w}", "VBUKR": cc, "WERKS": w, "ERNAM": who, "ERDAT": created.isoformat()})
+            d["PRPS"].append({"POSID": pid, "PSPID": pid, "POST1": nm, "POSID_UP": "", "STUFE": 1, "PBUKR": cc, "WERKS": w, "ERNAM": who})
+            for a in range(1, rng.randint(2, 3) + 1):
+                top = f"{pid}.{a}"
+                d["PRPS"].append({"POSID": top, "PSPID": pid, "POST1": f"Phase {a}", "POSID_UP": pid, "STUFE": 2, "PBUKR": cc, "WERKS": w, "ERNAM": who})
+                leaves = [top] if rng.random() < 0.4 else []
+                if not leaves:
+                    for b in range(1, rng.randint(2, 3) + 1):
+                        leaf = f"{top}.{b}"
+                        d["PRPS"].append({"POSID": leaf, "PSPID": pid, "POST1": f"Work package {a}.{b}", "POSID_UP": top, "STUFE": 3, "PBUKR": cc, "WERKS": w, "ERNAM": who})
+                        leaves.append(leaf)
+                for leaf in leaves:
+                    for ks in rng.sample(kstar, rng.randint(1, 3)):
+                        d["COSP"].append({"POSID": leaf, "GJAHR": str(REF_DATE.year - rng.randint(0, 1)), "KSTAR": ks, "WRTTP": "04",
+                                          "WKGBTR": round(rng.uniform(500, 40000), 2), "TWAER": cur.get(cc, "EUR")})
 
 
 def _add_flight(d: dict[str, list[Row]]) -> None:
