@@ -19,6 +19,7 @@ from ..sap.adapter import ProductionWriteBlocked
 from ..security import authz
 from ..security.auth import DEMO_USERS, Forbidden, Principal
 from ..security.oidc import AuthConfig, AuthError, OidcVerifier
+from . import hardening
 from ..selective.manifest import Scope
 from ..service import Conflict, NotFound, Project, RefreshService
 
@@ -338,6 +339,11 @@ def create_app(data_dir: Path | None = None, persist: bool | None = None, auth: 
     svc = RefreshService(data_dir, persist=persist)
     auth = auth or AuthConfig.from_env()
     auth.check_login()
+    production = os.environ.get("RFACTORY_ENV", "").lower() == "production"
+    if production:
+        problems = hardening.production_problems(auth, persist)
+        if problems:
+            raise RuntimeError("RFACTORY_ENV=production refuses to start: " + "; ".join(problems))
     verifier = OidcVerifier(auth, jwks) if auth.mode == "oidc" else None
     failures: list[float] = []
     app = FastAPI(title="SAP Intelligent Refresh Factory", version="0.1.0",
@@ -348,6 +354,23 @@ def create_app(data_dir: Path | None = None, persist: bool | None = None, auth: 
         verifier.revocations = svc.revocations
 
     write_lock = asyncio.Lock()
+    sec_headers = hardening.headers(auth, os.environ.get("RFACTORY_HSTS") == "1")
+
+    @app.middleware("http")
+    async def hardening_mw(request: Request, call_next):
+        """Body limit, demo endpoints off in production, and the security headers on every answer."""
+        cl = request.headers.get("content-length")
+        if cl and cl.isdigit() and int(cl) > hardening.MAX_BODY_BYTES:
+            resp = JSONResponse({"detail": f"request body larger than {hardening.MAX_BODY_BYTES} bytes"}, 413)
+        elif production and request.url.path.startswith("/api/demo/"):
+            resp = JSONResponse({"detail": "demo endpoints are disabled in production"}, 404)
+        else:
+            resp = await call_next(request)
+        for k, v in sec_headers.items():
+            resp.headers.setdefault(k, v)
+        if request.url.path.startswith("/api/"):
+            resp.headers.setdefault("Cache-Control", "no-store")
+        return resp
 
     @app.middleware("http")
     async def single_writer(request: Request, call_next):
