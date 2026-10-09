@@ -78,6 +78,8 @@ class RefreshService:
         self.required_sensitive: dict[str, list[dict]] = {}
         from .delta.engine import DeltaService  # lazy: delta imports this module
         self.delta = DeltaService(self)
+        from .tdm.engine import TdmService
+        self.tdm = TdmService(self)
 
     # ---------------- landscape ----------------
     def register_system(self, actor: Principal, system: SapSystem, adapter: SimulatedSap | None = None) -> SapSystem:

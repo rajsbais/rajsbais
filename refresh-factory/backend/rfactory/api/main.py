@@ -91,6 +91,58 @@ class TickIn(BaseModel):
 
 
 
+class TdmPolicyIn(BaseModel):
+    name: str
+    source_id: str
+    target_id: str
+    allowed_templates: list[str] | None = None
+    max_objects: int = 10
+    max_active_reservations: int = 5
+    max_ttl_days: int = 14
+    retention_days: int = 30
+    allow_subset: bool = True
+    allow_synthetic: bool = True
+    masking_rules: list[dict] = Field(default_factory=list)
+    auto_masking: bool = True
+
+
+class TdmRequestIn(BaseModel):
+    target_id: str
+    template_id: str
+    mode: str = "auto"
+    count: int = 1
+    params: dict = Field(default_factory=dict)
+    purpose: str = ""
+    test_cases: list[dict] = Field(default_factory=list)
+    ttl_days: int | None = None
+    reserve: bool = True
+
+
+class ReserveIn(BaseModel):
+    ttl_days: int = 7
+    reason: str = ""
+    test_cases: list[dict] = Field(default_factory=list)
+
+
+class ReleaseIn(BaseModel):
+    consumed: bool = False
+
+
+class UsageIn(BaseModel):
+    test_case: dict
+    outcome: str
+    consumed: bool = False
+    note: str = ""
+
+
+class PurgeIn(BaseModel):
+    force: bool = False
+
+
+class ReasonIn(BaseModel):
+    reason: str = ""
+
+
 def project_dict(svc: RefreshService, p: Project) -> dict:
     return {"id": p.id, "name": p.name, "status": p.status, "source": {**svc.system(p.source_id).model_dump(mode="json"), "family": svc.system(p.source_id).family},
             "target": {**svc.system(p.target_id).model_dump(mode="json"), "family": svc.system(p.target_id).family}, "created_by": p.created_by,
@@ -422,6 +474,118 @@ def create_app(data_dir: Path | None = None) -> FastAPI:
         r = simulate_business_activity(a)
         svc.audit.append(p.id, "demo.source_activity_simulated", system_id, {"change_seq": r["change_seq"]})
         return {**r, "simulated": True}
+
+    # ---------------- test data catalog ----------------
+    @app.get("/api/tdm/templates")
+    def t_templates(_: Principal = Depends(need("view"))):
+        return svc.tdm.templates()
+
+    @app.get("/api/tdm/templates/{tid}/candidates")
+    def t_candidates(tid: str, source_id: str, company_code: str = "1000", days: int | None = None, limit: int = 20,
+                     _: Principal = Depends(need("view"))):
+        return svc.tdm.candidates(source_id, tid, {"company_code": company_code, "days": days})[:limit]
+
+    @app.post("/api/tdm/policies", status_code=201)
+    def t_policy_create(b: TdmPolicyIn, p: Principal = Depends(need("plan:write"))):
+        return svc.tdm.create_policy(p, b.model_dump()).public()
+
+    @app.get("/api/tdm/policies")
+    def t_policies(_: Principal = Depends(need("view"))):
+        return [x.public() for x in svc.tdm.policies.values()]
+
+    @app.post("/api/tdm/policies/{pid}/submit")
+    def t_policy_submit(pid: str, p: Principal = Depends(need("plan:submit"))):
+        return svc.tdm.submit_policy(p, pid).public()
+
+    @app.post("/api/tdm/policies/{pid}/approve")
+    def t_policy_approve(pid: str, p: Principal = Depends(need("plan:approve"))):
+        return svc.tdm.approve_policy(p, pid).public()
+
+    @app.post("/api/tdm/policies/{pid}/suspend")
+    def t_policy_suspend(pid: str, p: Principal = Depends(need("plan:approve"))):
+        return svc.tdm.suspend_policy(p, pid).public()
+
+    @app.post("/api/tdm/requests", status_code=201)
+    def t_request(b: TdmRequestIn, p: Principal = Depends(need("tdm:request"))):
+        return svc.tdm.request(p, b.model_dump())
+
+    @app.get("/api/tdm/requests")
+    def t_requests(_: Principal = Depends(need("view"))):
+        return list(reversed(list(svc.tdm.requests.values())))
+
+    @app.get("/api/tdm/requests/{rid}")
+    def t_request_get(rid: str, _: Principal = Depends(need("view"))):
+        return svc.tdm.get_request(rid)
+
+    @app.post("/api/tdm/requests/{rid}/approve")
+    def t_request_approve(rid: str, p: Principal = Depends(need("plan:approve"))):
+        return svc.tdm.approve_request(p, rid)
+
+    @app.post("/api/tdm/requests/{rid}/reject")
+    def t_request_reject(rid: str, b: ReasonIn, p: Principal = Depends(need("plan:approve"))):
+        return svc.tdm.reject_request(p, rid, b.reason)
+
+    @app.get("/api/tdm/catalog")
+    def t_catalog(target_id: str | None = None, template_id: str | None = None, state: str | None = None,
+                  company_code: str | None = None, provenance: str | None = None, test_case: str | None = None,
+                  reserved_by: str | None = None, q: str | None = None, include_inactive: bool = False,
+                  _: Principal = Depends(need("view"))):
+        return svc.tdm.catalog(target_id=target_id, template_id=template_id, state=state, company_code=company_code,
+                               provenance=provenance, test_case=test_case, reserved_by=reserved_by, q=q,
+                               include_inactive=include_inactive)
+
+    @app.get("/api/tdm/datasets/{did}")
+    def t_dataset(did: str, _: Principal = Depends(need("view"))):
+        return svc.tdm.get(did).public()
+
+    @app.get("/api/tdm/datasets/{did}/handles")
+    def t_handles(did: str, _: Principal = Depends(need("view"))):
+        d = svc.tdm.get(did)
+        return {"dataset": d.id, "state": d.state, "target_id": d.target_id, "handles": d.handles, "attrs": d.attrs}
+
+    @app.get("/api/tdm/datasets/{did}/verify")
+    def t_verify(did: str, _: Principal = Depends(need("view"))):
+        return svc.tdm.verify(did)
+
+    @app.post("/api/tdm/datasets/{did}/reserve")
+    def t_reserve(did: str, b: ReserveIn, p: Principal = Depends(need("tdm:request"))):
+        return svc.tdm.reserve(p, did, b.ttl_days, b.reason, b.test_cases).public()
+
+    @app.post("/api/tdm/datasets/{did}/release")
+    def t_release(did: str, b: ReleaseIn, p: Principal = Depends(need("tdm:request"))):
+        return svc.tdm.release(p, did, b.consumed).public()
+
+    @app.post("/api/tdm/datasets/{did}/usage")
+    def t_usage(did: str, b: UsageIn, p: Principal = Depends(need("tdm:request"))):
+        return svc.tdm.record_usage(p, did, b.test_case, b.outcome, b.consumed, b.note).public()
+
+    @app.post("/api/tdm/datasets/{did}/test-cases")
+    def t_link(did: str, tc: dict, p: Principal = Depends(need("tdm:request"))):
+        return svc.tdm.link_test_case(p, did, tc).public()
+
+    @app.post("/api/tdm/datasets/{did}/golden")
+    def t_golden(did: str, p: Principal = Depends(need("tdm:curate"))):
+        return svc.tdm.promote_golden(p, did).public()
+
+    @app.post("/api/tdm/datasets/{did}/restore")
+    def t_restore(did: str, p: Principal = Depends(need("tdm:curate"))):
+        return svc.tdm.restore(p, did).public()
+
+    @app.post("/api/tdm/datasets/{did}/retire")
+    def t_retire(did: str, p: Principal = Depends(need("tdm:curate"))):
+        return svc.tdm.retire(p, did).public()
+
+    @app.post("/api/tdm/datasets/{did}/purge")
+    def t_purge(did: str, b: PurgeIn, p: Principal = Depends(need("plan:approve"))):
+        return svc.tdm.purge(p, did, b.force)
+
+    @app.post("/api/tdm/scan")
+    def t_scan(target_id: str, company_code: str = "1000", p: Principal = Depends(need("tdm:curate"))):
+        return svc.tdm.scan(p, target_id, company_code)
+
+    @app.post("/api/tdm/sweep")
+    def t_sweep(p: Principal = Depends(need("run:execute"))):
+        return svc.tdm.sweep(p)
 
     if STATIC.exists():
         app.mount("/", StaticFiles(directory=STATIC, html=True), name="ui")

@@ -139,3 +139,46 @@ def test_delta_refresh_over_http(client):
     assert client.post("/api/delta/tick", json={}, headers=H("svc.scheduler")).status_code == 200
     assert client.post(f"/api/demo/simulate-source-changes?system_id={sid}", headers=H("erin.auditor")).status_code == 403
     assert client.post(f"/api/demo/simulate-source-changes?system_id={sid}", headers=H("alice.basis")).json()["simulated"]
+
+
+def test_test_data_catalog_over_http(client):
+    b = client.post("/api/demo/bootstrap", headers=H("alice.basis")).json()
+    sid, tid = b["source"]["id"], b["target"]["id"]
+    t = client.get("/api/tdm/templates", headers=H("tina.tester")).json()
+    assert any(x["id"] == "o2c_complete" for x in t["available"]) and any(x["id"] == "make_to_stock" for x in t["planned"])
+    cands = client.get(f"/api/tdm/templates/o2c_complete/candidates?source_id={sid}&days=90", headers=H("tina.tester")).json()
+    assert cands and cands[0]["attrs"]["company_code"] == "1000"
+
+    body = {"target_id": tid, "template_id": "o2c_complete", "mode": "subset", "count": 1, "params": {"days": 90}, "reserve": True}
+    assert client.post("/api/tdm/requests", json=body, headers=H("tina.tester")).json()["status"] == "REJECTED"   # no policy yet
+    assert client.post("/api/tdm/requests", json=body, headers=H("erin.auditor")).status_code == 403
+    pol = client.post("/api/tdm/policies", json={"name": "QA self-service", "source_id": sid, "target_id": tid}, headers=H("tina.tester"))
+    assert pol.status_code == 403                                                                                  # testers cannot define policy
+    pid = client.post("/api/tdm/policies", json={"name": "QA self-service", "source_id": sid, "target_id": tid}, headers=H("alice.basis")).json()["id"]
+    assert client.post(f"/api/tdm/policies/{pid}/submit", headers=H("alice.basis")).json()["status"] == "PENDING_APPROVAL"
+    for who in ("alice.basis", "refresh.copilot", "tina.tester"):
+        assert client.post(f"/api/tdm/policies/{pid}/approve", headers=H(who)).status_code == 403
+    assert client.post(f"/api/tdm/policies/{pid}/approve", headers=H("carol.approver")).json()["status"] == "ACTIVE"
+
+    # a CI pipeline (service account) requests data, reads handles, uses them, releases
+    r = client.post("/api/tdm/requests", json=body, headers=H("svc.ci")).json()
+    assert r["status"] == "FULFILLED" and r["datasets"][0]["handles"]["sales_order"]
+    did = r["datasets"][0]["id"]
+    h = client.get(f"/api/tdm/datasets/{did}/handles", headers=H("svc.ci")).json()
+    assert h["state"] == "RESERVED" and h["handles"]["billing_documents"]
+    assert client.post(f"/api/tdm/datasets/{did}/reserve", json={}, headers=H("tom.tester")).status_code == 409
+    u = client.post(f"/api/tdm/datasets/{did}/usage", json={"test_case": {"system": "jenkins", "id": "build-381", "title": "O2C regression"},
+                                                             "outcome": "passed"}, headers=H("svc.ci")).json()
+    assert u["usage"][0]["outcome"] == "passed"
+    assert client.get("/api/tdm/catalog?test_case=build-381", headers=H("tina.tester")).json()[0]["id"] == did
+    assert client.post(f"/api/tdm/datasets/{did}/golden", headers=H("svc.ci")).status_code == 403                  # curation is not self-service
+    assert client.post(f"/api/tdm/datasets/{did}/release", json={}, headers=H("svc.ci")).json()["state"] == "AVAILABLE"
+    assert client.get(f"/api/tdm/datasets/{did}/verify", headers=H("tina.tester")).json()["intact"]
+    assert client.post(f"/api/tdm/datasets/{did}/purge", json={}, headers=H("tina.tester")).status_code == 403
+    assert client.post(f"/api/tdm/datasets/{did}/purge", json={}, headers=H("refresh.copilot")).status_code == 403
+    assert client.post(f"/api/tdm/datasets/{did}/purge", json={}, headers=H("carol.approver")).status_code == 409  # still AVAILABLE
+    assert client.post("/api/tdm/sweep", headers=H("tina.tester")).status_code == 403
+    assert client.post("/api/tdm/sweep", headers=H("svc.scheduler")).status_code == 200
+    assert client.post(f"/api/tdm/scan?target_id={tid}", headers=H("tina.tester")).status_code == 403
+    assert client.post(f"/api/tdm/scan?target_id={tid}", headers=H("bob.steward")).status_code == 200
+    assert client.get("/api/audit/verify", headers=H("erin.auditor")).json()["valid"]

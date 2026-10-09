@@ -47,12 +47,3 @@ export function PostCopy() {
     </Card>
   );
 }
-
-export function TestCatalog() {
-  return (
-    <Card title="Test data catalog">
-      <p><Badge kind="bad">planned</Badge></p>
-      <p className="muted">Scenario templates (Order-to-Cash, Procure-to-Pay, …), reservation, expiry and CI/CD hooks are not implemented yet. The selective designer already produces the business-complete slices these templates will reuse.</p>
-    </Card>
-  );
-}

@@ -8,6 +8,6 @@
 6. **Delta refresh hardening** (engine exists, simulated): real change-document readers per object class, durable scheduler daemon, parallel packages, mechanism profiles from metadata.
 7. **More objects**: PP/QM/PM/PS/WM-EWM, S/4 MATDOC, HR/payroll masking, key remapping (REMAP).
 8. **Full refresh adapters** (SWPM, HANA, storage/VM snapshot) and executable post-copy tasks.
-9. **TDM factory**: catalog, O2C/P2P templates, reservations, CI/CD and Cloud ALM hooks.
+9. **TDM hardening** (catalog exists, simulated): Cloud ALM / Jira / Xray connectors, outbound webhooks, templates for PP, FI-AA, MM-IM and full intercompany, persistent catalog.
 10. **Benchmarks**: controlled throughput tests replacing the placeholder duration model.
 11. **UI**: remaining screens, e2e tests, accessibility audit.

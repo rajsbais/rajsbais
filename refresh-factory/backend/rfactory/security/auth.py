@@ -9,8 +9,9 @@ from dataclasses import dataclass
 
 PERMISSIONS: dict[str, set[str]] = {
     "admin": {"system:write", "project:write", "plan:write", "masking:write", "audit:read", "view"},
-    "basis": {"system:write", "project:write", "plan:write", "run:execute", "view"},
-    "data_steward": {"project:write", "plan:write", "masking:write", "plan:submit", "run:execute", "view"},
+    "basis": {"system:write", "project:write", "plan:write", "run:execute", "tdm:request", "tdm:curate", "view"},
+    "data_steward": {"project:write", "plan:write", "masking:write", "plan:submit", "run:execute", "tdm:request", "tdm:curate", "view"},
+    "tester": {"tdm:request", "view"},  # self-service: request, reserve, release test data
     "approver": {"plan:approve", "exception:approve", "view", "audit:read"},
     "privacy_officer": {"masking:write", "masking:reidentify", "view", "audit:read"},
     "auditor": {"audit:read", "view"},
@@ -52,6 +53,9 @@ DEMO_USERS = {
     "erin.auditor": Principal("erin.auditor", "Erin (Auditor)", ("auditor",)),
     "root.admin": Principal("root.admin", "Admin", ("admin", "basis", "approver")),
     "svc.scheduler": Principal("svc.scheduler", "External scheduler (service)", ("scheduler",), kind="service"),
+    "tina.tester": Principal("tina.tester", "Tina (Tester)", ("tester",)),
+    "tom.tester": Principal("tom.tester", "Tom (Tester)", ("tester",)),
+    "svc.ci": Principal("svc.ci", "CI/CD pipeline (service)", ("tester",), kind="service"),
     "refresh.copilot": Principal("refresh.copilot", "AI Refresh Copilot", ("admin", "approver", "basis"), kind="agent"),
 }
 
