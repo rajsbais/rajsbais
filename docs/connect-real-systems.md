@@ -43,7 +43,9 @@ switch VMs and *Resume from checkpoint*: completed stages and completed extracti
 > load. On a large company code use `?mode=aggregate` (`--mode aggregate`): the totals are computed in the source and only
 > the retained documents' lines are transferred, and on a target registered with the add-on too the target totals are
 > computed there instead of reading the journal line items back; `auto` switches per side above
-> `SDTF_RECON_AGGREGATE_ABOVE` line items.
+> `SDTF_RECON_AGGREGATE_ABOVE` line items. On A4H (source or target) the totals come from the Universal Journal
+> `ACDOCA`, leading ledger 0L (`meta.rfc.ledger` to change it); asset values from it are net postings, a different
+> measure from ECC acquisition values, and the check says so.
 
 Networking: the platform runs on the Windows host (Python, the SAP NW RFC SDK for Windows, `pyrfc`; if no `pyrfc` wheel
 exists for your Python, use a 3.12 virtual environment for the API process) or inside the `docker-host` VM through

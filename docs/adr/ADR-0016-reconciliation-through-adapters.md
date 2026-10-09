@@ -67,3 +67,11 @@ NPL / A4H test, docs/connect-real-systems.md).
   FAIL), the per-document balance is not verified (the target's posting logic enforces it, and the explanation
   says so), and the accounting-document status comparison is not verifiable. `auto` decides per side by that
   side's journal size. Without the add-on on the target, aggregate mode is refused there and the APIs read rows.
+  On an **S/4HANA** system (source or target) the journal aggregates come from the Universal Journal **ACDOCA**
+  (one ledger, `meta.rfc.ledger`, default 0L; `meta.rfc.journal_table` forces ACDOCA or BSEG): GL balances per
+  account, debit/credit totals, open items (account type D/K without clearing document) and open intercompany
+  balances are aggregated there with the signed amounts normalised to the debit/credit form the checks use;
+  document counts still come from BKPF and inventory from MBEW. Asset values from ACDOCA are net asset postings
+  (account type A), a different measure from the source's acquisition values, so that check is reported as WARN
+  with the measure named instead of a false FAIL. ECC-type systems, and S/4HANA systems whose ACDOCA the add-on
+  cannot read or that hold no rows, keep BSEG and the open-item tables.

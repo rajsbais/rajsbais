@@ -60,7 +60,9 @@ Z_SDTF_AGGREGATE       -> COUNT / SUM per group computed in the database (reconc
   `EV_CHECKSUM` as for packages. The reconciliation reads the source through the add-on and uses the aggregates to
   size its reads and to prove them complete (`backend/sdtf/reconciliation/views.py`). An add-on without this module
   still works for reconciliation (rows only, no read-integrity evidence); the aggregate-only mode for large scopes
-  (totals computed here, only retained documents' lines transferred) requires it.
+  (totals computed here, only retained documents' lines transferred) requires it. On S/4HANA the platform aggregates
+  `ACDOCA` (predicates on `RLDNR`, `RBUKRS`, `KOART`, `AUGBL`, `RASSC`, `ANLN1`; sums of `HSL`, `WSL`) and reads the
+  compatibility views (`BSID`, `BSIK`) through the same dynamic SELECT; the technical user needs `S_TABU_NAM` for them.
 * **No writes**: the function group contains read modules only.
 
 ## Reference sources (`src/`)

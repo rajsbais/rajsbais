@@ -218,6 +218,89 @@ def build_source_view(session: Session, source: SapSystem, manifest, limit: int 
     return view
 
 
+LEADING_LEDGER = "0L"
+
+
+def journal_table_for(system: SapSystem, client: AbapAddonClient) -> tuple[str, str]:
+    """Which journal the aggregates come from on this system: ACDOCA (Universal Journal, leading ledger) on S/4HANA
+    when the add-on can read it and it holds rows, else BSEG. `meta.rfc.journal_table` forces one, `meta.rfc.ledger`
+    picks the ledger (default 0L)."""
+    rfc = (system.meta or {}).get("rfc") or {}
+    ledger = str(rfc.get("ledger") or LEADING_LEDGER)
+    forced = str(rfc.get("journal_table") or "").upper()
+    if forced in ("ACDOCA", "BSEG"):
+        return forced, ledger
+    if (system.product or "").upper() != "S4HANA":
+        return "BSEG", ledger
+    try:
+        md = client.table_metadata("ACDOCA")
+        return ("ACDOCA" if md.get("authorized", True) and md.get("rows", 0) > 0 else "BSEG"), ledger
+    except RfcError:
+        return "BSEG", ledger
+
+
+def _acdoca_rows(rows: list[dict], group_map: dict[str, str]) -> list[dict]:
+    """ACDOCA aggregate rows (signed HSL/WSL per DRCRK) in the BSEG form the checks use: BUKRS/HKONT/SHKZG...
+    with positive magnitudes SUM_DMBTR / SUM_WRBTR."""
+    out = []
+    for a in rows:
+        r = {group_map.get(k, k): v for k, v in a.items() if k in group_map}
+        sign = -1.0 if r.get("SHKZG") == "H" else 1.0
+        r["COUNT"] = a["COUNT"]
+        if "SUM_HSL" in a:
+            r["SUM_DMBTR"] = round(sign * float(a["SUM_HSL"]), 2)
+        if "SUM_WSL" in a:
+            r["SUM_WRBTR"] = round(sign * float(a["SUM_WSL"]), 2)
+        out.append(r)
+    return out
+
+
+def journal_aggregates(client: AbapAddonClient, company_codes: list[str], journal_table: str, ledger: str, valuation_areas: list[str]) -> dict:
+    """The totals the financial layer needs, computed in the system: from ACDOCA (Universal Journal, one ledger,
+    signed amounts normalised) or from BSEG with the open-item tables. Same keys either way."""
+    A: dict = {"journal_table": journal_table, "ledger": ledger if journal_table == "ACDOCA" else None}
+    if journal_table == "ACDOCA":
+        base = [predicate("RLDNR", "EQ", ledger)] + [predicate("RBUKRS", "EQ", cc) for cc in company_codes]
+        open_pred = [predicate("AUGBL", "EQ", "")]
+        g = {"RBUKRS": "BUKRS", "RACCT": "HKONT", "DRCRK": "SHKZG", "KOART": "KOART", "RASSC": "VBUND", "GJAHR": "GJAHR"}
+        A["counts"] = {"ACDOCA": client.count("ACDOCA", base), "BKPF": client.count("BKPF", [predicate("BUKRS", "EQ", cc) for cc in company_codes])}
+        A["gl"] = _acdoca_rows(client.aggregate("ACDOCA", base, ["RBUKRS", "RACCT", "DRCRK"], ["HSL"]), g)
+        A["totals"] = _acdoca_rows(client.aggregate("ACDOCA", base, ["RBUKRS", "DRCRK"], ["HSL", "WSL"]), g)
+        open_items = _acdoca_rows(client.aggregate("ACDOCA", base + open_pred + [predicate("KOART", "EQ", "D"), predicate("KOART", "EQ", "K")], ["RBUKRS", "KOART", "DRCRK"], ["HSL"]), g)
+        A["open_ar"] = [a for a in open_items if a["KOART"] == "D"]
+        A["open_ap"] = [a for a in open_items if a["KOART"] == "K"]
+        A["intercompany"] = _acdoca_rows(client.aggregate("ACDOCA", base + open_pred + [predicate("RASSC", "NE", "")], ["RBUKRS", "RASSC", "KOART", "DRCRK"], ["HSL"]), g)
+        asset = _acdoca_rows(client.aggregate("ACDOCA", base + [predicate("KOART", "EQ", "A"), predicate("ANLN1", "NE", "")], ["RBUKRS", "DRCRK"], ["HSL"]), g)
+        A["assets"] = [{"BUKRS": cc, "SUM_KANSW": round(sum((float(a["SUM_DMBTR"]) if a["SHKZG"] == "S" else -float(a["SUM_DMBTR"])) for a in asset if a["BUKRS"] == cc), 2)} for cc in company_codes]
+        A["assets_measure"] = "net asset postings in the Universal Journal (account type A, asset assigned): APC less accumulated depreciation, not the acquisition value"
+    else:
+        cc_preds = [predicate("BUKRS", "EQ", cc) for cc in company_codes]
+        open_pred = [predicate("AUGBL", "EQ", "")]
+        A["counts"] = {t: client.count(t, cc_preds) for t in ("BKPF", "BSEG", "BSID", "BSIK", "ANLC")}
+        A["gl"] = client.aggregate("BSEG", cc_preds, ["BUKRS", "HKONT", "SHKZG"], ["DMBTR"])
+        A["totals"] = client.aggregate("BSEG", cc_preds, ["BUKRS", "SHKZG"], ["DMBTR", "WRBTR"])
+        A["open_ar"] = client.aggregate("BSID", cc_preds + open_pred, ["BUKRS", "SHKZG"], ["DMBTR"])
+        A["open_ap"] = client.aggregate("BSIK", cc_preds + open_pred, ["BUKRS", "SHKZG"], ["DMBTR"])
+        A["intercompany"] = client.aggregate("BSEG", cc_preds + open_pred + [predicate("VBUND", "NE", "")], ["BUKRS", "VBUND", "KOART", "SHKZG"], ["DMBTR"])
+        A["assets"] = client.aggregate("ANLC", cc_preds, ["BUKRS"], ["KANSW"])
+    A["documents_by_year"] = client.aggregate("BKPF", [predicate("BUKRS", "EQ", cc) for cc in company_codes], ["BUKRS", "GJAHR"], [])
+    A["inventory"] = client.aggregate("MBEW", [predicate("BWKEY", "EQ", a) for a in valuation_areas], ["BWKEY"], ["SALK3"]) if valuation_areas else []
+    return A
+
+
+def acdoca_from_journal(bkpf: list[dict], bseg: list[dict], ledger: str = LEADING_LEDGER) -> list[dict]:
+    """Universal Journal rows derived from classic headers and lines (one ledger, signed amounts): what an
+    S/4HANA system holds for the same postings. Used to prepare simulated S/4HANA targets and in tests; the mapping
+    documents how ACDOCA aggregates are read back into the BSEG form."""
+    heads = {(h["BUKRS"], h["BELNR"], str(h["GJAHR"])): h for h in bkpf}
+    out = []
+    for l in bseg:
+        h = heads.get((l["BUKRS"], l["BELNR"], str(l["GJAHR"]))) or {}
+        sign = -1.0 if l.get("SHKZG") == "H" else 1.0
+        out.append({"RLDNR": ledger, "RBUKRS": l["BUKRS"], "GJAHR": str(l["GJAHR"]), "BELNR": l["BELNR"], "DOCLN": str(l["BUZEI"]).zfill(6), "RACCT": l.get("HKONT", ""), "DRCRK": l.get("SHKZG", "S"), "HSL": round(sign * float(l.get("DMBTR") or 0), 2), "WSL": round(sign * float(l.get("WRBTR") or 0), 2), "RHCUR": h.get("WAERS", ""), "RWCUR": h.get("WAERS", ""), "KOART": l.get("KOART", ""), "KUNNR": l.get("KUNNR", ""), "LIFNR": l.get("LIFNR", ""), "AUGBL": l.get("AUGBL", ""), "AUGDT": l.get("AUGDT", ""), "RASSC": l.get("VBUND", ""), "MATNR": l.get("MATNR", ""), "WERKS": l.get("WERKS", ""), "RCNTR": l.get("KOSTL", ""), "PRCTR": l.get("PRCTR", ""), "ANLN1": l.get("ANLN1", ""), "ANLN2": l.get("ANLN2", ""), "BUDAT": h.get("BUDAT", ""), "BLART": h.get("BLART", ""), "POPER": str(h.get("MONAT", "")).zfill(3) if h.get("MONAT") not in (None, "") else "", "AWTYP": h.get("AWTYP", ""), "AWREF": h.get("AWKEY", ""), "BSTAT": h.get("BSTAT", "")})
+    return out
+
+
 class AggregateSourceView(ViewStore):
     """The source side as totals computed in the source database (Z_SDTF_AGGREGATE), for scopes whose line items
     are too many to transfer for a reconciliation. Holds T001K rows, the aggregates the financial layer needs and
@@ -243,21 +326,12 @@ def _aggregate_source_view(session: Session, source: SapSystem, manifest, client
 
     view = AggregateSourceView(source.id)
     view.metrics.update({"mode": "aggregate", "mode_decision": decision})
-    A = view.aggregates
-    rows_transferred = 0
-    open_pred = [predicate("AUGBL", "EQ", "")]
-    A["counts"] = {t: client.count(t, cc_preds) for t in ("BKPF", "BSEG", "BSID", "BSIK", "ANLC")}
-    A["gl"] = client.aggregate("BSEG", cc_preds, ["BUKRS", "HKONT", "SHKZG"], ["DMBTR"])
-    A["totals"] = client.aggregate("BSEG", cc_preds, ["BUKRS", "SHKZG"], ["DMBTR", "WRBTR"])
-    A["open_ar"] = client.aggregate("BSID", cc_preds + open_pred, ["BUKRS", "SHKZG"], ["DMBTR"])
-    A["open_ap"] = client.aggregate("BSIK", cc_preds + open_pred, ["BUKRS", "SHKZG"], ["DMBTR"])
-    A["intercompany"] = client.aggregate("BSEG", cc_preds + open_pred + [predicate("VBUND", "NE", "")], ["BUKRS", "VBUND", "KOART", "SHKZG"], ["DMBTR"])
-    A["assets"] = client.aggregate("ANLC", cc_preds, ["BUKRS"], ["KANSW"])
-    A["documents_by_year"] = client.aggregate("BKPF", cc_preds, ["BUKRS", "GJAHR"], [])
-    rows_transferred += view.add_rows("T001K", client.read_all("T001K", cc_preds))
+    rows_transferred = view.add_rows("T001K", client.read_all("T001K", cc_preds))
     areas = sorted({str(r["BWKEY"]) for r in view.rows("T001K")})
     area_preds = [predicate("BWKEY", "EQ", a) for a in areas]
-    A["inventory"] = client.aggregate("MBEW", area_preds, ["BWKEY"], ["SALK3"]) if areas else []
+    journal_table, ledger = journal_table_for(source, client)
+    view.aggregates = journal_aggregates(client, scope_ccs, journal_table, ledger, areas)
+    A = view.aggregates
     cls = manifest.selection.get("classification", {})
     not_transferred = [n.split(":", 1)[1] for n, c in cls.items() if c["type"] == "MD.Material" and c["classification"] not in ("FULLY_TRANSFERRED", "PARTIALLY_TRANSFERRED", "SHARED_DUPLICATED")]
     held = 0.0
@@ -284,7 +358,7 @@ def _aggregate_source_view(session: Session, source: SapSystem, manifest, client
         debit = round(sum(float(a["SUM_DMBTR"]) for a in A["totals"] if a["BUKRS"] == cc and a["SHKZG"] == "S"), 2)
         credit = round(sum(float(a["SUM_DMBTR"]) for a in A["totals"] if a["BUKRS"] == cc and a["SHKZG"] == "H"), 2)
         view._integrity.append(("source_trial_balance", cc, debit, credit, "debits and credits of the source company code computed in the source database"))
-    view.metrics.update({"transport": getattr(transport, "name", "?"), "snapshot": client.snapshot, "company_codes": scope_ccs, "valuation_areas": areas, "rfc_calls": client.calls, "packages": client.packages, "rows": rows_transferred, "rows_avoided": sum(A["counts"].values()), "retained_documents": in_scope_retained, "retained_documents_outside_scope": len(retained) - in_scope_retained, "retained_lines": len(view.retained_lines), "by_table": {"T001K": len(view.rows("T001K")), "BSEG(retained)": len(view.retained_lines)}, "aggregate_available": True, "unreadable": [], "counts": A["counts"]})
+    view.metrics.update({"transport": getattr(transport, "name", "?"), "snapshot": client.snapshot, "journal_table": journal_table, "ledger": A.get("ledger"), "company_codes": scope_ccs, "valuation_areas": areas, "rfc_calls": client.calls, "packages": client.packages, "rows": rows_transferred, "rows_avoided": sum(A["counts"].values()), "retained_documents": in_scope_retained, "retained_documents_outside_scope": len(retained) - in_scope_retained, "retained_lines": len(view.retained_lines), "by_table": {"T001K": len(view.rows("T001K")), "BSEG(retained)": len(view.retained_lines)}, "aggregate_available": True, "unreadable": [], "counts": A["counts"]})
     return view
 
 
@@ -364,6 +438,7 @@ class ApiTargetView(ViewStore):
         super().__init__(target.id, "api_readback")
         self.transport = make_target_transport(session, target)
         self.client = TargetApiClient(self.transport)
+        self.system = target
         self.rfc = rfc_client
         self.aggregate_only = bool(aggregate)
         self.aggregates: dict = {}
@@ -474,20 +549,10 @@ class ApiTargetView(ViewStore):
         and material valuation are never transferred; the financial layer compares totals, the technical layer says
         the loaded journal rows were compared as totals."""
         client = self.rfc
-        cc_preds = [predicate("BUKRS", "EQ", cc) for cc in self.company_codes]
-        open_pred = [predicate("AUGBL", "EQ", "")]
-        A: dict = {}
         try:
-            client.open_snapshot(["BKPF", "BSEG", "BSID", "BSIK", "ANLC", "MBEW"])
-            A["counts"] = {t: client.count(t, cc_preds) for t in ("BKPF", "BSEG", "BSID", "BSIK", "ANLC")}
-            A["gl"] = client.aggregate("BSEG", cc_preds, ["BUKRS", "HKONT", "SHKZG"], ["DMBTR"])
-            A["totals"] = client.aggregate("BSEG", cc_preds, ["BUKRS", "SHKZG"], ["DMBTR", "WRBTR"])
-            A["open_ar"] = client.aggregate("BSID", cc_preds + open_pred, ["BUKRS", "SHKZG"], ["DMBTR"])
-            A["open_ap"] = client.aggregate("BSIK", cc_preds + open_pred, ["BUKRS", "SHKZG"], ["DMBTR"])
-            A["intercompany"] = client.aggregate("BSEG", cc_preds + open_pred + [predicate("VBUND", "NE", "")], ["BUKRS", "VBUND", "KOART", "SHKZG"], ["DMBTR"])
-            A["assets"] = client.aggregate("ANLC", cc_preds, ["BUKRS"], ["KANSW"])
-            A["documents_by_year"] = client.aggregate("BKPF", cc_preds, ["BUKRS", "GJAHR"], [])
-            A["inventory"] = client.aggregate("MBEW", [predicate("BWKEY", "EQ", a) for a in self.valuation_areas], ["BWKEY"], ["SALK3"]) if self.valuation_areas else []
+            client.open_snapshot(["BKPF", "BSEG", "BSID", "BSIK", "ANLC", "MBEW", "ACDOCA"])
+            journal_table, ledger = journal_table_for(self.system, client)
+            A = journal_aggregates(client, self.company_codes, journal_table, ledger, self.valuation_areas)
         except RfcError as e:
             self.metrics.setdefault("errors", {})["aggregate"] = str(e)
             raise ReconciliationViewError(f"aggregate-only reconciliation on the target failed: {e}") from e
@@ -503,7 +568,7 @@ class ApiTargetView(ViewStore):
             debit = round(sum(float(a["SUM_DMBTR"]) for a in A["totals"] if a["BUKRS"] == cc and a["SHKZG"] == "S"), 2)
             credit = round(sum(float(a["SUM_DMBTR"]) for a in A["totals"] if a["BUKRS"] == cc and a["SHKZG"] == "H"), 2)
             self._integrity.append(("target_trial_balance", cc, debit, credit, "debits and credits of the target company code computed in the target database"))
-        self.metrics["target_aggregates"] = {"rfc_calls": client.calls, "packages": client.packages, "rows_avoided": sum(A["counts"].values()), "counts": A["counts"], "snapshot": client.snapshot}
+        self.metrics["target_aggregates"] = {"rfc_calls": client.calls, "packages": client.packages, "rows_avoided": sum(A["counts"].values()), "counts": A["counts"], "snapshot": client.snapshot, "journal_table": A["journal_table"], "ledger": A.get("ledger"), **({"assets_measure": A["assets_measure"]} if A.get("assets_measure") else {})}
 
     def _rfc_readback(self, by_table: dict[str, int]) -> None:
         """Tables the APIs could not serve, read through the add-on on the target: company-code tables with the
@@ -663,4 +728,4 @@ def loaded_keys_of(backend, run_id: str) -> dict[str, set[str]]:
     return dict(out)
 
 
-__all__ = ["SOURCE_TABLES", "MODES", "normalise", "ViewStore", "AggregateSourceView", "ApiTargetView", "ReconciliationViewError", "build_source_view", "build_target_view", "target_has_rfc", "record_store_view", "loaded_keys_of", "journal_rows", "eval_filter", "odata_filter", "record_key"]
+__all__ = ["SOURCE_TABLES", "MODES", "normalise", "ViewStore", "AggregateSourceView", "ApiTargetView", "ReconciliationViewError", "build_source_view", "build_target_view", "target_has_rfc", "journal_table_for", "journal_aggregates", "acdoca_from_journal", "record_store_view", "loaded_keys_of", "journal_rows", "eval_filter", "odata_filter", "record_key"]

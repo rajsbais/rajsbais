@@ -522,7 +522,11 @@ def financial_checks(rid: str, sources: list[dict], target: RecordStore) -> tupl
     if "ANLC" in unreadable:
         results.append(_r(rid, "FINANCIAL", "asset_balances", "WARN", "acquisition_values", s_assets, "not readable", "", "asset values are not readable through the adapters (fixed-asset read service unavailable); verify the asset balances in the target by report", {"unreadable": True}))
     else:
-        results.append(_r(rid, "FINANCIAL", "asset_balances", "PASS" if abs(s_assets - t_assets) < 0.005 else "FAIL", "acquisition_values", s_assets, t_assets, round(s_assets - t_assets, 2), mode_note.strip(" ()") if aggregate_mode else ""))
+        measure = (getattr(target, "aggregates", None) or {}).get("assets_measure") if target_aggregate else None
+        if measure:  # the Universal Journal gives net asset postings, the source gives acquisition values: a different measure, compared by report
+            results.append(_r(rid, "FINANCIAL", "asset_balances", "WARN", "acquisition_values", s_assets, t_assets, round(s_assets - t_assets, 2), f"target value is {measure}; compare acquisition values through the asset history sheet / FAAT_DOC_IT", {"measure": measure, "target_mode": "aggregate"}))
+        else:
+            results.append(_r(rid, "FINANCIAL", "asset_balances", "PASS" if abs(s_assets - t_assets) < 0.005 else "FAIL", "acquisition_values", s_assets, t_assets, round(s_assets - t_assets, 2), mode_note.strip(" ()") if aggregate_mode else ""))
     # inventory valuation by valuation area
     s_inv, held = round(sum(b.inventory for b in balances), 2), round(sum(b.inventory_held for b in balances), 2)
     t_inv = tb.inventory

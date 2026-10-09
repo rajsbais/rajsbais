@@ -549,3 +549,88 @@ def test_target_aggregate_only_compares_totals_computed_in_the_target(session, s
     with pytest.raises(views.ReconciliationViewError, match="needs the read-only add-on"):
         views.build_target_view(session, tgt, m, keys, sv, force_api=True, mode="aggregate")
     session.expire_all()
+
+
+# ------------------------------------------------------------------------- ACDOCA (Universal Journal) aggregates
+def test_journal_aggregates_from_acdoca_equal_the_bseg_form(store):
+    """On an S/4HANA system the totals come from ACDOCA (one ledger, signed amounts); normalised, they equal the
+    BSEG-based totals for the same postings; detection by product, rows and meta override."""
+    rows = {t: list(store.rows(t)) for t in ("BKPF", "BSEG", "BSID", "BSIK", "ANLC", "MBEW", "T001K")}
+    rows["ACDOCA"] = views.acdoca_from_journal(rows["BKPF"], rows["BSEG"])
+    assert rows["ACDOCA"] and rows["ACDOCA"][0]["RLDNR"] == "0L" and all(len(r["DOCLN"]) == 6 for r in rows["ACDOCA"][:5])
+    s4 = RecordStore.from_tables("s4", rows)
+    addon = rfc.SimulatedAbapAddon(s4, snapshot_ttl=60)
+    client = rfc.AbapAddonClient(addon)
+    client.open_snapshot()
+    ccs = ["5000"]
+    via_bseg = views.journal_aggregates(client, ccs, "BSEG", "0L", [])
+    via_acdoca = views.journal_aggregates(client, ccs, "ACDOCA", "0L", [])
+    assert via_acdoca["journal_table"] == "ACDOCA" and via_acdoca["ledger"] == "0L" and via_bseg["ledger"] is None
+    def norm(rows_, keys):
+        return sorted(tuple(str(r[k]) for k in keys) + (round(float(r["SUM_DMBTR"]), 2), int(r["COUNT"])) for r in rows_)
+    assert norm(via_acdoca["gl"], ("BUKRS", "HKONT", "SHKZG")) == norm(via_bseg["gl"], ("BUKRS", "HKONT", "SHKZG"))
+    assert sorted((r["BUKRS"], r["SHKZG"], round(float(r["SUM_DMBTR"]), 2), round(float(r["SUM_WRBTR"]), 2)) for r in via_acdoca["totals"]) == sorted((r["BUKRS"], r["SHKZG"], round(float(r["SUM_DMBTR"]), 2), round(float(r["SUM_WRBTR"]), 2)) for r in via_bseg["totals"])
+    assert all(float(r["SUM_DMBTR"]) >= 0 for r in via_acdoca["gl"])  # magnitudes, like BSEG
+    assert norm(via_acdoca["intercompany"], ("BUKRS", "VBUND", "KOART", "SHKZG")) == norm(via_bseg["intercompany"], ("BUKRS", "VBUND", "KOART", "SHKZG"))
+    # open items from the journal lines (account type D/K, no clearing document) vs the classic open-item tables
+    lines = [l for l in rows["BSEG"] if l["BUKRS"] == "5000" and l["KOART"] == "D" and not l.get("AUGBL")]
+    assert sum(int(a["COUNT"]) for a in via_acdoca["open_ar"]) == len(lines) and all(a["KOART"] == "D" for a in via_acdoca["open_ar"])
+    assert "assets_measure" in via_acdoca and via_acdoca["assets"][0]["BUKRS"] == "5000" and via_bseg["assets"][0]["SUM_KANSW"] > 0
+    assert via_acdoca["counts"]["ACDOCA"] == len([l for l in rows["BSEG"] if l["BUKRS"] == "5000"])
+    # detection
+    ecc = SapSystem(sid="ECP", client="100", role="SOURCE", product="ECC", release="6.0", connector="RFC", meta={})
+    s4sys = SapSystem(sid="S4H", client="100", role="TARGET", product="S4HANA", release="2023", connector="API", meta={"rfc": {"transport": "simulated"}})
+    assert views.journal_table_for(ecc, client) == ("BSEG", "0L") and views.journal_table_for(s4sys, client) == ("ACDOCA", "0L")
+    empty = rfc.AbapAddonClient(rfc.SimulatedAbapAddon(RecordStore.from_tables("x", {"BSEG": rows["BSEG"]}), snapshot_ttl=60))
+    assert views.journal_table_for(s4sys, empty) == ("BSEG", "0L")  # S/4HANA without Universal Journal rows: classic tables
+    forced = SapSystem(sid="S4H", client="100", role="TARGET", product="S4HANA", release="2023", connector="API", meta={"rfc": {"transport": "simulated", "journal_table": "bseg", "ledger": "2L"}})
+    assert views.journal_table_for(forced, client) == ("BSEG", "2L")
+    with pytest.raises(rfc.RfcError, match="INVALID_PREDICATE"):
+        client.aggregate("ACDOCA", [{"FIELD": "RLDNR", "OP": "??", "LOW": "0L"}], [], [])
+
+
+def test_target_aggregate_mode_uses_acdoca_on_s4hana(session, slice_result):
+    """A simulated S/4HANA target holding the Universal Journal: the target aggregates come from ACDOCA with the
+    leading ledger and the verdicts equal the classic-table aggregates, assets being a different measure."""
+    from sdtf.catalog.store import delete_records, import_tables
+
+    m = session.get(ScopeManifest, slice_result["manifest_id"])
+    run = session.get(MigrationRun, slice_result["run_id"])
+    tgt = session.get(SapSystem, slice_result["target_id"])
+    src = session.get(SapSystem, slice_result["source_id"])
+    backend = get_backend(session=session)
+    keys = views.loaded_keys_of(backend, run.id)
+    sv = views.record_store_view(session, src.id)
+    direct = RecordStore.load(session, tgt.id, tables=["BKPF", "BSEG"])
+    acdoca = views.acdoca_from_journal(direct.rows("BKPF"), direct.rows("BSEG"))
+    import_tables(session, tgt.id, {"ACDOCA": acdoca})
+    session.flush()
+    try:
+        rfc_tgt = SapSystem(id=tgt.id, sid=tgt.sid, client=tgt.client, role="TARGET", product="S4HANA", release="2025", connector="API", meta={"api": {"transport": "simulated"}, "rfc": {"transport": "simulated"}})
+
+        def fin(view):
+            session.query(ReconciliationResult).filter(ReconciliationResult.run_id == run.id).delete()
+            summ = reconcile_run(session, run, m, sv, view)
+            return summ, {(r.check_name, r.subject): r for r in session.execute(select(ReconciliationResult).where(ReconciliationResult.run_id == run.id, ReconciliationResult.layer == "FINANCIAL")).scalars().all()}
+
+        classic = SapSystem(id=tgt.id, sid=tgt.sid, client=tgt.client, role="TARGET", product="S4HANA", release="2025", connector="API", meta={"api": {"transport": "simulated"}, "rfc": {"transport": "simulated", "journal_table": "BSEG"}})
+        v_bseg = views.build_target_view(session, classic, m, keys, sv, force_api=True, mode="aggregate")
+        assert v_bseg.metrics["target_aggregates"]["journal_table"] == "BSEG"
+        _s1, fin_bseg = fin(v_bseg)
+        v_ac = views.build_target_view(session, rfc_tgt, m, keys, sv, force_api=True, mode="aggregate")
+        assert v_ac.metrics["target_aggregates"]["journal_table"] == "ACDOCA" and v_ac.metrics["target_aggregates"]["ledger"] == "0L" and "assets_measure" in v_ac.metrics["target_aggregates"]
+        assert all(r.status == "PASS" for r in v_ac.integrity_results("x") if r.check_name == "target_trial_balance")
+        summ, fin_ac = fin(v_ac)
+        for key, r in fin_bseg.items():
+            if key[0] in ("asset_balances", "ar_open_items", "ap_open_items"):
+                continue
+            a = fin_ac[key]
+            assert (a.status, a.source_value, a.target_value) == (r.status, r.source_value, r.target_value), (key, (r.status, r.source_value, r.target_value), (a.status, a.source_value, a.target_value))
+        asset = fin_ac[("asset_balances", "acquisition_values")]
+        assert asset.status == "WARN" and "net asset postings" in asset.explanation and asset.evidence["measure"]
+        assert fin_ac[("ar_open_items", "open_items")].status in ("PASS", "WARN")  # from journal lines now, like the API read-back
+        assert summ["overall"] in ("PASS", "WARN") and not [k for k, r in fin_ac.items() if r.status == "FAIL"]
+    finally:
+        delete_records(session, tgt.id, "ACDOCA", [views.record_key("ACDOCA", r) for r in acdoca])
+        session.flush()
+    session.expire_all()
