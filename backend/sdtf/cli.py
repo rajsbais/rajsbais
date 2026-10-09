@@ -33,7 +33,21 @@ def main(argv=None):
     c.add_argument("--run", required=True, help="run id")
     c.add_argument("--out", default=None, help="output directory (default: <evidence dir>/cockpit)")
     c.add_argument("--format", choices=["csv", "xml", "both"], default="both")
+    c.add_argument("--scope", choices=["all", "rejected"], default="all", help="rejected: retry package of the instances the imported simulation feedback rejected")
     c.add_argument("--json", action="store_true")
+    fb = sub.add_parser("cockpit-feedback", help="upload simulation feedback of the migration cockpit: import the app's message log, show the summary, write an illustrative sample")
+    fbsub = fb.add_subparsers(dest="fcmd", required=True)
+    fi = fbsub.add_parser("import", help="import a message log (CSV/TSV, JSON or SpreadsheetML)")
+    fi.add_argument("--run", required=True)
+    fi.add_argument("--file", required=True)
+    fi.add_argument("--append", action="store_true", help="keep earlier feedback of the run")
+    fi.add_argument("--json", action="store_true")
+    fs = fbsub.add_parser("show", help="summary and messages of the run's feedback")
+    fs.add_argument("--run", required=True)
+    fs.add_argument("--json", action="store_true")
+    fsa = fbsub.add_parser("sample", help="write an illustrative message log for the run (not an SAP file)")
+    fsa.add_argument("--run", required=True)
+    fsa.add_argument("--out", default=None)
     t = sub.add_parser("cockpit-template", help="migration object templates: write an illustrative sample, register a template for a project, list a project's templates")
     tsub = t.add_subparsers(dest="tcmd", required=True)
     ts = tsub.add_parser("sample", help="write an illustrative template (not an SAP file) for a business object")
@@ -225,13 +239,50 @@ def main(argv=None):
                 rep = template_summary(row)["report"]
                 print(f"{ot}: {row.filename} ({row.sha256[:12]}) {rep['mapped']}/{rep['total']} mapped; mandatory unmapped: {rep['mandatory_missing'] or 'none'}")
         return 0
+    if a.cmd == "cockpit-feedback":
+        from sqlalchemy import select
+
+        from .models import CockpitFeedback
+        from .runtime.cockpit_feedback import feedback_out, feedback_summary, import_feedback, sample_feedback
+
+        with session_scope() as session:
+            try:
+                if a.fcmd == "sample":
+                    xml = sample_feedback(session, a.run)
+                    if a.out:
+                        with open(a.out, "w", encoding="utf-8") as fh:
+                            fh.write(xml)
+                        print(f"illustrative simulation log for run {a.run} written to {a.out}")
+                    else:
+                        print(xml)
+                    return 0
+                if a.fcmd == "import":
+                    with open(a.file, encoding="utf-8") as fh:
+                        content = fh.read()
+                    summ = import_feedback(session, a.run, content, a.file.rsplit("/", 1)[-1], "cli", replace=not a.append)
+                    session.commit()
+                else:
+                    summ = feedback_summary(session, a.run)
+            except ValueError as e:
+                print(str(e), file=sys.stderr)
+                return 2
+            if a.json:
+                rows = session.execute(select(CockpitFeedback).where(CockpitFeedback.run_id == a.run)).scalars().all()
+                print(json.dumps({"summary": summ, "messages": [feedback_out(f) for f in rows]}, indent=2, default=str))
+            else:
+                print(f"run {a.run}: {summ['messages']} messages ({summ['errors']} errors, {summ['warnings']} warnings), {summ['matched']} matched, {summ['unmatched']} unmatched; rejected instances {summ['rejected_instances']} of {summ['instances_in_log']} in the log (pass rate {summ['pass_rate']})")
+                for ot, o in summ["objects"].items():
+                    print(f"  {ot}: {o['instances']} instances, {o['with_messages']} in log, {o['rejected']} rejected, {o['errors']} E / {o['warnings']} W; categories {o['categories'] or '-'}")
+                for reason, n in summ["unmatched_reasons"].items():
+                    print(f"  unmatched x{n}: {reason}")
+        return 0
     if a.cmd == "cockpit-export":
         from .runtime.cockpit_export import export_cockpit_files
 
         formats = ("csv", "xml") if a.format == "both" else (a.format,)
         with session_scope() as session:
             try:
-                out = export_cockpit_files(session, a.run, out_dir=a.out, actor="cli", formats=formats)
+                out = export_cockpit_files(session, a.run, out_dir=a.out, actor="cli", formats=formats, scope=a.scope)
             except ValueError as e:
                 print(str(e), file=sys.stderr)
                 return 2

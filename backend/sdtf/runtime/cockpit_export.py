@@ -49,7 +49,7 @@ from .cockpit_templates import (
 from .loaders import EventView, object_of, plan_cockpit
 from .migration_objects import resolve_for_export
 
-EXPORTED_STATUSES = ("TRANSFORMED", "LOADED", "UNSUPPORTED", "CONFLICT", "REJECTED")  # has a target image; STAGED/SKIPPED/MATCHED have none or are configuration
+EXPORTED_STATUSES = ("TRANSFORMED", "LOADED", "UNSUPPORTED", "CONFLICT", "REJECTED", "COCKPIT_ERROR")  # has a target image; STAGED/SKIPPED/MATCHED have none or are configuration
 SS = "urn:schemas-microsoft-com:office:spreadsheet"
 
 
@@ -128,10 +128,12 @@ def _readme(run: MigrationRun, src: SapSystem | None, tgt: SapSystem | None, obj
     return "\n".join(lines) + "\n"
 
 
-def export_cockpit_files(session: Session, run_id: str, out_dir: str | None = None, actor: str = "system", formats: tuple[str, ...] = ("csv", "xml"), use_templates: bool = True) -> dict:
+def export_cockpit_files(session: Session, run_id: str, out_dir: str | None = None, actor: str = "system", formats: tuple[str, ...] = ("csv", "xml"), use_templates: bool = True, scope: str = "all") -> dict:
     """Write the package for `run_id` and return its summary (also stored under `run.report['cockpit_export']`).
     With `use_templates`, objects whose migration object template is registered for the project additionally get
-    `<OBJECT>.template.xml`: the template filled through the automatic mapping (plus the recorded overrides)."""
+    `<OBJECT>.template.xml`: the template filled through the automatic mapping (plus the recorded overrides).
+    `scope="rejected"` writes a retry package: only the instances the imported upload simulation feedback rejected
+    (into `<base>/<run>-retry/`)."""
     run = session.get(MigrationRun, run_id)
     if run is None:
         raise ValueError(f"run {run_id} not found")
@@ -153,7 +155,16 @@ def export_cockpit_files(session: Session, run_id: str, out_dir: str | None = No
     instances: dict[str, list[dict[str, list[dict]]]] = defaultdict(list)  # per object: one {table: rows} per business object instance
     statuses: dict[str, dict[str, int]] = defaultdict(lambda: defaultdict(int))
     labels: dict[str, set[str]] = defaultdict(set)
+    only: set[tuple[str, str]] | None = None
+    if scope == "rejected":
+        from .cockpit_feedback import rejected_instances
+
+        only = rejected_instances(session, run_id)
+    elif scope != "all":
+        raise ValueError("scope must be 'all' or 'rejected'")
     for g in order:
+        if only is not None and g not in only:
+            continue
         members = groups[g]
         bo = BUSINESS_OBJECTS.get(g[0])
         rank = {bo.header_table: 0, **{t: i + 1 for i, t in enumerate(bo.item_tables)}} if bo else {}
@@ -170,7 +181,7 @@ def export_cockpit_files(session: Session, run_id: str, out_dir: str | None = No
                 statuses[g[0]][by_key[(e.table, e.record_key)].load_status] += 1
         if inst:
             instances[g[0]].append(dict(inst))
-    base = os.path.join(out_dir or os.path.join(config.settings.evidence_dir, "cockpit"), run_id)
+    base = os.path.join(out_dir or os.path.join(config.settings.evidence_dir, "cockpit"), run_id + ("-retry" if scope == "rejected" else ""))
     if os.path.isdir(base):
         shutil.rmtree(base)
     os.makedirs(base, exist_ok=True)
@@ -212,18 +223,18 @@ def export_cockpit_files(session: Session, run_id: str, out_dir: str | None = No
             objects[ot]["migration_object"] = trow.migration_object or hint
     readme = _readme(run, src, tgt, objects)
     put("README.md", readme.encode("utf-8"))
-    manifest = {"run_id": run.id, "project_id": run.project_id, "snapshot_id": run.snapshot_id, "source": {"sid": src.sid, "logical_system": src.logical_system} if src else None, "target": {"sid": tgt.sid, "product": tgt.product} if tgt else None, "generated_at": datetime.now(timezone.utc).isoformat(), "formats": list(formats), "objects": objects, "files": dict(sorted(files.items())), "rows": sum(o["rows"] for o in objects.values()), "disclaimer": "Transformed staging images routed to the migration cockpit; not generated from the target's migration object templates. Verify migration object IDs in the target release."}
+    manifest = {"run_id": run.id, "project_id": run.project_id, "snapshot_id": run.snapshot_id, "scope": scope, "source": {"sid": src.sid, "logical_system": src.logical_system} if src else None, "target": {"sid": tgt.sid, "product": tgt.product} if tgt else None, "generated_at": datetime.now(timezone.utc).isoformat(), "formats": list(formats), "objects": objects, "files": dict(sorted(files.items())), "rows": sum(o["rows"] for o in objects.values()), "disclaimer": "Transformed staging images routed to the migration cockpit; not generated from the target's migration object templates. Verify migration object IDs in the target release."}
     manifest_bytes = json.dumps(manifest, indent=2, sort_keys=True, default=str).encode("utf-8")
     with open(os.path.join(base, "manifest.json"), "wb") as fh:
         fh.write(manifest_bytes)
-    zip_path = os.path.join(base, f"cockpit_{run.id}.zip")
+    zip_path = os.path.join(base, f"cockpit_{run.id}{'_retry' if scope == 'rejected' else ''}.zip")
     with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
         for rel in sorted(files):
             zf.write(os.path.join(base, rel), rel)
         zf.write(os.path.join(base, "manifest.json"), "manifest.json")
-    summary = {"exported": True, "templates": sum(1 for o in objects.values() if "template" in o), "release": tgt.release if tgt else "", "dir": base, "zip": zip_path, "manifest_sha256": _sha(manifest_bytes), "generated_at": manifest["generated_at"], "objects": {ot: {k: (v if k != "template" else {kk: vv for kk, vv in v.items() if kk != "sheets"}) for k, v in o.items() if k not in ("rows_by_table",)} for ot, o in objects.items()}, "files": len(files) + 1, "rows": manifest["rows"], "formats": list(formats)}
-    run.report = {**(run.report or {}), "cockpit_export": summary}
-    record_event(session, actor, "COCKPIT_EXPORTED", "RUN", run.id, {"objects": len(objects), "rows": summary["rows"], "files": summary["files"], "manifest_sha256": summary["manifest_sha256"]})
+    summary = {"exported": True, "scope": scope, "instances": sum(len(v) for v in instances.values()), "templates": sum(1 for o in objects.values() if "template" in o), "release": tgt.release if tgt else "", "dir": base, "zip": zip_path, "manifest_sha256": _sha(manifest_bytes), "generated_at": manifest["generated_at"], "objects": {ot: {k: (v if k != "template" else {kk: vv for kk, vv in v.items() if kk != "sheets"}) for k, v in o.items() if k not in ("rows_by_table",)} for ot, o in objects.items()}, "files": len(files) + 1, "rows": manifest["rows"], "formats": list(formats)}
+    run.report = {**(run.report or {}), ("cockpit_export" if scope == "all" else "cockpit_retry_export"): summary}
+    record_event(session, actor, "COCKPIT_EXPORTED", "RUN", run.id, {"scope": scope, "objects": len(objects), "rows": summary["rows"], "files": summary["files"], "manifest_sha256": summary["manifest_sha256"]})
     session.flush()
     return summary
 

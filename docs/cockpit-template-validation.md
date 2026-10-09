@@ -70,7 +70,10 @@ it names a catalog table (`table_by = structure`), and fields that live on a sib
   the deviation and the assumption made. Please report deviations with the sheet and row concerned.
 * **Acceptance by the app.** Whether the app's upload simulation accepts the filled file can only be seen in a
   system. The splitter check covers the structural contract SAP's own tooling applies, not the app's field-level
-  validation (value ranges, configuration existence), which the migration cockpit itself performs.
+  validation (value ranges, configuration existence), which the migration cockpit itself performs. Its result
+  flows back through the simulation feedback import (`sdtf cockpit-feedback import`): messages are matched to
+  the exported instances, rejected ones are marked and re-exported as a retry package. The log's column layout
+  is recognised tolerantly because the app's export format has not been seen here either.
 * **Migration object IDs and field semantics.** Migration objects are resolved per target release from a
   catalogue of documented names (renames and availability per release) whose technical `SIF_*` IDs are hints
   marked unverified; a list imported from the target's app (`sdtf migration-objects import`) makes them

@@ -60,6 +60,10 @@ def test_all_screens_render_against_live_api():
         pg.wait_for_timeout(2500)
         txt = pg.inner_text("main")
         assert "Chart of Accounts Data" in txt and "ACCT_GROUP" in txt  # registered template with its mapping report
+        pg.click("button:has-text('Use illustrative sample') >> nth=1") if pg.locator("button:has-text('Use illustrative sample')").count() > 1 else pg.click("button:has-text('Use illustrative sample')")
+        pg.wait_for_timeout(5000)
+        txt = pg.inner_text("main")
+        assert "Export retry package" in txt and "REJECTED" in txt  # simulation feedback imported and classified
         pg.goto(base + "/cutover")
         pg.wait_for_timeout(1000)
         pg.click("text=Assess cutover risk")

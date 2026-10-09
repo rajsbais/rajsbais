@@ -83,6 +83,20 @@ Alembic (`backend/alembic.ini`, `backend/sdtf/migrations`). `alembic upgrade hea
   `[{name, id, release, object_types, tables}]`, `sdtf migration-objects import --project <id> --file list.json`,
   or the paste box on the Runs page; `sdtf migration-objects list --release 2023` prints the catalogue and
   `--project <id>` the project's resolution. The export manifest and README carry name, ID, source and confidence.
+* **Upload simulation feedback**: after uploading the files, the app simulates every instance and produces a
+  message log. Import it (`POST /runs/{id}/cockpit-feedback/import` with the file content, the upload box on the
+  Runs page, or `sdtf cockpit-feedback import --run <id> --file log.csv`; CSV/TSV with any delimiter, JSON or the
+  spreadsheet export as SpreadsheetML XML; columns recognised by several spellings). Messages are matched to the
+  exported instances by instance key (any separator, with or without leading zeros), by the object's key columns
+  when the log carries them, or by a key search when the migration object is not named; what cannot be placed is
+  reported as unmatched with the reason. Instances with an error are marked `COCKPIT_ERROR` in staging (lineage
+  kept) and get COCKPIT-stage exceptions; the summary on the run report classifies the errors (configuration
+  missing, mandatory field missing, duplicate, format/value, authorisation, locked, other) and gives the pass rate
+  per object. Fix the data, mapping or configuration, then `POST /runs/{id}/cockpit-export` with
+  `scope=rejected` (or `sdtf cockpit-export --scope rejected`) for a retry package of the rejected instances only
+  (`<run>-retry/`). `DELETE /runs/{id}/cockpit-feedback` clears the feedback and resets the statuses. An
+  illustrative log for a run (`GET /runs/{id}/cockpit-feedback/sample`, `sdtf cockpit-feedback sample`) exercises
+  the flow; it is not an SAP file, and the app's real log format has not been seen here.
 * **Template field names (aliases)**: a template field resolves by its own DDIC name, then by a *project alias*,
   then by the global catalogue of BAPI-style names (`catalog/fields.py`, from the public BAPI structures:
   `COMP_CODE`, `PSTNG_DATE`, `AMT_DOCCUR`, `MOVE_TYPE`, ...), then by its Field List description matching the

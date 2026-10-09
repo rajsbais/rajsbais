@@ -391,6 +391,7 @@ def run_evidence(r: MigrationRun = Depends(get_run), db: Session = Depends(get_d
 class CockpitExportRequest(BaseModel):
     formats: list[str] = Field(["csv", "xml"], description="csv: one file per staging table; xml: one SpreadsheetML workbook per migration object")
     use_templates: bool = Field(True, description="also fill the project's registered migration object templates (<OBJECT>.template.xml)")
+    scope: str = Field("all", pattern="^(all|rejected)$", description="rejected: retry package of the instances the imported upload simulation feedback rejected")
 
 
 @router.post("/runs/{run_id}/cockpit-export", tags=["runs"], status_code=201)
@@ -404,7 +405,7 @@ def run_cockpit_export(req: CockpitExportRequest | None = None, r: MigrationRun 
         raise HTTPException(422, "formats must include csv and/or xml")
     if r.status not in ("COMPLETED", "FAILED"):
         raise HTTPException(409, f"run is {r.status}; export after the TRANSFORM stage has finished")
-    return export_cockpit_files(db, r.id, actor=p.username, formats=formats, use_templates=req.use_templates if req else True)
+    return export_cockpit_files(db, r.id, actor=p.username, formats=formats, use_templates=req.use_templates if req else True, scope=req.scope if req else "all")
 
 
 @router.get("/runs/{run_id}/cockpit-export", tags=["runs"])
@@ -706,6 +707,56 @@ def project_migration_object_delete(project_id: str, entry_id: str, db: Session 
     return Response(status_code=204)
 
 
+class CockpitFeedbackIn(BaseModel):
+    content: str = Field(..., description="the simulation message log as the app exports it: CSV/TSV, JSON, or SpreadsheetML XML")
+    filename: str = "simulation-log.csv"
+    replace: bool = Field(True, description="replace the run's earlier feedback (false: add to it)")
+
+
+@router.post("/runs/{run_id}/cockpit-feedback/import", tags=["runs"], status_code=201)
+def run_cockpit_feedback_import(req: CockpitFeedbackIn, r: MigrationRun = Depends(get_run), db: Session = Depends(get_db), p: Principal = Depends(require("run:start"))):
+    """Import the migration cockpit's upload simulation feedback: messages are matched to the exported instances,
+    rejected instances are marked COCKPIT_ERROR with LOAD-stage exceptions, and a classified summary is recorded."""
+    from ..runtime.cockpit_feedback import import_feedback
+
+    try:
+        return import_feedback(db, r.id, req.content, req.filename, p.username, req.replace)
+    except ValueError as e:
+        raise HTTPException(422, str(e)) from None
+
+
+@router.get("/runs/{run_id}/cockpit-feedback", tags=["runs"])
+def run_cockpit_feedback(severity: str | None = None, object_type: str | None = None, unmatched: bool | None = None, limit: int = Query(500, le=5000), r: MigrationRun = Depends(get_run), db: Session = Depends(get_db), p: Principal = Depends(require("project:read"))):
+    from ..models import CockpitFeedback
+    from ..runtime.cockpit_feedback import feedback_out
+
+    stmt = select(CockpitFeedback).where(CockpitFeedback.run_id == r.id)
+    if severity:
+        stmt = stmt.where(CockpitFeedback.severity == severity.upper()[:1])
+    if object_type:
+        stmt = stmt.where(CockpitFeedback.object_type == object_type)
+    if unmatched is not None:
+        stmt = stmt.where(CockpitFeedback.matched.is_(not unmatched))
+    rows = db.execute(stmt.order_by(CockpitFeedback.severity, CockpitFeedback.object_type, CockpitFeedback.matched_key).limit(limit)).scalars().all()
+    summary = (r.report or {}).get("cockpit_feedback") or {"imported": False}
+    return {"summary": summary, "messages": [feedback_out(f) for f in rows]}
+
+
+@router.delete("/runs/{run_id}/cockpit-feedback", tags=["runs"])
+def run_cockpit_feedback_clear(r: MigrationRun = Depends(get_run), db: Session = Depends(get_db), p: Principal = Depends(require("run:start"))):
+    from ..runtime.cockpit_feedback import clear_feedback
+
+    return {"cleared": clear_feedback(db, r.id, p.username)}
+
+
+@router.get("/runs/{run_id}/cockpit-feedback/sample", tags=["runs"])
+def run_cockpit_feedback_sample(r: MigrationRun = Depends(get_run), db: Session = Depends(get_db), p: Principal = Depends(require("project:read"))):
+    """An illustrative simulation log for this run's exported instances (not an SAP file), to exercise the import."""
+    from ..runtime.cockpit_feedback import sample_feedback
+
+    return Response(sample_feedback(db, r.id), media_type="text/csv", headers={"Content-Disposition": f'attachment; filename="simulation-log-{r.id}.sample.csv"'})
+
+
 # -------------------------------------------------------------------------------------------- agents
 @router.get("/agents", tags=["agents"])
 def agents(p: Principal = Depends(current_principal)):
@@ -775,7 +826,7 @@ CAPABILITIES = [
     {"area": "Observability (OpenTelemetry traces, metrics, trace-correlated JSON logs)", "status": "IMPLEMENTED", "note": "OTLP/HTTP export when OTEL_EXPORTER_OTLP_ENDPOINT is set; no-op otherwise"},
     {"area": "Target load", "status": "SIMULATED", "note": "Initial load and delta cycles go through the released S/4HANA APIs (business partner, product, sales/purchase order, delivery, journal entry with target numbering) and the migration cockpit for histories and cockpit objects, on the simulated gateway or an HTTPS target; verified on the simulated gateway only (ADR-0015). load_mode=direct keeps the simulated direct loader"},
     {"area": "Migration cockpit staging-file export", "status": "IMPLEMENTED", "note": "CSV per staging table and SpreadsheetML workbook per migration object for the rows the initial load routes to the cockpit, with manifest, checksums and zip; generic workbooks are not the target's templates (migration object names are hints to verify)"},
-    {"area": "Template-driven cockpit export", "status": "IMPLEMENTED", "note": "Registered migration object templates (the app's XML workbooks) are parsed (Field List incl. hidden SAP Structure/SAP Field columns, hidden technical rows, merged key cell), mapped automatically (same names, BAPI-style aliases, parent/related keys, recorded overrides) with a coverage report, and filled with typed, line-oriented cells; verified against the layout SAP documents and SAP's own XML file splitter on filled files, not against a template downloaded from a release (check endpoint and CLI report deviations); alias catalogue of BAPI-style template names extended from the public BAPI structures, project aliases learned from a template's Field List by DDIC description match and confirmed by an architect; migration object lookup per target release (documented names with renames and availability, unverified ID hints) with a project registry imported from the target's object list"},
+    {"area": "Template-driven cockpit export", "status": "IMPLEMENTED", "note": "Registered migration object templates (the app's XML workbooks) are parsed (Field List incl. hidden SAP Structure/SAP Field columns, hidden technical rows, merged key cell), mapped automatically (same names, BAPI-style aliases, parent/related keys, recorded overrides) with a coverage report, and filled with typed, line-oriented cells; verified against the layout SAP documents and SAP's own XML file splitter on filled files, not against a template downloaded from a release (check endpoint and CLI report deviations); alias catalogue of BAPI-style template names extended from the public BAPI structures, project aliases learned from a template's Field List by DDIC description match and confirmed by an architect; migration object lookup per target release (documented names with renames and availability, unverified ID hints) with a project registry imported from the target's object list; upload simulation feedback import (the app's message log matched to the exported instances, COCKPIT_ERROR statuses and exceptions, classified summary, retry package of rejected instances)"},
     {"area": "Reconciliation (technical/functional/financial)", "status": "IMPLEMENTED", "note": "Runs on simulated data"},
     {"area": "Audit trail & evidence packages", "status": "IMPLEMENTED", "note": "Hash-chained events, evidence index"},
     {"area": "AI agents", "status": "IMPLEMENTED", "note": "12 bounded heuristic agents; LLM reasoner planned"},

@@ -426,3 +426,26 @@ class MigrationObjectEntry(IdMixin, Base):
     source: Mapped[str] = mapped_column(String(200), default="")
     imported_by: Mapped[str] = mapped_column(String(64), default="")
     __table_args__ = (UniqueConstraint("project_id", "release", "name", name="uq_migration_object_entry"),)
+
+
+class CockpitFeedback(IdMixin, Base):
+    """One message of the migration cockpit's upload simulation log, matched to the exported instance it belongs
+    to (`matched_key` = the instance key as the export groups it) or recorded as unmatched with the reason."""
+
+    __tablename__ = "cockpit_feedback"
+    run_id: Mapped[str] = mapped_column(ForeignKey("migration_runs.id"), nullable=False, index=True)
+    object_type: Mapped[str] = mapped_column(String(48), default="")
+    migration_object: Mapped[str] = mapped_column(String(120), default="")
+    instance_key: Mapped[str] = mapped_column(String(200), default="")
+    matched_key: Mapped[str] = mapped_column(String(200), default="")
+    matched: Mapped[bool] = mapped_column(Boolean, default=False)
+    severity: Mapped[str] = mapped_column(String(1), default="I")  # E | W | S | I
+    message: Mapped[str] = mapped_column(Text, default="")
+    message_class: Mapped[str] = mapped_column(String(40), default="")
+    message_number: Mapped[str] = mapped_column(String(10), default="")
+    sheet: Mapped[str] = mapped_column(String(120), default="")
+    field: Mapped[str] = mapped_column(String(60), default="")
+    category: Mapped[str] = mapped_column(String(32), default="")
+    reason: Mapped[str] = mapped_column(String(300), default="")
+    source_file: Mapped[str] = mapped_column(String(200), default="")
+    imported_by: Mapped[str] = mapped_column(String(64), default="")

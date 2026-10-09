@@ -86,7 +86,10 @@ by the target, derived prices and statuses.
   catalogue grows from real Field Lists without silent guesses. The migration object each file set is for is looked
   up per target release (`catalog/migration_objects.py`: documented names with renames and availability per
   release, technical IDs as unverified hints) with a project registry imported from the target's object list
-  taking precedence; the manifest records name, ID, source and confidence.
+  taking precedence; the manifest records name, ID, source and confidence. The app's **upload simulation
+  feedback** closes the loop: its message log is imported, matched to the exported instances, reflected in staging
+  (`COCKPIT_ERROR`) and in COCKPIT-stage exceptions, classified, and a retry package of the rejected instances
+  is exported; the log's layout is recognised tolerantly and unmatched messages are reported, never dropped.
 * Pricing, statuses and open items are *modelled*, not SAP's: a real target prices from condition records and
   derives statuses from subsequent documents. The simulator's business activity is restricted to changes the
   released APIs can convey (quantities, master attributes, new documents, item deletions).

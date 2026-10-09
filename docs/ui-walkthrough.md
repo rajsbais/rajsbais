@@ -39,7 +39,10 @@ operator, auditor, viewer; passwords equal the names), select the demo project a
    for every template of the project.
 6. **Re-export** (`cockpit-09-reexport-with-templates.png`): the package now also carries `<OBJECT>.template.xml`
    for the two registered templates (39 files), and *Download zip* fetches it.
-7. **Delta monitor** (`cockpit-10-delta-monitor.png`): delta cycles through the same loaders, for context.
+7. **Upload simulation feedback** (`cockpit-12-simulation-feedback.png`, in the same card, below the export): import the app's message log or use the
+   illustrative sample; rejected instances are marked, errors classified, and *Export retry package* writes the
+   rejected instances only.
+8. **Delta monitor** (`cockpit-10-delta-monitor.png`): delta cycles through the same loaders, for context.
 
 The full-page capture of the cockpit card is `cockpit-04-cockpit-export.png`; the other images are viewport
 captures at 1440x900.
