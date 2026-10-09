@@ -28,8 +28,8 @@ container start.
 `kubectl apply -k deploy/k8s` — namespace, ConfigMap, Secret (replace values via External Secrets/Vault), backend
 Deployment (2 replicas, non-root, probes, evidence PVC), frontend Deployment, Ingress with TLS. Horizontal worker
 scaling: `deploy/k8s/worker.yaml` runs `sdtf worker` pods (HPA 2–32) that claim extraction jobs of DISTRIBUTED runs;
-INLINE runs still use threads inside the API pod (`SDTF_EXTRACTION_WORKERS`). API and workers share the RWX volume that
-holds evidence and columnar staging.
+INLINE runs still use threads inside the API pod (`SDTF_EXTRACTION_WORKERS`). API and workers share the RWX volume that holds
+evidence; with `SDTF_STAGING_DIR=s3://…` or `gs://…` staging needs no shared filesystem at all.
 
 ## Configuration
 | Variable | Purpose |

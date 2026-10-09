@@ -16,7 +16,8 @@
 | OIDC (role mapping, expired/issuer/audience rejection, forged signature, API acceptance, tenant isolation) | 6 | pass |
 | Merger (cross-source duplicate detection, collision plan blocks naive rulesets, resolved plan runs both sources into one company code with group financial PASS; API merge flow) | 3 | pass |
 | Staging & workers (columnar contract, slice on columnar staging, two in-process workers over EXTRACT/TRANSFORM/LOAD jobs, lease expiry + re-queue, two `sdtf worker` subprocesses with concurrent load jobs and zero conflicts, pipelined vs barrier overlap, crash-between-jobs self-healing, reconciliation as per-table/functional/financial jobs with summary equal to the inline path) | 7 | pass |
-| **Total** | **77** | **76 passed, 1 skipped by default (e2e)** |
+| Object-store staging (fsspec `memory://` URL: contract + full slice; `file://` URL; clear error when the S3 driver is missing) | 2 | pass |
+| **Total** | **79** | **78 passed, 1 skipped by default (e2e)** |
 
 Lint: `ruff check backend/sdtf backend/tests` clean. Frontend: `tsc --noEmit` and `vite build` clean.
 

@@ -6,7 +6,8 @@ data:
   SDTF_EVIDENCE_DIR: "/app/data/evidence"
   SDTF_EXTRACTION_WORKERS: "8"
   SDTF_STAGING_BACKEND: "columnar"
-  SDTF_STAGING_DIR: "/app/data/staging"
+  SDTF_STAGING_DIR: "/app/data/staging"   # or s3://<bucket>/sdtf-staging (IRSA) / gs://<bucket>/sdtf-staging (Workload Identity)
+  SDTF_STAGING_FS_OPTIONS: "{}"            # e.g. {"endpoint_url": "https://minio.internal"} for S3-compatible stores
   SDTF_JOB_LEASE_SECONDS: "600"
   SDTF_DEV_USERS: "0"
   SDTF_CORS_ORIGINS: "https://sdtf.example.internal"
