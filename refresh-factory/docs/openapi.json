@@ -504,6 +504,67 @@
     }
    }
   },
+  "/api/demo/connect-fake-odata": {
+   "post": {
+    "summary": "Demo Connect Fake Odata",
+    "description": "Registers an S/4HANA-style source reached through the OData adapter over a FAKE OData endpoint (no SAP involved).",
+    "operationId": "demo_connect_fake_odata_api_demo_connect_fake_odata_post",
+    "parameters": [
+     {
+      "name": "x-demo-user",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Demo-User"
+      }
+     },
+     {
+      "name": "authorization",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Authorization"
+      }
+     }
+    ],
+    "responses": {
+     "201": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      }
+     },
+     "422": {
+      "description": "Validation Error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
   "/api/systems/{sid}/discovery": {
    "get": {
     "summary": "Discovery",

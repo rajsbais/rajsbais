@@ -47,7 +47,7 @@ def source_contract(adapter, reference, tables=None, sample: int = 3) -> list[st
             if vals and hasattr(adapter, "select_in") and normset(adapter.select_in(t, f, vals)) != normset(reference.select_in(t, f, vals)):
                 bad.append(f"{t}: select_in({f}) differs")
     for t, f in (("VBAK", "ERDAT"), ("AUFK", "ERDAT")):
-        if t in TABLES and hasattr(adapter, "select_between"):
+        if t in TABLES and (tables is None or t in tables) and hasattr(adapter, "select_between"):
             lo, hi = "2026-07-01", "2026-09-01"
             if normset(adapter.select_between(t, f, lo, hi)) != normset(reference.select_between(t, f, lo, hi)):
                 bad.append(f"{t}: select_between({f}) differs")

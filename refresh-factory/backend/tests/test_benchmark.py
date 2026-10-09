@@ -261,9 +261,13 @@ def test_full_benchmark_plus_runs_calibrate_the_estimate(svc):
     for days in (20, 40, 70, 90, 150):  # reconcile is sampled only by real runs, so do a few of different sizes
         p = approved_project(svc, days=days)
         svc.execute(ALICE, p.id)
+    assert {s.phase for s in svc.bench.samples} == set(bsvc.PHASES)
+    for i, s in enumerate(svc.bench.samples):  # host timings are noise on a shared CI machine: replace them with a known law, keeping sizes and wiring
+        s.seconds = 0.01 + s.rows * 1e-4 * (1 + 0.02 * ((i % 5) - 2))
     p = approved_project(svc)
     e = svc.plan_summary(p.id)["estimate"]
     assert e["basis"] == "calibrated" and e["low"] <= e["seconds"] <= e["high"] and set(e["phases"]) == set(bsvc.PHASES)
+    assert e["seconds"] == pytest.approx(4 * (0.01 + p.plan.summary()["total_rows"] * 1e-4), rel=0.3)
 
 
 # ---------------------------------------------------------------- persistence and HTTP

@@ -228,8 +228,8 @@ def test_connecting_a_remote_source_is_governed_and_it_can_never_be_a_target(tmp
     for who in (ALICE.__class__("t", "t", ("tester",)), COPILOT, U["svc.scheduler"]):
         with pytest.raises(Forbidden):
             svc.connect_remote(who, sys2, prof, transport=FakeRfcTransport(make_demo_pair()[0]))
-    with pytest.raises(Conflict, match="odata connector is not built"):
-        svc.connect_remote(ADMIN, sys2, ConnectionProfile("o", "odata", base_url="https://x.example"))
+    with pytest.raises(Conflict, match="needs user and password_ref"):
+        svc.connect_remote(ADMIN, sys2, ConnectionProfile("o", "odata", base_url="https://x.example"))  # no credentials: refused before any network call
     with pytest.raises(Conflict, match="pyrfc"):
         svc.connect_remote(ADMIN, sys2, prof)  # no transport given: the real one needs pyrfc + the SAP SDK
     with pytest.raises(Forbidden, match="production systems cannot be selected as refresh targets"):

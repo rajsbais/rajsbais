@@ -54,3 +54,22 @@ test("a remote source with the change-document reader on says what it covers and
   await expect(page.getByText(/Reads stop 120s behind the system clock/)).toBeVisible();
   await expectAccessible(page, "landscape with change documents");
 });
+
+test("an OData source shows its mapping gaps and blocks a scope it cannot supply", async ({ app }) => {
+  const { page } = app;
+  await app.loadLandscape();
+  await app.nav("Landscape");
+  await app.click("Connect demo OData source (fake)");
+  await expect(page.getByText(/OData mapping: EKKO/)).toBeVisible();
+  await expect(page.getByText(/VBAK \(BUKRS_VF\)/)).toBeVisible();
+  await expect(page.getByText(/scopes that need them are blocked in the plan/)).toBeVisible();
+  await expectAccessible(page, "landscape with an OData source");
+
+  await app.nav("Selective designer");
+  await page.getByLabel(/^Source/).selectOption({ label: "S4X/100 (PRD)" });
+  await page.getByLabel(/^Target/).selectOption({ label: "EQ1/200 (QAS)" });
+  await app.click("Create project");
+  await app.click(/Save manifest/);
+  await app.click("Build plan");
+  await expect(page.getByText(/cannot supply this scope|BUKRS_VF/).first()).toBeVisible();
+});

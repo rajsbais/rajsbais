@@ -134,6 +134,7 @@ class RefreshService:
     def connect_remote(self, actor: Principal, system: SapSystem, profile, transport=None, reference=None) -> SapSystem:
         """Register a REMOTE system as a read-only source. It can never be a refresh target and no write path to it exists."""
         from .sap.connectors.profile import ConnectionProfile, ProfileError
+        from .sap.connectors.odata import ODataSourceAdapter
         from .sap.connectors.rfc import RemoteError, RfcSourceAdapter
         if actor.kind != "human" or not actor.can("system:write"):
             raise Forbidden("a human with system:write is required to connect a system")
@@ -143,22 +144,28 @@ class RefreshService:
             profile.validate()
         except ProfileError as e:
             raise Conflict(str(e))
-        if profile.kind != "rfc":
-            raise Conflict(f"the {profile.kind} connector is not built (only rfc exists, and only against a fake transport in this repository)")
         if transport is None:
             try:
-                from .sap.connectors.rfc import PyRfcTransport
-                transport = PyRfcTransport(profile)
+                if profile.kind == "rfc":
+                    from .sap.connectors.rfc import PyRfcTransport
+                    transport = PyRfcTransport(profile)
+                else:
+                    from .sap.connectors.odata import HttpODataTransport
+                    transport = HttpODataTransport(profile)
             except ImportError:
                 raise Conflict("pyrfc and the SAP NetWeaver RFC SDK are not installed: a real RFC connection is not possible here")
             except Exception as e:  # noqa: BLE001 - credentials, network
                 raise Conflict(f"could not connect: {type(e).__name__}: {e}")
         system.id = system.id or f"sys-{uuid.uuid4().hex[:8]}"
         system.writable_target_allowed = False  # a remote source is never a write target
-        system.adapter = "rfc"
-        adapter = RfcSourceAdapter(system, transport, profile, **({"reference": reference} if reference else {}))
+        system.adapter = profile.kind
+        kw = {"reference": reference} if reference else {}
+        adapter = RfcSourceAdapter(system, transport, profile, **kw) if profile.kind == "rfc" else ODataSourceAdapter(system, transport, profile, **kw)
         try:
-            adapter._call("RFC_PING")
+            if profile.kind == "rfc":
+                adapter._call("RFC_PING")
+            else:
+                adapter.ping()
             drift = adapter.schema_drift()
         except RemoteError as e:
             raise Conflict(f"connection check failed: {e}")
@@ -171,6 +178,8 @@ class RefreshService:
         """What the change-document reader of a remote system covers, and what it did last."""
         a = self.adapters[sid]
         r = getattr(a, "cdr", None)
+        if getattr(a, "kind", "") == "odata":
+            return {"enabled": False, "note": "Not available through released OData APIs: every scoped object is compared by content."}
         if r is None:
             return {"enabled": False, "note": "Off: the delta engine compares every scoped object by content (set options.change_documents on the connection profile to read CDHDR)."}
         cov = r.coverage()
@@ -180,8 +189,11 @@ class RefreshService:
 
     def rebuild_remote(self, system: SapSystem, profile):
         """Re-establish a remote connection after a restart; if that is impossible the system stays registered but disconnected."""
+        from .sap.connectors.odata import HttpODataTransport, ODataSourceAdapter
         from .sap.connectors.rfc import DisconnectedAdapter, PyRfcTransport, RfcSourceAdapter
         try:
+            if profile.kind == "odata":
+                return ODataSourceAdapter(system, HttpODataTransport(profile), profile)
             return RfcSourceAdapter(system, PyRfcTransport(profile), profile)
         except Exception as e:  # noqa: BLE001 - no SDK, no network, no credentials
             return DisconnectedAdapter(system, profile, f"{type(e).__name__}: {e}"[:160])

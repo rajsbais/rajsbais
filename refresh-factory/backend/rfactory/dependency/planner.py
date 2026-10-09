@@ -5,6 +5,7 @@ import json
 from dataclasses import dataclass, field
 
 from ..sap.adapter import Row, SourceAdapter
+from ..sap.connectors.rfc import RemoteError
 from ..sap.ddic import TABLES
 from ..selective.manifest import Manifest
 from .registry import CONFIG_TYPES, Registry, RelKind, find_cycles
@@ -198,7 +199,11 @@ class Planner:
         for p in reg_check["problems"]:
             issues.append(Issue("REGISTRY_INVALID", "blocking", p))
 
-        roots = self.select_roots(m, issues)
+        try:
+            roots = self.select_roots(m, issues)
+        except RemoteError as e:
+            issues.append(Issue("SOURCE_UNAVAILABLE", "blocking", f"The source cannot supply this scope: {e}"))
+            roots = []
         if not roots and not any(i.severity == "blocking" for i in issues):
             issues.append(Issue("EMPTY_SCOPE", "blocking", "Scope selects no business objects"))
 
@@ -218,7 +223,11 @@ class Planner:
             iid = f"{tname}:{key}"
             if iid in instances:
                 continue
-            inst = self.collect(tname, key, m)
+            try:
+                inst = self.collect(tname, key, m)
+            except RemoteError as e:
+                issues.append(Issue("SOURCE_UNAVAILABLE", "blocking", f"{tname} {key} (required by {parent}) cannot be read from the source: {e}", instance=parent))
+                continue
             if inst is None:
                 issues.append(Issue("DANGLING_REFERENCE", "blocking",
                                     f"{tname} {key} is required by {parent} but does not exist in the source",
@@ -284,6 +293,14 @@ class Planner:
         for c in cycles:
             issues.append(Issue("INSTANCE_CYCLE", "blocking", f"Circular object dependency: {' ↔ '.join(c[:6])}",
                                 details={"cycle": c}))
+        gaps = getattr(self.r, "gaps", None)  # sources that supply only part of the DDIC model (OData APIs)
+        if gaps is not None:
+            touched = {t for inst in instances.values() for t in inst.rows}
+            for t, fields in sorted(gaps().items()):
+                if t in touched:
+                    issues.append(Issue("SOURCE_FIELD_GAP", "blocking",
+                                        f"The source does not supply {t}-{', '.join(fields[:6])}: objects containing {t} cannot be copied from it faithfully",
+                                        details={"table": t, "fields": fields}))
         order = self._topo(instances, edges)
         return Plan(m.content_hash(), instances, order, config_refs, issues, cycles)
 

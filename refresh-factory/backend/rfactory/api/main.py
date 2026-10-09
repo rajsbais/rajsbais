@@ -439,7 +439,7 @@ def create_app(data_dir: Path | None = None, persist: bool | None = None, auth: 
             raise HTTPException(409, "this system is simulated, not remote")
         a, prof = svc.adapters[sid], svc.remote_profiles.get(sid)
         return {"profile": prof.public() if prof else None, "capabilities": a.capabilities(), "stats": a.stats.public(), "schema_drift": a.drift,
-                "change_documents": svc.change_doc_info(sid), "validated_against_real_sap": False}
+                "change_documents": svc.change_doc_info(sid), "gaps": a.gaps() if hasattr(a, "gaps") else {}, "validated_against_real_sap": False}
 
     @app.post("/api/demo/connect-fake-rfc", status_code=201)
     def demo_connect_fake(change_documents: bool = False, p: Principal = Depends(need("system:write"))):
@@ -453,6 +453,19 @@ def create_app(data_dir: Path | None = None, persist: bool | None = None, auth: 
         prof = ConnectionProfile("EP2 via fake RFC", "rfc", ashost="fake.invalid", client="100", user="DEMO", password_ref="env:DEMO_NOT_USED", calls_per_minute=60_000,
                                  options={"change_documents": True} if change_documents else {})
         s = svc.connect_remote(p, system, prof, transport=FakeRfcTransport(sim), reference=sim.reference_date)
+        return {**s.model_dump(mode="json"), "label": s.label, "remote": True, "simulated_transport": True}
+
+    @app.post("/api/demo/connect-fake-odata", status_code=201)
+    def demo_connect_fake_odata(p: Principal = Depends(need("system:write"))):
+        """Registers an S/4HANA-style source reached through the OData adapter over a FAKE OData endpoint (no SAP involved)."""
+        from ..sap.adapter import SapSystem
+        from ..sap.connectors.fake_odata import FakeODataTransport
+        from ..sap.connectors.profile import ConnectionProfile
+        from ..sap.synthetic import make_demo_pair
+        sim, _t = make_demo_pair()
+        system = SapSystem(sid="S4X", client="100", role="PRD", owner="finance-ops", tags=["remote-demo", "odata"])
+        prof = ConnectionProfile("S4X via fake OData", "odata", base_url="https://fake-s4.invalid", user="DEMO", password_ref="env:DEMO_NOT_USED", calls_per_minute=60_000)
+        s = svc.connect_remote(p, system, prof, transport=FakeODataTransport(sim), reference=sim.reference_date)
         return {**s.model_dump(mode="json"), "label": s.label, "remote": True, "simulated_transport": True}
 
     @app.get("/api/systems/{sid}/discovery")

@@ -17,7 +17,7 @@ export default function Landscape() {
     if (!sel) return;
     void act.run(async () => {
       setDisc(await api.get(`/api/systems/${sel}/discovery`)); setReady(await api.get(`/api/systems/${sel}/readiness`));
-      setRemote(systems.find((s) => s.id === sel)?.adapter === "rfc" ? await api.get(`/api/systems/${sel}/remote`) : null);
+      setRemote(systems.find((s) => s.id === sel)?.adapter && ["rfc", "odata"].includes(systems.find((s) => s.id === sel)?.adapter) ? await api.get(`/api/systems/${sel}/remote`) : null);
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sel]);
@@ -27,7 +27,9 @@ export default function Landscape() {
       <Card title="Environments" actions={<div className="row"><button disabled={!can("system:write") || act.busy} title="Registers a second ECC production source reached through the RFC adapter over a FAKE transport"
         onClick={() => act.run(async () => { const r = await api.post("/api/demo/connect-fake-rfc"); await reload(); setSel(r.id); })}>Connect demo remote source (fake RFC)</button>
         <button disabled={!can("system:write") || act.busy} title="Same, with the change-document (CDHDR) reader switched on"
-        onClick={() => act.run(async () => { const r = await api.post("/api/demo/connect-fake-rfc?change_documents=true"); await reload(); setSel(r.id); })}>Demo remote source with change documents</button></div>}>
+        onClick={() => act.run(async () => { const r = await api.post("/api/demo/connect-fake-rfc?change_documents=true"); await reload(); setSel(r.id); })}>Demo remote source with change documents</button>
+        <button disabled={!can("system:write") || act.busy} title="An S/4HANA-style source reached through released OData APIs over a FAKE endpoint"
+        onClick={() => act.run(async () => { const r = await api.post("/api/demo/connect-fake-odata"); await reload(); setSel(r.id); })}>Connect demo OData source (fake)</button></div>}>
         <div className="env-row">
           {roles.map((r) => (
             <div key={r} className="env-col"><h3>{r}</h3>
@@ -36,6 +38,7 @@ export default function Landscape() {
                   <strong>{s.sid}/{s.client}</strong><span>{s.product}</span><Badge>{s.family}</Badge>
                   {s.writable_target ? <Badge kind="ok">writable target</Badge> : <Badge kind="bad">read-only</Badge>}
                   {s.adapter === "rfc" && <Badge kind="info">remote (RFC)</Badge>}
+                  {s.adapter === "odata" && <Badge kind="info">remote (OData)</Badge>}
                 </button>))}
               {!systems.some((s) => s.role === r) && <span className="muted small">none</span>}
             </div>))}
@@ -68,6 +71,8 @@ export default function Landscape() {
                 types without change documents (BOMs, production orders, material documents) are always compared by content. Reads stop {remote.change_documents.lag_seconds}s behind the system clock and re-read {remote.change_documents.overlap_seconds}s.
                 {remote.change_documents.error && <> <Badge kind="warn">{remote.change_documents.error}</Badge></>}</p>
             : <p className="small muted">Change documents: off. {remote.change_documents.note}</p>}
+          {remote.profile?.kind === "odata" && <p className="small">OData mapping: {remote.capabilities.mapped_tables.join(", ")}. Tables with fields the API does not supply: {Object.entries(remote.capabilities.tables_with_gaps).map(([t, f]: J) => `${t} (${f.join(", ")})`).join("; ") || "none"}.
+            {" "}{remote.capabilities.tables_unavailable.length} other tables are unavailable through this connection, so scopes that need them are blocked in the plan instead of being copied incompletely.</p>}
           <p className="small">Calls {remote.stats.calls} · retries {remote.stats.retries} · rows read {remote.stats.rows} · full scans {remote.stats.scans} ({remote.stats.scanned_tables.join(", ") || "none"}) · guard trips {remote.stats.guard_trips}</p>
           <p className="small">Pushed down to the system: {remote.capabilities.pushdown.join(", ")}.
             {Object.keys(remote.schema_drift).length ? ` Schema drift: ${JSON.stringify(remote.schema_drift)}` : " The modelled DDIC fields and keys all exist remotely."}</p>

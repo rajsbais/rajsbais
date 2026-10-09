@@ -411,17 +411,16 @@ class RfcSourceAdapter:
 class DisconnectedAdapter:
     """Stands in for a remote system after a restart when the connection could not be re-established (the transport is never persisted)."""
 
-    kind = "rfc"
-
     def __init__(self, system: SapSystem, profile: ConnectionProfile, reason: str):
         self.system, self.profile, self.reason = system, profile, reason
+        self.kind = profile.kind
         self.drift: dict = {"connection": [reason]}
         self.stats = Stats()
 
     def _down(self, *a, **k):
         raise RemoteError(f"{self.system.label} is disconnected ({self.reason}); reconnect it before use")
 
-    select = lookup = get = count = table_counts = discover = reference_date = change_seq = changes_since = change_coverage = select_in = select_between = _down
+    select = lookup = get = count = table_counts = discover = reference_date = change_seq = changes_since = change_coverage = select_in = select_between = gaps = _down
 
     def capabilities(self) -> dict:
         return {"connected": False, "reason": self.reason}

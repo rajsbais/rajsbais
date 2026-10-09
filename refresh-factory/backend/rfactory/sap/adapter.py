@@ -105,7 +105,7 @@ class ReadOnlyView:
     """
 
     _READ = {"system", "reference_date", "discover", "select", "lookup", "get", "count", "table_counts", "change_seq",
-             "changes_since", "select_in", "select_between", "capabilities", "kind", "change_coverage"}
+             "changes_since", "select_in", "select_between", "capabilities", "kind", "change_coverage", "gaps"}
 
     def __init__(self, inner: SourceAdapter):
         object.__setattr__(self, "_inner", inner)
