@@ -153,6 +153,8 @@ test("a refusal at the identity provider is explained, and a replayed callback U
     used.searchParams.set("code", [...idp.st.codes.keys()][0]);
     used.searchParams.set("state", idp.st.authorize[1].get("state")!);
     await page.getByRole("button", { name: "Sign out", exact: true }).click();
+    await expect.poll(() => idp.st.logout).toBe(1); // sign-out revokes the token, then leaves through the identity provider: wait for all of it
+    await page.waitForLoadState("load");
     await page.goto(used.toString()); // replay the spent callback in a fresh sign-in state
     await expect(page.getByRole("alert").filter({ hasText: /not started in this browser tab/ })).toBeVisible();
     expect(idp.st.token).toHaveLength(1);
