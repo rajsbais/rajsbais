@@ -47,7 +47,12 @@ switch VMs and *Resume from checkpoint*: completed stages and completed extracti
 > `ACDOCA`, leading ledger 0L (`meta.rfc.ledger` to change it); asset acquisition values come from the
 > compatibility view `FAAV_ANLC` when the technical user may read it (`S_TABU_NAM`), else from the APC line items of
 > `ACDOCA` / `FAAT_DOC_IT` once `meta.rfc.assets.apc_movement_categories` names the FAA_MOVCAT values of your system
-> (look them up in the domain), else the net postings, which the check reports as a different measure.
+> (look them up in the domain), else the net postings, which the check reports as a different measure. Inventory values
+> on A4H come from `MBEW` read through the add-on (the Material Ledger proxy view `MBV_MBEW` serves LBKUM/SALK3 to Open
+> SQL; confirm on A4H that the dynamic SELECT returns non-zero SALK3), else from the Material Ledger period totals
+> `CKMLCR` / `CKMLHD` (`meta.rfc.inventory.period` = `{"year", "poper"}` of the cutover period, `currency_type` 10;
+> the technical user needs `S_TABU_NAM` for them), else from the inventory accounts named in
+> `meta.rfc.inventory.inventory_accounts` (reported as a different measure).
 
 Networking: the platform runs on the Windows host (Python, the SAP NW RFC SDK for Windows, `pyrfc`; if no `pyrfc` wheel
 exists for your Python, use a 3.12 virtual environment for the API process) or inside the `docker-host` VM through

@@ -79,3 +79,16 @@ NPL / A4H test, docs/connect-real-systems.md).
   (`apc_movement_categories`, taken from the FAA_MOVCAT domain on the system: none are assumed), else the net
   asset postings of the Universal Journal, a different measure reported as WARN with the measure named. ECC-type systems, and S/4HANA systems whose ACDOCA the add-on
   cannot read or that hold no rows, keep BSEG and the open-item tables.
+  **Inventory values on S/4HANA** (RFC read-back and aggregate mode, `meta.rfc.inventory`): the Material Ledger is
+  mandatory there and MBEW's LBKUM/SALK3 are no longer updated in the table; Open SQL reads of MBEW are served by the
+  proxy view `MBV_MBEW`, which computes them from the Material Ledger, and that is what the add-on's dynamic SELECT
+  gets (a database-level read shows them empty). Chain: MBEW through the proxy view (SALK3 by valuation area,
+  comparable with ECC), else, when MBEW returns valuated materials with every stock value zero or cannot be read, the
+  Material Ledger period totals `CKMLCR` (valuation area through `CKMLHD`, one period and currency type, default the
+  calendar month of the read and currency type 10: the same measure, comparable; set `period` for non-calendar
+  fiscal years or a closed period), else the balance of the configured `inventory_accounts` in the Universal
+  Journal by plant (valuation area = plant on S/4HANA), a different measure reported as WARN with the measure
+  named; nothing configured and nothing readable is reported as not readable, never as a FAIL. In rows mode the MBEW
+  rows read back through the add-on are then compared on prices only (LBKUM/SALK3 excluded) and the totals come from
+  the chain. Verified on the simulated add-on with Material Ledger records derived from the classic rows
+  (`material_ledger_from_mbew`); the proxy-view behaviour of A4H is a public-reference claim to confirm on the VM.

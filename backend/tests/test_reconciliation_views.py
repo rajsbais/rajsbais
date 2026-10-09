@@ -700,3 +700,115 @@ def test_asset_values_chain_on_s4hana(store, session, slice_result):
         delete_records(session, tgt.id, "FAAV_ANLC", [views.record_key("FAAV_ANLC", r) for r in faav])
         session.flush()
     session.expire_all()
+
+
+# ----------------------------------------------------------------- inventory values on S/4HANA (Material Ledger chain)
+def test_inventory_values_chain_on_s4hana(store, session, slice_result, monkeypatch):
+    """Stock values on S/4HANA: MBEW through the Material Ledger proxy view when it serves values, else the
+    Material Ledger period totals CKMLCR by valuation area (same measure), else the inventory account balances of
+    the Universal Journal (a different measure, not comparable); ECC keeps MBEW."""
+    rows = {t: list(store.rows(t)) for t in ("BKPF", "BSEG", "T001K", "MBEW")}
+    areas = sorted({r["BWKEY"] for r in rows["T001K"] if r["BUKRS"] == "5000"})
+    assert areas
+    expected = {a: round(sum(float(r["SALK3"]) for r in rows["MBEW"] if r["BWKEY"] == a), 2) for a in areas}
+    assert any(v > 0 for v in expected.values())
+    cfg = views.inventory_config(None)
+    assert cfg["source"] == "auto" and cfg["currency_type"] == "10" and len(cfg["period"]["poper"]) == 3 and cfg["inventory_accounts"] == []
+    ml = views.material_ledger_from_mbew(rows["MBEW"], cfg["period"]["year"], cfg["period"]["poper"])
+    assert len(ml["CKMLHD"]) == len(rows["MBEW"]) == len(ml["CKMLCR"]) == len(ml["CKMLPP"]) and ml["CKMLCR"][0]["CURTP"] == "10" and ml["CKMLCR"][0]["UNTPER"] == "000"
+    s4 = SapSystem(sid="S4H", client="100", role="TARGET", product="S4HANA", release="2023", connector="API", meta={"rfc": {"transport": "simulated"}})
+    ecc = SapSystem(sid="NPL", client="001", role="SOURCE", product="ECC", release="6.0", connector="RFC", meta={"rfc": {"transport": "simulated"}})
+
+    def client_for(tables):
+        c = rfc.AbapAddonClient(rfc.SimulatedAbapAddon(RecordStore.from_tables("s4", tables), snapshot_ttl=60))
+        c.open_snapshot()
+        return c
+
+    # 1. ECC: MBEW is the measure; S/4HANA with values in MBEW (served by the proxy view): the same figures
+    c = client_for(rows)
+    vals, measure, comparable = views.inventory_values(c, areas, views.inventory_config(ecc), ecc)
+    assert comparable and measure.startswith("valuated stock value from MBEW (SALK3)") and {v["BWKEY"]: v["SUM_SALK3"] for v in vals} == expected
+    vals, measure, comparable = views.inventory_values(c, areas, views.inventory_config(s4), s4)
+    assert comparable and "MBV_MBEW" in measure and {v["BWKEY"]: v["SUM_SALK3"] for v in vals} == expected
+    assert views.inventory_values(c, [], views.inventory_config(s4), s4) == ([], "", True)
+    # 2. S/4HANA whose MBEW rows carry no stock values (database-level image): the Material Ledger period totals
+    empty = [{**r, "SALK3": 0.0, "LBKUM": 0.0} for r in rows["MBEW"]]
+    c = client_for({**rows, "MBEW": empty, **ml})
+    vals, measure, comparable = views.inventory_values(c, areas, views.inventory_config(s4), s4)
+    assert comparable and "CKMLCR" in measure and f"period {cfg['period']['poper']}" in measure and {v["BWKEY"]: v["SUM_SALK3"] for v in vals} == expected
+    s4_ml = SapSystem(sid="S4H", client="100", role="TARGET", product="S4HANA", release="2023", connector="API", meta={"rfc": {"transport": "simulated", "inventory": {"source": "ml_period", "period": {"year": cfg["period"]["year"], "poper": int(cfg["period"]["poper"])}}}})
+    vals2, measure2, _ = views.inventory_values(client_for({**rows, **ml}), areas, views.inventory_config(s4_ml), s4_ml)
+    assert {v["BWKEY"]: v["SUM_SALK3"] for v in vals2} == expected and "CKMLCR" in measure2
+    other = SapSystem(sid="S4H", client="100", role="TARGET", product="S4HANA", release="2023", connector="API", meta={"rfc": {"inventory": {"source": "ml_period", "period": {"year": "1999", "poper": "001"}}}})
+    vals3, _m, _c = views.inventory_values(c, areas, views.inventory_config(other), other)
+    assert all(v["SUM_SALK3"] == 0.0 and v["COUNT"] == 0 for v in vals3)  # no period records for that period
+    vals_none, measure_none, _c = views.inventory_values(client_for({**rows, "MBEW": empty}), areas, views.inventory_config(s4_ml), s4_ml)
+    assert "CKMLCR" in measure_none and all(v["SUM_SALK3"] == 0.0 for v in vals_none)  # the ledger tables exist but hold no records for the areas
+    denied = client_for({**rows, "MBEW": empty})
+    monkeypatch.setattr(denied, "read_all", lambda *a, **k: (_ for _ in ()).throw(rfc.RfcError("NOT_AUTHORIZED", "CKMLHD")))
+    with pytest.raises(views.ReconciliationViewError, match="Material Ledger period totals"):
+        views.inventory_values(denied, areas, views.inventory_config(s4_ml), s4_ml)
+    vals_auto, measure_auto, comparable_auto = views.inventory_values(denied, areas, views.inventory_config(s4), s4)
+    assert not comparable_auto and "no stock values readable" in measure_auto  # auto falls through when the ledger is not readable
+    # 3. no values anywhere: declared not readable; with inventory accounts configured: the journal measure, not comparable
+    vals4, measure4, comparable4 = views.inventory_values(client_for({**rows, "MBEW": empty}), areas, views.inventory_config(s4), s4)
+    assert not comparable4 and "no stock values readable" in measure4 and all(v["SUM_SALK3"] == 0.0 for v in vals4)
+    acdoca = views.acdoca_from_journal(rows["BKPF"], rows["BSEG"])
+    inv_lines = [{**acdoca[0], "DOCLN": f"9{i:05d}", "RACCT": "398888", "WERKS": a, "DRCRK": "S", "HSL": float(expected[a]), "RLDNR": "0L"} for i, a in enumerate(areas)]
+    s4_j = SapSystem(sid="S4H", client="100", role="TARGET", product="S4HANA", release="2023", connector="API", meta={"rfc": {"inventory": {"inventory_accounts": ["398888"]}}})
+    vals5, measure5, comparable5 = views.inventory_values(client_for({**rows, "MBEW": empty, "ACDOCA": acdoca + inv_lines}), areas, views.inventory_config(s4_j), s4_j)
+    assert not comparable5 and "398888" in measure5 and "ACDOCA" in measure5 and {v["BWKEY"]: v["SUM_SALK3"] for v in vals5} == expected
+    with pytest.raises(views.ReconciliationViewError, match="inventory_accounts"):
+        views.inventory_values(c, areas, views.inventory_config(SapSystem(sid="S4H", client="100", role="TARGET", product="S4HANA", release="2023", connector="API", meta={"rfc": {"inventory": {"source": "journal"}}})), s4)
+    with pytest.raises(views.ReconciliationViewError, match="not one of"):
+        views.inventory_values(c, areas, {**views.inventory_config(s4), "source": "guess"}, s4)
+    # the simulated S/4HANA target: RFC read-back (rows) and aggregate mode take the stock values from the chain
+    from sdtf.catalog.store import delete_records, import_tables
+
+    m = session.get(ScopeManifest, slice_result["manifest_id"])
+    run = session.get(MigrationRun, slice_result["run_id"])
+    tgt = session.get(SapSystem, slice_result["target_id"])
+    src = session.get(SapSystem, slice_result["source_id"])
+    backend = get_backend(session=session)
+    direct = RecordStore.load(session, tgt.id, tables=["MBEW"])
+    tml = views.material_ledger_from_mbew(list(direct.rows("MBEW")), cfg["period"]["year"], cfg["period"]["poper"])
+    import_tables(session, tgt.id, tml)
+    session.flush()
+    monkeypatch.delitem(views._BOUND, "MBEW")  # the product API of this target carries no stock value: MBEW is not readable by API
+    try:
+        keys = views.loaded_keys_of(backend, run.id)
+        sv = views.record_store_view(session, src.id)
+        for source_cfg, expect_in_measure in (("ml_period", "CKMLCR"), ("mbew", "MBV_MBEW")):
+            rfc_tgt = SapSystem(id=tgt.id, sid=tgt.sid, client=tgt.client, role="TARGET", product="S4HANA", release="2025", connector="API", meta={"api": {"transport": "simulated"}, "rfc": {"transport": "simulated", "inventory": {"source": source_cfg}}})
+            v = views.build_target_view(session, rfc_tgt, m, keys, sv, force_api=True)
+            rb = v.metrics["rfc_readback"]
+            assert expect_in_measure in rb["inventory"]["measure"] and rb["inventory"]["comparable"] and v.inventory_values and sum(rb["inventory"]["by_area"].values()) > 0
+            assert v.read_via["MBEW"] == ("rfc+material_ledger" if source_cfg == "ml_period" else "rfc") and "MBEW" not in v.unreadable
+            if source_cfg == "ml_period":
+                assert not ({"SALK3", "LBKUM"} & v.comparable_fields("MBEW")) and "VPRSV" in v.comparable_fields("MBEW")
+            session.query(ReconciliationResult).filter(ReconciliationResult.run_id == run.id).delete()
+            reconcile_run(session, run, m, sv, v)
+            inv = next(r for r in session.execute(select(ReconciliationResult).where(ReconciliationResult.run_id == run.id, ReconciliationResult.check_name == "inventory_valuation")).scalars().all())
+            assert inv.status == "PASS" and float(inv.target_value) > 0 and expect_in_measure in inv.explanation and inv.evidence["measure"], (inv.status, inv.explanation)
+            mb = [r for r in session.execute(select(ReconciliationResult).where(ReconciliationResult.run_id == run.id, ReconciliationResult.layer == "TECHNICAL", ReconciliationResult.subject == "MBEW")).scalars().all()]
+            assert mb and not [r for r in mb if r.status == "FAIL"], [(r.check_name, r.explanation) for r in mb if r.status == "FAIL"]
+            va = views.build_target_view(session, rfc_tgt, m, keys, sv, force_api=True, mode="aggregate")
+            ta = va.metrics["target_aggregates"]
+            assert expect_in_measure in ta["inventory_measure"] and ta["inventory_comparable"] is True and sum(x["SUM_SALK3"] for x in va.aggregates["inventory"]) == sum(rb["inventory"]["by_area"].values())
+            session.query(ReconciliationResult).filter(ReconciliationResult.run_id == run.id).delete()
+            reconcile_run(session, run, m, sv, va)
+            inv_a = next(r for r in session.execute(select(ReconciliationResult).where(ReconciliationResult.run_id == run.id, ReconciliationResult.check_name == "inventory_valuation")).scalars().all())
+            assert inv_a.status == "PASS" and inv_a.target_value == inv.target_value and expect_in_measure in inv_a.explanation
+        # the journal measure on the target: WARN with the measure named, never a FAIL
+        rfc_tgt = SapSystem(id=tgt.id, sid=tgt.sid, client=tgt.client, role="TARGET", product="S4HANA", release="2025", connector="API", meta={"api": {"transport": "simulated"}, "rfc": {"transport": "simulated", "inventory": {"source": "journal", "inventory_accounts": ["398888"]}}})
+        va = views.build_target_view(session, rfc_tgt, m, keys, sv, force_api=True, mode="aggregate")
+        assert va.metrics["target_aggregates"]["inventory_comparable"] is False
+        session.query(ReconciliationResult).filter(ReconciliationResult.run_id == run.id).delete()
+        reconcile_run(session, run, m, sv, va)
+        inv_j = next(r for r in session.execute(select(ReconciliationResult).where(ReconciliationResult.run_id == run.id, ReconciliationResult.check_name == "inventory_valuation")).scalars().all())
+        assert inv_j.status == "WARN" and inv_j.evidence["comparable"] is False and "398888" in inv_j.explanation
+    finally:
+        for t, trows in tml.items():
+            delete_records(session, tgt.id, t, [views.record_key(t, r) for r in trows])
+        session.flush()
+    session.expire_all()

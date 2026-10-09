@@ -31,6 +31,7 @@ from __future__ import annotations
 import os
 import re
 from collections import defaultdict
+from datetime import UTC, datetime
 from typing import Iterable
 
 from sqlalchemy.orm import Session
@@ -102,6 +103,7 @@ class ViewStore(RecordStore):
         self.metrics: dict = {"origin": origin}
         self._integrity: list[tuple] = []
         self._comparable: dict[str, set[str]] = {}
+        self.inventory_values: tuple[list[dict], str, bool] | None = None  # (rows per valuation area, measure, comparable) when read through a chain
 
     def comparable_fields(self, table: str) -> set[str] | None:
         """Fields a staged row can be compared with on this view (None: every field, as for a record store)."""
@@ -255,6 +257,112 @@ def _acdoca_rows(rows: list[dict], group_map: dict[str, str]) -> list[dict]:
     return out
 
 
+INVENTORY_DEFAULTS = {"source": "auto", "currency_type": "10", "period": None, "inventory_accounts": []}
+
+
+def inventory_config(system: SapSystem | None) -> dict:
+    """`meta.rfc.inventory`: how the valuated stock values are read on an S/4HANA system. `source`: auto | mbew |
+    ml_period | journal; `currency_type`: Material Ledger currency type of the period totals (10: company code
+    currency); `period`: {"year", "poper"} of the period totals (default: the calendar month of the read; set it for
+    non-calendar fiscal years or a closed period); `inventory_accounts`: the balance sheet accounts whose Universal
+    Journal balance is the last resort (a different measure, reported as such)."""
+    cfg = dict(INVENTORY_DEFAULTS)
+    rfc = (system.meta or {}).get("rfc") if system is not None and system.meta else None
+    cfg.update({k: v for k, v in ((rfc or {}).get("inventory") or {}).items() if k in cfg})
+    cfg["source"] = str(cfg["source"] or "auto").lower()
+    cfg["currency_type"] = str(cfg["currency_type"] or "10").zfill(2)
+    cfg["inventory_accounts"] = [str(a) for a in cfg["inventory_accounts"] or []]
+    period = cfg["period"] if isinstance(cfg["period"], dict) else {}
+    today = datetime.now(UTC)
+    cfg["period"] = {"year": str(period.get("year") or today.year), "poper": str(period.get("poper") or today.month).zfill(3)}
+    return cfg
+
+
+def _mbew_values(client: AbapAddonClient, valuation_areas: list[str]) -> list[dict]:
+    rows = client.aggregate("MBEW", [predicate("BWKEY", "EQ", a) for a in valuation_areas], ["BWKEY"], ["SALK3"])
+    return [{"BWKEY": str(a["BWKEY"]), "COUNT": int(a["COUNT"]), "SUM_SALK3": round(float(a["SUM_SALK3"]), 2)} for a in rows]
+
+
+def inventory_values(client: AbapAddonClient, valuation_areas: list[str], cfg: dict, system: SapSystem | None = None, ledger: str = LEADING_LEDGER) -> tuple[list[dict], str, bool]:
+    """Valuated stock values per valuation area: `([{BWKEY, COUNT, SUM_SALK3}], measure, comparable)`. On ECC-type
+    systems MBEW carries SALK3 and that is the measure. On S/4HANA the Material Ledger is mandatory and MBEW's
+    LBKUM/SALK3 are no longer updated in the table: Open SQL reads of MBEW are served by the proxy view (MBV_MBEW)
+    that computes them from the Material Ledger, which is what the add-on's dynamic SELECT gets (a database-level
+    read would show them empty). Chain on S/4HANA: MBEW through the proxy view (comparable with ECC SALK3), else
+    the Material Ledger period totals CKMLCR (valuation area via CKMLHD, one period and currency type: the same
+    measure, comparable), else the balance of the configured inventory accounts in the Universal Journal by plant
+    (S/4HANA values at plant level: valuation area = plant), a different measure reported as not comparable."""
+    want = cfg["source"]
+    if not valuation_areas:
+        return [], "", True
+    is_s4 = (getattr(system, "product", "") or "").upper() == "S4HANA"
+    if not is_s4 and want in ("auto", "mbew"):
+        return _mbew_values(client, valuation_areas), "valuated stock value from MBEW (SALK3) by valuation area", True
+    if want in ("auto", "mbew"):
+        try:
+            rows = _mbew_values(client, valuation_areas)
+        except RfcError as e:
+            if want == "mbew":
+                raise ReconciliationViewError(f"MBEW not readable on the target: {e}") from e
+            rows = None
+        if rows is not None:
+            has_rows = any(r["COUNT"] > 0 for r in rows)
+            has_values = any(abs(r["SUM_SALK3"]) >= 0.005 for r in rows)
+            if want == "mbew" or has_values or not has_rows:
+                return rows, "valuated stock value from MBEW through the Material Ledger proxy view (MBV_MBEW), SALK3 by valuation area", True
+            # materials valuated but every stock value zero: the proxy view did not serve the values; try the ledger
+    if want in ("auto", "ml_period"):
+        year, poper, curtp = cfg["period"]["year"], cfg["period"]["poper"], cfg["currency_type"]
+        try:
+            from ..runtime import rfc_config
+
+            heads = list(client.read_all("CKMLHD", [predicate("BWKEY", "EQ", a) for a in valuation_areas]))
+            by_area: dict[str, list[str]] = defaultdict(list)
+            for h in heads:
+                by_area[str(h["BWKEY"])].append(str(h["KALNR"]))
+            out = []
+            for area in valuation_areas:
+                total, count = 0.0, 0
+                for chunk in _chunks(by_area.get(area, []), rfc_config.key_chunk()):
+                    preds = [predicate("BDATJ", "EQ", year), predicate("POPER", "EQ", poper), predicate("UNTPER", "EQ", "000"), predicate("CURTP", "EQ", curtp)] + [predicate("KALNR", "EQ", k) for k in chunk]
+                    for a in client.aggregate("CKMLCR", preds, [], ["SALK3"]):
+                        total += float(a["SUM_SALK3"])
+                        count += int(a["COUNT"])
+                out.append({"BWKEY": area, "COUNT": count, "SUM_SALK3": round(total, 2)})
+            if heads or want == "ml_period":
+                return out, f"valuated stock value from the Material Ledger period totals CKMLCR (year {year}, period {poper}, currency type {curtp}) by valuation area", True
+        except RfcError as e:
+            if want == "ml_period":
+                raise ReconciliationViewError(f"Material Ledger period totals not readable on the target: {e}") from e
+    if want in ("auto", "journal"):
+        accounts = cfg["inventory_accounts"]
+        if not accounts:
+            if want == "journal":
+                raise ReconciliationViewError("meta.rfc.inventory.inventory_accounts must name the inventory accounts for the journal measure")
+            return [{"BWKEY": a, "COUNT": 0, "SUM_SALK3": 0.0} for a in valuation_areas], "no stock values readable: MBEW served no values, no Material Ledger period totals, no inventory accounts configured (meta.rfc.inventory)", False
+        preds = [predicate("RLDNR", "EQ", ledger)] + [predicate("WERKS", "EQ", a) for a in valuation_areas] + [predicate("RACCT", "EQ", acct) for acct in accounts]
+        try:
+            agg = client.aggregate("ACDOCA", preds, ["WERKS"], ["HSL"])
+        except RfcError as e:
+            raise ReconciliationViewError(f"Universal Journal inventory accounts not readable on the target: {e}") from e
+        totals = {str(a["WERKS"]): (int(a["COUNT"]), round(float(a["SUM_HSL"]), 2)) for a in agg}
+        return [{"BWKEY": a, "COUNT": totals.get(a, (0, 0.0))[0], "SUM_SALK3": totals.get(a, (0, 0.0))[1]} for a in valuation_areas], f"balance of the inventory accounts {', '.join(accounts)} in the Universal Journal (ACDOCA, ledger {ledger}) by plant: not the valuated stock value (compare by MB5L)", False
+    raise ReconciliationViewError(f"meta.rfc.inventory.source {want!r} is not one of auto, mbew, ml_period, journal")
+
+
+def material_ledger_from_mbew(mbew: list[dict], year: str, poper: str, currency_type: str = "10") -> dict[str, list[dict]]:
+    """Material Ledger period records derived from classic valuation rows (one period, one currency type): what an
+    S/4HANA system holds for the same stock. Used to prepare simulated S/4HANA targets and in tests; the mapping
+    documents how CKMLHD / CKMLCR / CKMLPP are read back into the MBEW form."""
+    hd, cr, pp = [], [], []
+    for i, r in enumerate(sorted(mbew, key=lambda x: (str(x["MATNR"]), str(x["BWKEY"]), str(x.get("BWTAR") or ""))), start=1):
+        kalnr = f"{i:012d}"
+        hd.append({"KALNR": kalnr, "MATNR": r["MATNR"], "BWKEY": r["BWKEY"], "BWTAR": r.get("BWTAR") or ""})
+        cr.append({"KALNR": kalnr, "BDATJ": str(year), "POPER": str(poper).zfill(3), "UNTPER": "000", "CURTP": str(currency_type).zfill(2), "SALK3": float(r.get("SALK3") or 0), "SALKV": float(r.get("SALK3") or 0), "PVPRS": float(r.get("VERPR") or 0), "STPRS": float(r.get("STPRS") or 0), "PEINH": 1, "WAERS": r.get("WAERS", "")})
+        pp.append({"KALNR": kalnr, "BDATJ": str(year), "POPER": str(poper).zfill(3), "UNTPER": "000", "LBKUM": float(r.get("LBKUM") or 0)})
+    return {"CKMLHD": hd, "CKMLCR": cr, "CKMLPP": pp}
+
+
 ASSET_DEFAULTS = {"source": "auto", "area": "01", "apc_movement_categories": [], "apc_tables": ["ACDOCA", "FAAT_DOC_IT"]}
 
 
@@ -342,7 +450,7 @@ def journal_aggregates(client: AbapAddonClient, company_codes: list[str], journa
         A["intercompany"] = client.aggregate("BSEG", cc_preds + open_pred + [predicate("VBUND", "NE", "")], ["BUKRS", "VBUND", "KOART", "SHKZG"], ["DMBTR"])
         A["assets"] = client.aggregate("ANLC", cc_preds, ["BUKRS"], ["KANSW"])
     A["documents_by_year"] = client.aggregate("BKPF", [predicate("BUKRS", "EQ", cc) for cc in company_codes], ["BUKRS", "GJAHR"], [])
-    A["inventory"] = client.aggregate("MBEW", [predicate("BWKEY", "EQ", a) for a in valuation_areas], ["BWKEY"], ["SALK3"]) if valuation_areas else []
+    A["inventory"], A["inventory_measure"], A["inventory_comparable"] = inventory_values(client, valuation_areas, inventory_config(system), system, ledger)
     return A
 
 
@@ -626,7 +734,7 @@ class ApiTargetView(ViewStore):
             debit = round(sum(float(a["SUM_DMBTR"]) for a in A["totals"] if a["BUKRS"] == cc and a["SHKZG"] == "S"), 2)
             credit = round(sum(float(a["SUM_DMBTR"]) for a in A["totals"] if a["BUKRS"] == cc and a["SHKZG"] == "H"), 2)
             self._integrity.append(("target_trial_balance", cc, debit, credit, "debits and credits of the target company code computed in the target database"))
-        self.metrics["target_aggregates"] = {"rfc_calls": client.calls, "packages": client.packages, "rows_avoided": sum(A["counts"].values()), "counts": A["counts"], "snapshot": client.snapshot, "journal_table": A["journal_table"], "ledger": A.get("ledger"), **({"assets_measure": A["assets_measure"], "assets_comparable": A.get("assets_comparable", True)} if A.get("assets_measure") else {})}
+        self.metrics["target_aggregates"] = {"rfc_calls": client.calls, "packages": client.packages, "rows_avoided": sum(A["counts"].values()), "counts": A["counts"], "snapshot": client.snapshot, "journal_table": A["journal_table"], "ledger": A.get("ledger"), **({"assets_measure": A["assets_measure"], "assets_comparable": A.get("assets_comparable", True)} if A.get("assets_measure") else {}), **({"inventory_measure": A["inventory_measure"], "inventory_comparable": A.get("inventory_comparable", True)} if A.get("inventory_measure") else {})}
 
     def _rfc_readback(self, by_table: dict[str, int]) -> None:
         """Tables the APIs could not serve, read through the add-on on the target: company-code tables with the
@@ -680,7 +788,22 @@ class ApiTargetView(ViewStore):
         if "MBEW" in self.unreadable and self.valuation_areas:
             area_preds = [predicate("BWKEY", "EQ", a) for a in self.valuation_areas]
             self.metrics.setdefault("errors", {}).pop("MBEW", None)
-            read("MBEW", area_preds, area_preds)
+            got_rows = read("MBEW", area_preds, area_preds)
+            if (self.system.product or "").upper() == "S4HANA":
+                # the stock values of an S/4HANA system come from the Material Ledger: read them through the chain
+                try:
+                    _jt, ledger = journal_table_for(self.system, client)
+                    vals, measure, comparable = inventory_values(client, self.valuation_areas, inventory_config(self.system), self.system, ledger)
+                except RfcError as e:
+                    rb["errors"]["inventory"] = str(e)
+                else:
+                    self.inventory_values = (vals, measure, comparable)
+                    rb["inventory"] = {"measure": measure, "comparable": comparable, "by_area": {v["BWKEY"]: v["SUM_SALK3"] for v in vals}}
+                    if "MBEW" not in measure:
+                        # the MBEW rows read above carry no stock values: compare them on prices only, totals from the chain
+                        self._comparable["MBEW"] = (self._comparable.get("MBEW") or set(TABLES["MBEW"].fields)) - {"LBKUM", "SALK3"}
+                        self.unreadable.discard("MBEW")
+                        self.read_via["MBEW"] = "rfc+material_ledger" if got_rows else "material_ledger"
         for table, keys in sorted(self.loaded_keys.items()):
             if table not in self.unreadable or table not in TABLES or not keys:
                 continue

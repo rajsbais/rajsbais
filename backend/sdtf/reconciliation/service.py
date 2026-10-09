@@ -374,6 +374,8 @@ class TargetBalances:
         self.open_items: dict[str, tuple[int, float]] = {"BSID": (0, 0.0), "BSIK": (0, 0.0)}
         self.assets = 0.0
         self.inventory = 0.0
+        self.inventory_measure = ""  # how the target's stock values were read (S/4HANA chain), empty for MBEW rows
+        self.inventory_comparable = True
         self.intercompany: dict[tuple, float] = defaultdict(float)
         self.currency: dict[tuple, float] = defaultdict(float)
         self.docs_by_year: dict[tuple[str, str], int] = defaultdict(int)
@@ -401,6 +403,7 @@ def target_balances(target: RecordStore, target_ccs: set[str], val_areas: set[st
             b.open_items[table] = (sum(int(a["COUNT"]) for a in rows), round(sum(signed(a) for a in rows), 2))
         b.assets = round(sum(float(a["SUM_KANSW"]) for a in A.get("assets", []) if a["BUKRS"] in target_ccs), 2)
         b.inventory = round(sum(float(a["SUM_SALK3"]) for a in A.get("inventory", []) if str(a["BWKEY"]) in val_areas), 2)
+        b.inventory_measure, b.inventory_comparable = A.get("inventory_measure") or "", bool(A.get("inventory_comparable", True))
         for a in A.get("intercompany", []):
             if a["BUKRS"] in target_ccs and a["KOART"] in ("D", "K") and a.get("VBUND"):
                 b.intercompany[(a["BUKRS"], a["VBUND"])] += signed(a)
@@ -423,7 +426,12 @@ def target_balances(target: RecordStore, target_ccs: set[str], val_areas: set[st
         rows = [r for r in target.rows(table) if r["BUKRS"] in target_ccs and not r.get("AUGBL")]
         b.open_items[table] = (len(rows), round(sum(_amt(r) for r in rows), 2))
     b.assets = round(sum(float(r["KANSW"]) for r in target.rows("ANLC") if r["BUKRS"] in target_ccs), 2)
-    b.inventory = round(sum(float(r["SALK3"]) for r in target.rows("MBEW") if r["BWKEY"] in val_areas), 2)
+    chain = getattr(target, "inventory_values", None)
+    if chain:
+        vals, b.inventory_measure, b.inventory_comparable = chain
+        b.inventory = round(sum(float(v["SUM_SALK3"]) for v in vals if str(v["BWKEY"]) in val_areas), 2)
+    else:
+        b.inventory = round(sum(float(r["SALK3"]) for r in target.rows("MBEW") if r["BWKEY"] in val_areas), 2)
     for l in tgt_bseg:
         if l.get("VBUND") and l["KOART"] in ("D", "K") and not l.get("AUGBL"):
             b.intercompany[(l["BUKRS"], l["VBUND"])] += _amt(l)
@@ -536,10 +544,13 @@ def financial_checks(rid: str, sources: list[dict], target: RecordStore) -> tupl
     t_inv = tb.inventory
     inv_var = round(s_inv - t_inv, 2)
     inv_expl = "" if abs(inv_var) < 0.005 else f"{held} held by materials not transferred (manual disposition / excluded); unexplained {round(inv_var - held, 2)}"
+    inv_measure = tb.inventory_measure
     if "MBEW" in unreadable or (not tgt_val_areas and "T001K" in unreadable):
         results.append(_r(rid, "FINANCIAL", "inventory_valuation", "WARN", "valuation_areas", s_inv, "not readable", "", "material valuation is not readable through the adapters (product valuation service unavailable, or no valuation areas known for the target); verify the inventory values in the target by report", {"unreadable": True}))
+    elif inv_measure and not tb.inventory_comparable:
+        results.append(_r(rid, "FINANCIAL", "inventory_valuation", "WARN", "valuation_areas", s_inv, t_inv, inv_var, f"target value is {inv_measure}; verify the stock values in the target by report (MB5L / Material Ledger), or configure meta.rfc.inventory (period of the Material Ledger totals, inventory accounts)", {"measure": inv_measure, "comparable": False}))
     else:
-        results.append(_r(rid, "FINANCIAL", "inventory_valuation", "PASS" if abs(inv_var) < 0.005 else ("WARN" if abs(inv_var - held) < 0.005 else "FAIL"), "valuation_areas", s_inv, t_inv, inv_var, inv_expl + mode_note))
+        results.append(_r(rid, "FINANCIAL", "inventory_valuation", "PASS" if abs(inv_var) < 0.005 else ("WARN" if abs(inv_var - held) < 0.005 else "FAIL"), "valuation_areas", s_inv, t_inv, inv_var, (inv_expl + mode_note + (f" (target: {inv_measure})" if inv_measure else "")).strip(), {"measure": inv_measure} if inv_measure else None))
     # intercompany balances (open), aggregated on target company codes
     s_ic: dict[tuple, float] = defaultdict(float)
     for b in balances:
