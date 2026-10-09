@@ -143,6 +143,37 @@ class ReasonIn(BaseModel):
     reason: str = ""
 
 
+class EnvTemplateIn(BaseModel):
+    name: str
+    source_id: str
+    purpose: str = "sandbox"
+    company_codes: list[str] = Field(default_factory=list)
+    masters: list[dict] = Field(default_factory=list)
+    transactions: list[dict] = Field(default_factory=list)
+    masking_policy_id: str = "gdpr-standard"
+    masking_rules: list[dict] = Field(default_factory=list)
+    max_rows: int = 1000
+    retention_days: int = 30
+    protect_after_build: bool | None = None
+    auto_masking: bool = True
+
+
+class EstimateIn(BaseModel):
+    host_id: str
+
+
+class BuildIn(BaseModel):
+    template_id: str
+    host_id: str
+    client: str
+    name: str | None = None
+    logical_system: str | None = None
+
+
+class ProtectIn(BaseModel):
+    locked: bool
+
+
 def project_dict(svc: RefreshService, p: Project) -> dict:
     return {"id": p.id, "name": p.name, "status": p.status, "source": {**svc.system(p.source_id).model_dump(mode="json"), "family": svc.system(p.source_id).family},
             "target": {**svc.system(p.target_id).model_dump(mode="json"), "family": svc.system(p.target_id).family}, "created_by": p.created_by,
@@ -586,6 +617,67 @@ def create_app(data_dir: Path | None = None) -> FastAPI:
     @app.post("/api/tdm/sweep")
     def t_sweep(p: Principal = Depends(need("run:execute"))):
         return svc.tdm.sweep(p)
+
+    # ---------------- lean client builder ----------------
+    @app.get("/api/lean/profiles")
+    def l_profiles(_: Principal = Depends(need("view"))):
+        return svc.lean.profiles()
+
+    @app.get("/api/lean/presets")
+    def l_presets(source_id: str, company_code: str = "1000", _: Principal = Depends(need("view"))):
+        from ..leanclient.profiles import PURPOSES, preset
+        return [{**preset(p, company_code), "source_id": source_id} for p in PURPOSES]
+
+    @app.post("/api/lean/templates", status_code=201)
+    def l_template_create(b: EnvTemplateIn, p: Principal = Depends(need("plan:write"))):
+        d = b.model_dump()
+        if d["protect_after_build"] is None:
+            d.pop("protect_after_build")
+        return svc.lean.create_template(p, d).public()
+
+    @app.get("/api/lean/templates")
+    def l_templates(_: Principal = Depends(need("view"))):
+        return [t.public() for t in svc.lean.templates.values()]
+
+    @app.post("/api/lean/templates/{tid}/submit")
+    def l_template_submit(tid: str, p: Principal = Depends(need("plan:submit"))):
+        return svc.lean.submit_template(p, tid).public()
+
+    @app.post("/api/lean/templates/{tid}/approve")
+    def l_template_approve(tid: str, p: Principal = Depends(need("plan:approve"))):
+        return svc.lean.approve_template(p, tid).public()
+
+    @app.post("/api/lean/templates/{tid}/estimate")
+    def l_estimate(tid: str, b: EstimateIn, p: Principal = Depends(need("view"))):
+        return svc.lean.estimate(p, tid, b.host_id)
+
+    @app.post("/api/lean/builds", status_code=201)
+    def l_build(b: BuildIn, p: Principal = Depends(need("client:build"))):
+        return svc.lean.build(p, b.model_dump()).public()
+
+    @app.get("/api/lean/builds")
+    def l_builds(_: Principal = Depends(need("view"))):
+        return [x.public() for x in reversed(list(svc.lean.builds.values()))]
+
+    @app.get("/api/lean/builds/{bid}")
+    def l_build_get(bid: str, _: Principal = Depends(need("view"))):
+        return svc.lean.get_build(bid).public()
+
+    @app.get("/api/lean/clients")
+    def l_clients(_: Principal = Depends(need("view"))):
+        return svc.lean.clients()
+
+    @app.post("/api/lean/clients/{system_id}/protection")
+    def l_protect(system_id: str, b: ProtectIn, p: Principal = Depends(need("client:build"))):
+        return svc.lean.set_protection(p, system_id, b.locked)
+
+    @app.post("/api/lean/builds/{bid}/decommission")
+    def l_decommission(bid: str, p: Principal = Depends(need("plan:approve"))):
+        return svc.lean.decommission(p, bid)
+
+    @app.post("/api/lean/sweep")
+    def l_sweep(p: Principal = Depends(need("run:execute"))):
+        return svc.lean.sweep(p)
 
     if STATIC.exists():
         app.mount("/", StaticFiles(directory=STATIC, html=True), name="ui")

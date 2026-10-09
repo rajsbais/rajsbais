@@ -4760,6 +4760,731 @@
      }
     }
    }
+  },
+  "/api/lean/profiles": {
+   "get": {
+    "summary": "L Profiles",
+    "operationId": "l_profiles_api_lean_profiles_get",
+    "parameters": [
+     {
+      "name": "x-demo-user",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Demo-User"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      }
+     },
+     "422": {
+      "description": "Validation Error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/api/lean/presets": {
+   "get": {
+    "summary": "L Presets",
+    "operationId": "l_presets_api_lean_presets_get",
+    "parameters": [
+     {
+      "name": "source_id",
+      "in": "query",
+      "required": true,
+      "schema": {
+       "type": "string",
+       "title": "Source Id"
+      }
+     },
+     {
+      "name": "company_code",
+      "in": "query",
+      "required": false,
+      "schema": {
+       "type": "string",
+       "default": "1000",
+       "title": "Company Code"
+      }
+     },
+     {
+      "name": "x-demo-user",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Demo-User"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      }
+     },
+     "422": {
+      "description": "Validation Error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/api/lean/templates": {
+   "post": {
+    "summary": "L Template Create",
+    "operationId": "l_template_create_api_lean_templates_post",
+    "parameters": [
+     {
+      "name": "x-demo-user",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Demo-User"
+      }
+     }
+    ],
+    "requestBody": {
+     "required": true,
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/EnvTemplateIn"
+       }
+      }
+     }
+    },
+    "responses": {
+     "201": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      }
+     },
+     "422": {
+      "description": "Validation Error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      }
+     }
+    }
+   },
+   "get": {
+    "summary": "L Templates",
+    "operationId": "l_templates_api_lean_templates_get",
+    "parameters": [
+     {
+      "name": "x-demo-user",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Demo-User"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      }
+     },
+     "422": {
+      "description": "Validation Error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/api/lean/templates/{tid}/submit": {
+   "post": {
+    "summary": "L Template Submit",
+    "operationId": "l_template_submit_api_lean_templates__tid__submit_post",
+    "parameters": [
+     {
+      "name": "tid",
+      "in": "path",
+      "required": true,
+      "schema": {
+       "type": "string",
+       "title": "Tid"
+      }
+     },
+     {
+      "name": "x-demo-user",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Demo-User"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      }
+     },
+     "422": {
+      "description": "Validation Error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/api/lean/templates/{tid}/approve": {
+   "post": {
+    "summary": "L Template Approve",
+    "operationId": "l_template_approve_api_lean_templates__tid__approve_post",
+    "parameters": [
+     {
+      "name": "tid",
+      "in": "path",
+      "required": true,
+      "schema": {
+       "type": "string",
+       "title": "Tid"
+      }
+     },
+     {
+      "name": "x-demo-user",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Demo-User"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      }
+     },
+     "422": {
+      "description": "Validation Error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/api/lean/templates/{tid}/estimate": {
+   "post": {
+    "summary": "L Estimate",
+    "operationId": "l_estimate_api_lean_templates__tid__estimate_post",
+    "parameters": [
+     {
+      "name": "tid",
+      "in": "path",
+      "required": true,
+      "schema": {
+       "type": "string",
+       "title": "Tid"
+      }
+     },
+     {
+      "name": "x-demo-user",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Demo-User"
+      }
+     }
+    ],
+    "requestBody": {
+     "required": true,
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/EstimateIn"
+       }
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      }
+     },
+     "422": {
+      "description": "Validation Error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/api/lean/builds": {
+   "post": {
+    "summary": "L Build",
+    "operationId": "l_build_api_lean_builds_post",
+    "parameters": [
+     {
+      "name": "x-demo-user",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Demo-User"
+      }
+     }
+    ],
+    "requestBody": {
+     "required": true,
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/BuildIn"
+       }
+      }
+     }
+    },
+    "responses": {
+     "201": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      }
+     },
+     "422": {
+      "description": "Validation Error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      }
+     }
+    }
+   },
+   "get": {
+    "summary": "L Builds",
+    "operationId": "l_builds_api_lean_builds_get",
+    "parameters": [
+     {
+      "name": "x-demo-user",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Demo-User"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      }
+     },
+     "422": {
+      "description": "Validation Error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/api/lean/builds/{bid}": {
+   "get": {
+    "summary": "L Build Get",
+    "operationId": "l_build_get_api_lean_builds__bid__get",
+    "parameters": [
+     {
+      "name": "bid",
+      "in": "path",
+      "required": true,
+      "schema": {
+       "type": "string",
+       "title": "Bid"
+      }
+     },
+     {
+      "name": "x-demo-user",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Demo-User"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      }
+     },
+     "422": {
+      "description": "Validation Error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/api/lean/clients": {
+   "get": {
+    "summary": "L Clients",
+    "operationId": "l_clients_api_lean_clients_get",
+    "parameters": [
+     {
+      "name": "x-demo-user",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Demo-User"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      }
+     },
+     "422": {
+      "description": "Validation Error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/api/lean/clients/{system_id}/protection": {
+   "post": {
+    "summary": "L Protect",
+    "operationId": "l_protect_api_lean_clients__system_id__protection_post",
+    "parameters": [
+     {
+      "name": "system_id",
+      "in": "path",
+      "required": true,
+      "schema": {
+       "type": "string",
+       "title": "System Id"
+      }
+     },
+     {
+      "name": "x-demo-user",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Demo-User"
+      }
+     }
+    ],
+    "requestBody": {
+     "required": true,
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/ProtectIn"
+       }
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      }
+     },
+     "422": {
+      "description": "Validation Error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/api/lean/builds/{bid}/decommission": {
+   "post": {
+    "summary": "L Decommission",
+    "operationId": "l_decommission_api_lean_builds__bid__decommission_post",
+    "parameters": [
+     {
+      "name": "bid",
+      "in": "path",
+      "required": true,
+      "schema": {
+       "type": "string",
+       "title": "Bid"
+      }
+     },
+     {
+      "name": "x-demo-user",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Demo-User"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      }
+     },
+     "422": {
+      "description": "Validation Error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/api/lean/sweep": {
+   "post": {
+    "summary": "L Sweep",
+    "operationId": "l_sweep_api_lean_sweep_post",
+    "parameters": [
+     {
+      "name": "x-demo-user",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Demo-User"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      }
+     },
+     "422": {
+      "description": "Validation Error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      }
+     }
+    }
+   }
   }
  },
  "components": {
@@ -4776,6 +5501,51 @@
      "note"
     ],
     "title": "AckIn"
+   },
+   "BuildIn": {
+    "properties": {
+     "template_id": {
+      "type": "string",
+      "title": "Template Id"
+     },
+     "host_id": {
+      "type": "string",
+      "title": "Host Id"
+     },
+     "client": {
+      "type": "string",
+      "title": "Client"
+     },
+     "name": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Name"
+     },
+     "logical_system": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Logical System"
+     }
+    },
+    "type": "object",
+    "required": [
+     "template_id",
+     "host_id",
+     "client"
+    ],
+    "title": "BuildIn"
    },
    "CommentIn": {
     "properties": {
@@ -4922,6 +5692,104 @@
     "type": "object",
     "title": "DeltaPatch"
    },
+   "EnvTemplateIn": {
+    "properties": {
+     "name": {
+      "type": "string",
+      "title": "Name"
+     },
+     "source_id": {
+      "type": "string",
+      "title": "Source Id"
+     },
+     "purpose": {
+      "type": "string",
+      "title": "Purpose",
+      "default": "sandbox"
+     },
+     "company_codes": {
+      "items": {
+       "type": "string"
+      },
+      "type": "array",
+      "title": "Company Codes"
+     },
+     "masters": {
+      "items": {
+       "additionalProperties": true,
+       "type": "object"
+      },
+      "type": "array",
+      "title": "Masters"
+     },
+     "transactions": {
+      "items": {
+       "additionalProperties": true,
+       "type": "object"
+      },
+      "type": "array",
+      "title": "Transactions"
+     },
+     "masking_policy_id": {
+      "type": "string",
+      "title": "Masking Policy Id",
+      "default": "gdpr-standard"
+     },
+     "masking_rules": {
+      "items": {
+       "additionalProperties": true,
+       "type": "object"
+      },
+      "type": "array",
+      "title": "Masking Rules"
+     },
+     "max_rows": {
+      "type": "integer",
+      "title": "Max Rows",
+      "default": 1000
+     },
+     "retention_days": {
+      "type": "integer",
+      "title": "Retention Days",
+      "default": 30
+     },
+     "protect_after_build": {
+      "anyOf": [
+       {
+        "type": "boolean"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Protect After Build"
+     },
+     "auto_masking": {
+      "type": "boolean",
+      "title": "Auto Masking",
+      "default": true
+     }
+    },
+    "type": "object",
+    "required": [
+     "name",
+     "source_id"
+    ],
+    "title": "EnvTemplateIn"
+   },
+   "EstimateIn": {
+    "properties": {
+     "host_id": {
+      "type": "string",
+      "title": "Host Id"
+     }
+    },
+    "type": "object",
+    "required": [
+     "host_id"
+    ],
+    "title": "EstimateIn"
+   },
    "ExceptionIn": {
     "properties": {
      "instance": {
@@ -5045,6 +5913,19 @@
      "target_id"
     ],
     "title": "ProjectIn"
+   },
+   "ProtectIn": {
+    "properties": {
+     "locked": {
+      "type": "boolean",
+      "title": "Locked"
+     }
+    },
+    "type": "object",
+    "required": [
+     "locked"
+    ],
+    "title": "ProtectIn"
    },
    "PurgeIn": {
     "properties": {

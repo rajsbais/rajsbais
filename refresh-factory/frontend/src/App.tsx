@@ -5,6 +5,7 @@ import { ErrorNote, SimBanner } from "./components";
 import ControlTower from "./views/ControlTower";
 import { FullRefresh, PostCopy, Readiness } from "./views/Basis";
 import TestCatalog from "./views/TestCatalog";
+import LeanClient from "./views/LeanClient";
 import Landscape from "./views/Landscape";
 import Designer from "./views/Designer";
 import Delta from "./views/Delta";
@@ -25,7 +26,7 @@ const GROUPS: { group: string; views: { id: string; label: string; el: () => JSX
     { id: "dependencies", label: "Dependencies", el: Dependencies },
     { id: "conflicts", label: "Conflicts", el: Conflicts }, { id: "masking", label: "Masking", el: Masking },
     { id: "execution", label: "Execution", el: Execution }, { id: "reconciliation", label: "Reconciliation", el: Reconciliation }] },
-  { group: "Basis", views: [{ id: "fullrefresh", label: "Full refresh", el: FullRefresh }, { id: "postcopy", label: "Post-copy", el: PostCopy }] },
+  { group: "Basis", views: [{ id: "lean", label: "Lean client", el: LeanClient }, { id: "fullrefresh", label: "Full refresh", el: FullRefresh }, { id: "postcopy", label: "Post-copy", el: PostCopy }] },
   { group: "Data", views: [
     { id: "catalog", label: "Test catalog", el: TestCatalog }, { id: "compliance", label: "Audit", el: Compliance, perm: "audit:read" },
     { id: "copilot", label: "Copilot", el: Copilot }] },

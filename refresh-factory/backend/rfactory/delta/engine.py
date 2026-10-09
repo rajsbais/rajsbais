@@ -155,9 +155,17 @@ def merge_plans(plans: list[Plan], planner: Planner, cfg_hash: str) -> Plan:
     inst, issues, cfg = {}, [], {}
     for p in plans:
         for iid, i in p.instances.items():
-            inst.setdefault(iid, i)
+            if iid not in inst:
+                inst[iid] = copy.deepcopy(i)
+                continue
+            cur = inst[iid]  # same business object reached from several roots: union of rows, requirements and customizing
+            for t, rows in i.rows.items():
+                have = {tuple(r[k] for k in TABLES[t].keys) for r in cur.rows.get(t, [])}
+                cur.rows.setdefault(t, []).extend(r for r in rows if tuple(r[k] for k in TABLES[t].keys) not in have)
+            cur.requires += [x for x in i.requires if x not in cur.requires]
+            cur.configs += [x for x in i.configs if x not in cur.configs]
             if i.origin == "ROOT":
-                inst[iid].origin = "ROOT"
+                cur.origin = "ROOT"
         issues += p.issues
         for k, v in p.config_refs.items():
             cfg.setdefault(k, set()).update(v)

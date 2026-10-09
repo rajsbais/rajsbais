@@ -9,8 +9,8 @@ from dataclasses import dataclass
 
 PERMISSIONS: dict[str, set[str]] = {
     "admin": {"system:write", "project:write", "plan:write", "masking:write", "audit:read", "view"},
-    "basis": {"system:write", "project:write", "plan:write", "run:execute", "tdm:request", "tdm:curate", "view"},
-    "data_steward": {"project:write", "plan:write", "masking:write", "plan:submit", "run:execute", "tdm:request", "tdm:curate", "view"},
+    "basis": {"system:write", "project:write", "plan:write", "run:execute", "tdm:request", "tdm:curate", "client:build", "view"},
+    "data_steward": {"project:write", "plan:write", "masking:write", "plan:submit", "run:execute", "tdm:request", "tdm:curate", "client:build", "view"},
     "tester": {"tdm:request", "view"},  # self-service: request, reserve, release test data
     "approver": {"plan:approve", "exception:approve", "view", "audit:read"},
     "privacy_officer": {"masking:write", "masking:reidentify", "view", "audit:read"},

@@ -182,3 +182,44 @@ def test_test_data_catalog_over_http(client):
     assert client.post(f"/api/tdm/scan?target_id={tid}", headers=H("tina.tester")).status_code == 403
     assert client.post(f"/api/tdm/scan?target_id={tid}", headers=H("bob.steward")).status_code == 200
     assert client.get("/api/audit/verify", headers=H("erin.auditor")).json()["valid"]
+
+
+def test_lean_client_builder_over_http(client):
+    b = client.post("/api/demo/bootstrap", headers=H("alice.basis")).json()
+    sid, tid = b["source"]["id"], b["target"]["id"]
+    prof = client.get("/api/lean/profiles", headers=H("tina.tester")).json()
+    assert len(prof["workflows"]) == 3 and "066" in prof["reserved_clients"]
+    presets = client.get(f"/api/lean/presets?source_id={sid}", headers=H("alice.basis")).json()
+    assert {p["purpose"] for p in presets} == {"training", "sandbox", "functional", "regression"}
+    spec = next(p for p in presets if p["purpose"] == "functional")
+    assert client.post("/api/lean/templates", json=spec, headers=H("tina.tester")).status_code == 403
+    t = client.post("/api/lean/templates", json={k: spec[k] for k in ("name", "source_id", "purpose", "masters", "transactions", "masking_policy_id",
+                                                                       "retention_days", "max_rows")} | {"company_codes": ["1000"]},
+                    headers=H("alice.basis")).json()
+    tpl = t["id"]
+    body = {"template_id": tpl, "host_id": tid, "client": "320"}
+    assert client.post("/api/lean/builds", json=body, headers=H("alice.basis")).status_code == 409           # not approved
+    client.post(f"/api/lean/templates/{tpl}/submit", headers=H("alice.basis"))
+    for who in ("alice.basis", "refresh.copilot", "tina.tester"):
+        assert client.post(f"/api/lean/templates/{tpl}/approve", headers=H(who)).status_code == 403
+    assert client.post(f"/api/lean/templates/{tpl}/approve", headers=H("carol.approver")).json()["status"] == "APPROVED"
+    est = client.post(f"/api/lean/templates/{tpl}/estimate", json={"host_id": tid}, headers=H("tina.tester")).json()
+    assert est["savings"]["rows_pct"] > 50 and est["duration"]["lean"]["model_assumption"]
+    assert client.post("/api/lean/builds", json=body, headers=H("tina.tester")).status_code == 403
+    assert client.post("/api/lean/builds", json={**body, "client": "066"}, headers=H("alice.basis")).status_code == 409
+    assert client.post("/api/lean/builds", json={**body, "host_id": sid}, headers=H("alice.basis")).status_code == 403   # production host
+    r = client.post("/api/lean/builds", json=body, headers=H("alice.basis"))
+    assert r.status_code == 201 and r.json()["status"] == "READY", r.json()
+    build = r.json()
+    assert all(c["status"] == "pass" for c in build["checks"])
+    sysl = client.get("/api/systems", headers=H("bob.steward")).json()
+    new = next(s for s in sysl if s["id"] == build["system_id"])
+    assert new["client"] == "320" and new["role"] == "QAS" and new["writable_target"]
+    assert [c["id"] for c in client.get("/api/lean/clients", headers=H("tina.tester")).json()] == [build["id"]]
+    assert client.post(f"/api/lean/clients/{build['system_id']}/protection", json={"locked": True}, headers=H("tina.tester")).status_code == 403
+    assert client.post(f"/api/lean/clients/{build['system_id']}/protection", json={"locked": True}, headers=H("bob.steward")).json()["locked"]
+    assert client.post(f"/api/lean/builds/{build['id']}/decommission", headers=H("alice.basis")).status_code == 403
+    assert client.post(f"/api/lean/builds/{build['id']}/decommission", headers=H("refresh.copilot")).status_code == 403
+    assert client.post(f"/api/lean/builds/{build['id']}/decommission", headers=H("carol.approver")).status_code == 200
+    assert client.post("/api/lean/sweep", headers=H("svc.scheduler")).status_code == 200
+    assert client.get("/api/audit/verify", headers=H("erin.auditor")).json()["valid"]

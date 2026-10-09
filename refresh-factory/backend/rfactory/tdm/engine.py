@@ -40,7 +40,8 @@ from ..selective.conflicts import Action, ConflictReport, analyze
 from ..selective.executor import row_hash
 from ..selective.manifest import Manifest, Scope
 from ..service import Conflict, NotFound
-from . import generator
+from .. import provision
+from ..provision import ProvisionError
 from .templates import PLANNED, TEMPLATES, describe, find_candidates
 
 SVC = "svc.tdm"
@@ -56,12 +57,6 @@ def _now() -> datetime:
 
 def _iso(d: datetime | None) -> str | None:
     return d.isoformat() if d else None
-
-
-class ProvisionError(RuntimeError):
-    def __init__(self, reasons: list[str]):
-        super().__init__("; ".join(reasons))
-        self.reasons = reasons
 
 
 @dataclass
@@ -380,68 +375,20 @@ class TdmService:
     # ------------------------------------------------------------ provisioning
     def _provision(self, req: dict, pol: Policy, tpl, n: int, kind: str, now: datetime) -> list[str]:
         svc = self.svc
-        tgt = svc.adapters[pol.target_id]
-        family = svc.system(pol.target_id).family
-        reg = svc.registries[family]
+        reg = svc.registries[svc.system(pol.target_id).family]
         params = req["spec"]["params"]
         manifest = Manifest(name=req["id"], source_system_id=pol.source_id, target_system_id=pol.target_id,
                             scope=Scope(object_type=tpl.root_type), conflict_policy={"DUPLICATE_DIFFERENT": "SKIP", "DUPLICATE_IDENTICAL": "SKIP"})
-        per_root: dict[str, set[str]] = {}
         if kind == "subset":
-            src = svc.source_view(pol.source_id)
-            hdr = reg.types[tpl.root_type].header
             taken = {d.root for d in self.datasets.values() if d.target_id == pol.target_id and d.state in LIVE}
-            cands = [c for c in find_candidates(tpl, src, params)
-                     if f"{tpl.root_type}:{c['key']}" not in taken and tgt.get(hdr, tuple(c["key"].split("/"))) is None]
-            if not cands:
-                raise ProvisionError(["no matching, not-yet-present business objects exist in the source"])
-            planner, plans, attrs = Planner(src, reg), [], {}
-            for c in cands:
-                if len(plans) >= n:
-                    break
-                cc = params.get("company_code", "1000")
-                org = {"plants": [p["WERKS"] for p in src.select("T001W") if p["BUKRS"] == cc]} if tpl.root_type == "MATERIAL" \
-                    else {"company_codes": [cc]}  # keep organisation-level rows to the requested company code
-                m = manifest.model_copy(update={"scope": Scope(object_type=tpl.root_type, explicit_keys=[c["key"]], **org),
-                                                "include_downstream": list(tpl.include_downstream)})
-                pl = planner.build(m)
-                if pl.blocking:
-                    continue
-                missing = sorted(f"{t}:{code}" for t, codes in pl.config_refs.items() for code in codes
-                                 if tgt.get(CONFIG_TYPES[t][0], (code,)) is None)
-                if missing:  # selective copy never copies customizing: do not pick roots the target cannot host
-                    req["notes"].append(f"candidate {c['key']} skipped: target lacks customizing {', '.join(missing)}")
-                    continue
-                plans.append(pl); per_root[f"{tpl.root_type}:{c['key']}"] = set(pl.instances); attrs[f"{tpl.root_type}:{c['key']}"] = c["attrs"]
-            if not plans:
-                raise ProvisionError(["no candidate could be provisioned (blocking dependency problems in the source, or customizing missing in the target)"])
-            plan = merge_plans(plans, planner, "tdm-" + req["id"])
-            recon_source = src
+            plan, per_root, attrs = provision.subset_plan(svc, tpl=tpl, n=n, params=params, source_id=pol.source_id, target_id=pol.target_id,
+                                                          taken=taken, notes=req["notes"], label="tdm-" + req["id"])
+            recon_source = svc.source_view(pol.source_id)
         else:
-            try:
-                plan, roots = generator.generate(tpl.synthetic_stage, tgt, family, n, params, seed=int(uuid.uuid4().int % 10**6))
-            except generator.GenError as e:
-                raise ProvisionError([str(e)])
-            # closure of a synthetic root: itself, what it requires, and its downstream documents (which require it)
-            for r in roots:
-                seen, grew = {r}, True
-                while grew:
-                    grew = False
-                    for i, x in plan.instances.items():
-                        if i not in seen and any(q in seen for q in x.requires):
-                            seen.add(i); grew = True
-                    for i in list(seen):
-                        for q in plan.instances[i].requires:
-                            if q in plan.instances and q not in seen:
-                                seen.add(q); grew = True
-                per_root[r] = seen
-            attrs = {r: self._attrs(plan.instances[r], params) for r in roots}
-            gen_data = {t: [] for t in TABLES}
-            for i in plan.instances.values():
-                for t, rows in i.rows.items():
-                    gen_data[t] += rows
-            recon_source = SimulatedSap(SapSystem(id="gen", sid="GEN", client="000", role="SBX"), gen_data)
-        run, report = self._execute(req, pol, plan, manifest, reg, recon_source)
+            plan, per_root, attrs, recon_source = provision.synthetic_plan(svc, tpl=tpl, n=n, params=params, target_id=pol.target_id)
+        run, report = provision.execute_plan(svc, label=req["id"], plan=plan, manifest=manifest, reg=reg, target_id=pol.target_id,
+                                             mask_policy=self._mask_policy(pol), mask_key=pol.mask_key, recon_source=recon_source, actor=SVC)
+        req["run_id"] = run.id
         ids = []
         for root, closure in per_root.items():
             if report.decisions.get(root) not in (Action.LOAD, Action.UPDATE, Action.REPLACE) or root not in run.loaded:
@@ -449,44 +396,6 @@ class TdmService:
                 continue
             ids.append(self._register(req, pol, tpl, kind, root, sorted(closure, key=plan.order.index), plan, run, attrs.get(root, {}), now))
         return ids
-
-    @staticmethod
-    def _attrs(inst: PlanInstance, params: dict) -> dict:
-        a = {"company_code": params.get("company_code", "1000")}
-        if inst.type == "SALES_ORDER":
-            h = inst.rows["VBAK"][0]
-            a.update(customer=h["KUNNR"], net_value=h["NETWR"], currency=h["WAERK"], items=len(inst.rows["VBAP"]))
-        elif inst.type == "PURCHASE_ORDER":
-            a.update(vendor=inst.rows["EKKO"][0]["LIFNR"], items=len(inst.rows["EKPO"]))
-        return a
-
-    def _execute(self, req, pol, plan, manifest, reg, recon_source):
-        svc, tgt = self.svc, self.svc.adapters[pol.target_id]
-        engine = MaskingEngine(self._mask_policy(pol), persistent_key=pol.mask_key)
-        rows = {t: [r for i in plan.instances.values() for r in i.rows.get(t, [])] for t in {t for i in plan.instances.values() for t in i.rows}}
-        discovered = discover_sensitive(rows)
-        cov = engine.coverage(discovered)
-        if not cov["complete"]:
-            raise ProvisionError(["sensitive fields without a masking rule in the approved policy: "
-                                  + ", ".join(f"{m['table']}.{m['field']}" for m in cov["missing"])])
-        sens = engine.policy.fields() | {(d["table"], d["field"]) for d in discovered}
-        report = analyze(plan, tgt, manifest, reg, sens)
-        if report.blocking:
-            raise ProvisionError([f.message for f in report.blocking][:5])
-        svc.executor.reg = reg
-        run = svc.executor.new_run(req["id"], plan, report)
-        svc.runs[run.id] = run
-        svc.executor.execute(run, plan, report, engine, tgt, SVC)
-        if run.status != "COMPLETED":
-            svc.executor.rollback(run, tgt, SVC)
-            raise ProvisionError([f"load failed and was rolled back: {run.error}"])
-        run.reconciliation = reconcile(run, plan, recon_source, tgt, engine, reg, discovered, report.row_exclusions)
-        run.release = run.reconciliation["release"]
-        if run.release != "RELEASED":
-            svc.executor.rollback(run, tgt, SVC)
-            raise ProvisionError([f"release gate failed ({', '.join(run.reconciliation['failed'])}); target rolled back"])
-        req["run_id"] = run.id
-        return run, report
 
     def _register(self, req, pol, tpl, kind, root, closure, plan, run, attrs, now) -> str:
         owned = [i for i in closure if i in run.loaded]

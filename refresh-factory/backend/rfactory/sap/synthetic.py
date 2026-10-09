@@ -133,6 +133,7 @@ def build_source_dataset(seed: int = 42, family: str = "ECC") -> dict[str, list[
             werks = rng.choice(plants[cc])
             if special and p == 0:
                 werks = "2000"  # CC1000 order shipping from CC2000 plant: cross-company reference
+                mat = _mat(100003)  # a material that really is maintained in plant 2000 (kept after the rng calls: data stays reproducible)
             qty = rng.randint(1, 20)
             items.append({"VBELN": vb, "POSNR": f"{(p + 1) * 10:06d}", "MATNR": mat, "WERKS": werks,
                           "KWMENG": qty, "NETWR": round(qty * rng.uniform(10, 90), 2)})

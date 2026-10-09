@@ -80,6 +80,8 @@ class RefreshService:
         self.delta = DeltaService(self)
         from .tdm.engine import TdmService
         self.tdm = TdmService(self)
+        from .leanclient.engine import LeanClientService
+        self.lean = LeanClientService(self)
 
     # ---------------- landscape ----------------
     def register_system(self, actor: Principal, system: SapSystem, adapter: SimulatedSap | None = None) -> SapSystem:
