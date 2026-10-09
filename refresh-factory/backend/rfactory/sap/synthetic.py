@@ -183,6 +183,7 @@ def build_source_dataset(seed: int = 42, family: str = "ECC") -> dict[str, list[
                               "NETPR": round(rng.uniform(5, 50), 2)})
 
     _add_manufacturing(d, mats, plants)
+    _add_qm(d)
     _add_flight(d)
     _add_hr(d)
 
@@ -196,6 +197,7 @@ def build_source_dataset(seed: int = 42, family: str = "ECC") -> dict[str, list[
         {"OBJECT": "MM_PO", "NRRANGENR": "01", "FROMNUMBER": 4500000000, "TONUMBER": 4599999999, "NRLEVEL": mx("EKKO", "EBELN")},
         {"OBJECT": "PP_ORDER", "NRRANGENR": "01", "FROMNUMBER": 1000000, "TONUMBER": 1999999, "NRLEVEL": mx("AUFK", "AUFNR")},
         {"OBJECT": "PP_ROUT", "NRRANGENR": "01", "FROMNUMBER": 50000000, "TONUMBER": 59999999, "NRLEVEL": mx("PLKO", "PLNNR")},
+        {"OBJECT": "QM_LOT", "NRRANGENR": "01", "FROMNUMBER": 100000000, "TONUMBER": 199999999, "NRLEVEL": mx("QALS", "PRUEFLOS")},
         {"OBJECT": "MM_MBLNR", "NRRANGENR": "01", "FROMNUMBER": 4900000000, "TONUMBER": 4999999999, "NRLEVEL": mx("MKPF", "MBLNR")},
     ]
     if family == "S4":
@@ -278,6 +280,32 @@ def _add_manufacturing(d: dict[str, list[Row]], mats: dict[str, list[str]], plan
         d["MKPF"].append({"MBLNR": mb, "MJAHR": str(budat.year), "BLDAT": budat.isoformat(), "BUDAT": budat.isoformat(), "USNAM": "BATCHUSR"})
         d["MSEG"].append({"MBLNR": mb, "MJAHR": str(budat.year), "ZEILE": "0001", "BWART": "561", "MATNR": roh["1000"][n % 2], "WERKS": "1000", "BUKRS": "1000",
                           "MENGE": rng.randint(50, 200), "MEINS": "EA", "DMBTR": round(rng.uniform(100, 900), 2), "AUFNR": ""})
+
+
+def _add_qm(d: dict[str, list[Row]]) -> None:
+    """Inspection lots for the completed production orders. Own random stream. Results are generated first, the usage decision follows from
+    them (accept when every result is inside its tolerance), so synthetic data is internally coherent; real data need not be (decisions are human)."""
+    rng = random.Random(7171)
+    afpo = {a["AUFNR"]: a for a in d["AFPO"]}
+    lot = 100000000
+    for o in d["AUFK"]:
+        a = afpo.get(o["AUFNR"])
+        if not a or a["WEMNG"] <= 0:
+            continue
+        lot += 1
+        pid = f"{lot:012d}"
+        erd = date.fromisoformat(o["ERDAT"]) + timedelta(days=rng.randint(10, 22))
+        d["QALS"].append({"PRUEFLOS": pid, "ART": "04", "MATNR": a["MATNR"], "WERKS": o["WERKS"], "AUFNR": o["AUFNR"], "LOSMENGE": a["WEMNG"], "MEINS": "EA", "ENSTEHDAT": min(erd, REF_DATE).isoformat()})
+        ok = True
+        for k in range(1, rng.randint(2, 3) + 1):
+            soll = rng.choice([10.0, 25.0, 100.0])
+            tol = round(soll * 0.05, 2)
+            val = round(soll + rng.uniform(-1.4, 1.4) * tol, 2)
+            ok = ok and abs(val - soll) <= tol
+            mk = f"{k * 10:04d}"
+            d["QAMV"].append({"PRUEFLOS": pid, "MERKNR": mk, "KURZTEXT": rng.choice(["Diameter", "Weight", "Length", "Hardness"]), "SOLLWERT": soll, "TOLUNL": soll - tol, "TOLOBL": soll + tol})
+            d["QASR"].append({"PRUEFLOS": pid, "MERKNR": mk, "PROBENR": "00000001", "MESSWERT": val, "PRUEFER": f"QA{rng.randint(1, 6):04d}", "PRUEFDATUV": min(erd, REF_DATE).isoformat()})
+        d["QAVE"].append({"PRUEFLOS": pid, "VCODE": "A" if ok else "R", "VDATUM": min(erd + timedelta(days=1), REF_DATE).isoformat(), "VAENAME": f"QA{rng.randint(1, 6):04d}"})
 
 
 def _add_flight(d: dict[str, list[Row]]) -> None:
@@ -430,6 +458,7 @@ def build_target_dataset(source: dict[str, list[Row]], seed: int = 7) -> tuple[d
         {"OBJECT": "MM_PO", "NRRANGENR": "01", "FROMNUMBER": 4500000000, "TONUMBER": 4599999999, "NRLEVEL": 4500000000},
         {"OBJECT": "PP_ORDER", "NRRANGENR": "01", "FROMNUMBER": 1000000, "TONUMBER": 1999999, "NRLEVEL": max((int(n) for n in pp_clash), default=1000000)},
         {"OBJECT": "PP_ROUT", "NRRANGENR": "01", "FROMNUMBER": 50000000, "TONUMBER": 59999999, "NRLEVEL": 50000000},
+        {"OBJECT": "QM_LOT", "NRRANGENR": "01", "FROMNUMBER": 100000000, "TONUMBER": 199999999, "NRLEVEL": 100000000},
         {"OBJECT": "MM_MBLNR", "NRRANGENR": "01", "FROMNUMBER": 4900000000, "TONUMBER": 4999999999, "NRLEVEL": 4900000000},
     ]
     return d, owners

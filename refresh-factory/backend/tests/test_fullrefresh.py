@@ -57,8 +57,11 @@ def test_end_to_end_refresh_masks_everything_and_leaves_source_untouched(svc, fa
     for st in masked["stats"]:
         orig = {r[st["field"]] for r in src.data[st["table"]] if isinstance(r.get(st["field"]), str) and r[st["field"]]}
         now = {r[st["field"]] for r in tgt.data[st["table"]] if isinstance(r.get(st["field"]), str) and r[st["field"]]}
-        if st["field"] == "PASSBIRTH":  # a date has a small value space: another person's original date may legitimately appear, one's own must not
-            assert all(a["PASSBIRTH"] != b["PASSBIRTH"] for a, b in zip(src.data["SBOOK"], tgt.data["SBOOK"])), st
+        from rfactory.masking.engine import CATALOG
+        if CATALOG.get((st["table"], st["field"]), ("", ""))[0] == "birthdate":  # a date has a small value space: another person's original date may legitimately appear, one's own must not
+            keys = TABLES[st["table"]].keys
+            before = {tuple(r[k] for k in keys): r[st["field"]] for r in src.data[st["table"]]}
+            assert all(before[tuple(r[k] for k in keys)] != r[st["field"]] for r in tgt.data[st["table"]]), st
             continue
         assert not (orig & now), st
     assert not p.unmasked_target and svc.full.unmasked_targets() == []

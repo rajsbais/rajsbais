@@ -75,4 +75,9 @@ CAPABILITIES = [
      "The headers, body limit and production switch are tested; the Dockerfile and compose file have NEVER been built or run (no container runtime was available); the body limit checks the declared Content-Length only; style-src needs 'unsafe-inline' because the UI uses style attributes; TLS, reverse proxy, secrets management, network policy, backups of the data volume and its keys, rate limiting and horizontal scaling (state is one SQLite file with a single writer) are the operator's; the RFC SDK and pyrfc are not in the image",
      "tests/test_hardening.py, docs/06-deployment.md",
      "Build and run the container, add PostgreSQL state for multi-instance operation, a reverse-proxy and TLS reference setup, SBOM and image scanning in CI"),
+    ("M25 Quality management", "Inspection lots (QALS) with their characteristics (QAMV), recorded results (QASR) and usage decision (QAVE) as the INSPECTION_LOT object: refreshed by plant and material, linked to the material and, when present, the production order, and pulled in downstream of production orders; inspector and decision-maker user ids are pseudonymised (USER_ID strategy); the lot number range (QM_LOT) is aligned; reconciliation BUS-QM-REFS checks references and child row counts",
+     "implemented-simulated", "-",
+     "Synthetic data only, never run against a real system; no inspection plans or master inspection characteristics, sample management, certificates, defects or quality notifications; usage decisions are copied as the humans made them (no check that a decision agrees with the results); the table and field lists are the author's reading of QM and have not been checked against a real DDIC",
+     "tests/test_qm.py, frontend/e2e/qm.spec.ts",
+     "Inspection plans and master characteristics, quality notifications, certificates, validation of the field model on NPL/A4H"),
 ]

@@ -100,6 +100,7 @@ STRATEGIES = {
     "TAX_ID": lambda v, p: _fp(v, p, keep_prefix=2 if v[:2].isalpha() else 0),
     "REDACT": lambda v, p: "X" * min(max(len(v), 4), 12),
     "BIRTHDATE": lambda v, p: _shift_date(v, p),
+    "USER_ID": lambda v, p: "U" + "".join(str(p.below(10)) for _ in range(max(len(v) - 1, 4))),
     "FIRST_NAME": lambda v, p: _FIRST[p.below(10)],
     "LAST_NAME": lambda v, p: _LAST[p.below(10)],
     "AMOUNT": lambda v, p: _perturb(v, p),
@@ -130,6 +131,8 @@ CATALOG: dict[tuple[str, str], tuple[str, str]] = {
     ("SCUSTOM", "NAME"): ("name", "NAME"), ("SCUSTOM", "STREET"): ("street", "STREET"), ("SCUSTOM", "POSTBOX"): ("identifier", "REDACT"),
     ("SCUSTOM", "TELEPHONE"): ("phone", "PHONE"), ("SCUSTOM", "EMAIL"): ("email", "EMAIL"), ("SCUSTOM", "WEBUSER"): ("identifier", "REDACT"),
     ("SBOOK", "PASSNAME"): ("name", "NAME"), ("SBOOK", "PASSBIRTH"): ("birthdate", "BIRTHDATE"),
+    # QM: the people who inspected and decided
+    ("QASR", "PRUEFER"): ("user", "USER_ID"), ("QAVE", "VAENAME"): ("user", "USER_ID"),
     # HR infotypes: special-category data. Pay is perturbed, identifiers and bank details are replaced, dates of birth shifted.
     ("PA0002", "NACHN"): ("name", "LAST_NAME"), ("PA0002", "VORNA"): ("name", "FIRST_NAME"), ("PA0002", "GBDAT"): ("birthdate", "BIRTHDATE"),
     ("PA0002", "PERID"): ("national_id", "TAX_ID"), ("PA0006", "STRAS"): ("street", "STREET"), ("PA0006", "TELNR"): ("phone", "PHONE"),
@@ -139,7 +142,7 @@ CATALOG: dict[tuple[str, str], tuple[str, str]] = {
 HR_TABLES = {"PA0001", "PA0002", "PA0003", "PA0006", "PA0008", "PA0009"}  # special-category personal data: per-run anonymization only
 CATEGORY_LABEL = {"name": "Names", "street": "Addresses", "phone": "Telephone numbers", "email": "Email addresses",
                   "iban": "Bank details", "bank_account": "Bank details", "tax_id": "Tax identifiers", "identifier": "Account and mailbox identifiers",
-                  "birthdate": "Dates of birth", "national_id": "National identifiers", "pay": "Pay and salary"}
+                  "birthdate": "Dates of birth", "national_id": "National identifiers", "pay": "Pay and salary", "user": "User ids of employees"}
 
 _EMAIL = re.compile(r"^[\w.+-]+@[\w-]+(\.[\w-]+)+$")
 _IBAN = re.compile(r"^[A-Z]{2}\d{2}[A-Z0-9]{10,30}$")

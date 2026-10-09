@@ -109,6 +109,10 @@ OBJECT_TYPES: dict[str, ObjectType] = {o.name: o for o in [
     ObjectType("FLIGHT", "Flight with its bookings", "DEMO", "document",
                (L("SFLIGHT"), L("SBOOK", "SFLIGHT", [("CARRID", "CARRID"), ("CONNID", "CONNID"), ("FLDATE", "FLDATE")])),
                ("CARRID", "CONNID", "FLDATE"), ("SFLIGHT", "FLDATE"), {"carriers": ("SFLIGHT", "CARRID"), "customers": ("SBOOK", "CUSTOMID")}, 37),
+    # --- quality management: an inspection lot with its characteristics, results and usage decision ---
+    ObjectType("INSPECTION_LOT", "Inspection lot (QM)", "QM", "document",
+               (L("QALS"), L("QAMV", "QALS", [("PRUEFLOS", "PRUEFLOS")]), L("QASR", "QALS", [("PRUEFLOS", "PRUEFLOS")]), L("QAVE", "QALS", [("PRUEFLOS", "PRUEFLOS")])),
+               ("PRUEFLOS",), ("QALS", "ENSTEHDAT"), {"plants": ("QALS", "WERKS"), "materials": ("QALS", "MATNR")}, 38),
     # --- HR master data: special-category personal data (needs hr:copy; masking must be per-run anonymization) ---
     ObjectType("EMPLOYEE", "Employee (HR master data)", "HR", "master",
                (L("PA0003"), L("PA0001", "PA0003", [("PERNR", "PERNR")], "company_codes", "BUKRS"), L("PA0002", "PA0003", [("PERNR", "PERNR")]),
@@ -168,6 +172,10 @@ RELATIONSHIPS: list[Relationship] = [
     Relationship("production order→company code", "PRODUCTION_ORDER", "COMPANY_CODE", C, "AUFK", "BUKRS"),
     Relationship("flight→airline", "FLIGHT", "CARRIER", R, "SFLIGHT", "CARRID", description="The airline (and its schedule) the flight belongs to"),
     Relationship("booking→customer", "FLIGHT", "TRAVEL_CUSTOMER", R, "SBOOK", "CUSTOMID"),
+    Relationship("inspection lot→material", "INSPECTION_LOT", "MATERIAL", R, "QALS", "MATNR"),
+    Relationship("inspection lot→production order", "INSPECTION_LOT", "PRODUCTION_ORDER", R, "QALS", "AUFNR", reverse=True,
+                 description="Lot created for a production order (goods receipt inspection); a lot without an order has no such requirement"),
+    Relationship("inspection lot→plant", "INSPECTION_LOT", "PLANT", C, "QALS", "WERKS"),
     Relationship("employee→company code", "EMPLOYEE", "COMPANY_CODE", C, "PA0001", "BUKRS"),
     Relationship("employee→plant", "EMPLOYEE", "PLANT", C, "PA0001", "WERKS"),
     Relationship("goods movement→material", "MATERIAL_DOCUMENT", "MATERIAL", R, "MSEG", "MATNR"),

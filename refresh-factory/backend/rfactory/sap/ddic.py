@@ -91,6 +91,12 @@ TABLES: dict[str, TableDef] = {
         _t("BUT000", "Business partner (general)", ["PARTNER"], ["PARTNER", "BU_GROUP", "NAME_ORG1", "BU_SORT1", "TYPE"]),
         _t("ACDOCA", "Universal journal entry", ["RLDNR", "RBUKRS", "GJAHR", "BELNR", "DOCLN"],
            ["RLDNR", "RBUKRS", "GJAHR", "BELNR", "DOCLN", "RACCT", "HSL", "KUNNR", "AWTYP", "AWREF"]),
+        # Quality management (QM): inspection lots with their characteristics, results and usage decision. Simplified keys and fields; no sample
+        # management, inspection plans, certificates or defects.
+        _t("QALS", "Inspection lot", ["PRUEFLOS"], ["PRUEFLOS", "ART", "MATNR", "WERKS", "AUFNR", "LOSMENGE", "MEINS", "ENSTEHDAT"]),
+        _t("QAMV", "Inspection characteristic of a lot", ["PRUEFLOS", "MERKNR"], ["PRUEFLOS", "MERKNR", "KURZTEXT", "SOLLWERT", "TOLUNL", "TOLOBL"]),
+        _t("QASR", "Inspection result for a characteristic", ["PRUEFLOS", "MERKNR", "PROBENR"], ["PRUEFLOS", "MERKNR", "PROBENR", "MESSWERT", "PRUEFER", "PRUEFDATUV"]),
+        _t("QAVE", "Usage decision of a lot", ["PRUEFLOS"], ["PRUEFLOS", "VCODE", "VDATUM", "VAENAME"]),
         # HR master data (infotypes), simplified keys: the real ones also carry object, lock and sequence fields. Special-category personal data:
         # see masking/engine.py (HR_TABLES) and the hr:copy permission.
         _t("PA0003", "HR master record: core data (one row per personnel number)", ["PERNR"], ["PERNR", "ABKRS", "ERDAT"]),
@@ -125,6 +131,7 @@ NUMBER_RANGE_OBJECTS: dict[str, tuple[str, str]] = {
     "EKKO": ("MM_PO", "EBELN"),
     "AUFK": ("PP_ORDER", "AUFNR"),
     "PLKO": ("PP_ROUT", "PLNNR"),
+    "QALS": ("QM_LOT", "PRUEFLOS"),
     "MKPF": ("MM_MBLNR", "MBLNR"),
     "MATDOC": ("MM_MBLNR", "MBLNR"),
 }

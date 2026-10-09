@@ -254,6 +254,28 @@ def reconcile(run: Run, plan: Plan, source: SourceAdapter, target: TargetAdapter
         checks.append(_chk("business", "BUS-FLIGHT-REFS", "Flights have their airline, connection and customers in the target, and all their bookings", not ref_bad,
                            f"{len(ref_bad)} inconsistent", ref_bad))
 
+    # quality management (evaluated against the TARGET): references and completeness only. Usage decisions are human decisions: no invariant between
+    # results and decision is asserted.
+    lots = docs("INSPECTION_LOT")
+    if lots:
+        qm_bad = []
+        for inst in lots:
+            h = inst.rows["QALS"][0]
+            if not target.get("MARA", (h["MATNR"],)):
+                qm_bad.append(f"lot {inst.key}: material {h['MATNR']} missing in target")
+            if h.get("AUFNR") and not target.get("AUFK", (h["AUFNR"],)):
+                qm_bad.append(f"lot {inst.key}: production order {h['AUFNR']} missing in target")
+            for t in ("QAMV", "QASR", "QAVE"):
+                got = len(target.lookup(t, "PRUEFLOS", inst.key))
+                if got != len(inst.rows.get(t, [])):
+                    qm_bad.append(f"lot {inst.key}: {t} has {got} rows in the target, {len(inst.rows.get(t, []))} were loaded")
+            chars = {c["MERKNR"] for c in target.lookup("QAMV", "PRUEFLOS", inst.key)}
+            for r in target.lookup("QASR", "PRUEFLOS", inst.key):
+                if r["MERKNR"] not in chars:
+                    qm_bad.append(f"lot {inst.key}: a result refers to characteristic {r['MERKNR']}, which the lot does not have")
+        checks.append(_chk("business", "BUS-QM-REFS", "Inspection lots are complete in the target and refer to existing materials, orders and characteristics", not qm_bad,
+                           f"{len(qm_bad)} inconsistent", qm_bad))
+
     # HR master data (evaluated against the TARGET)
     employees = docs("EMPLOYEE")
     if employees:

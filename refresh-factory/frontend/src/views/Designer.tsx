@@ -4,8 +4,8 @@ import { Bars, Badge, Card, ErrorNote, Stat, Stepper, StatusBadge, TabList, TabP
 import { useApp } from "../ctx";
 
 const STEPS = ["Systems", "Scope", "Plan preview", "Conflicts", "Masking", "Approval", "Execute"];
-const TYPES = ["SALES_ORDER", "DELIVERY", "BILLING", "FI_DOCUMENT", "PURCHASE_ORDER", "PRODUCTION_ORDER", "MATERIAL_DOCUMENT", "BOM", "ROUTING", "EMPLOYEE", "FLIGHT", "CARRIER", "TRAVEL_CUSTOMER", "CUSTOMER", "VENDOR", "MATERIAL"];
-const DOWN = ["DELIVERY", "BILLING", "FI_DOCUMENT", "MATERIAL_DOCUMENT"];
+const TYPES = ["SALES_ORDER", "DELIVERY", "BILLING", "FI_DOCUMENT", "PURCHASE_ORDER", "PRODUCTION_ORDER", "MATERIAL_DOCUMENT", "BOM", "ROUTING", "INSPECTION_LOT", "EMPLOYEE", "FLIGHT", "CARRIER", "TRAVEL_CUSTOMER", "CUSTOMER", "VENDOR", "MATERIAL"];
+const DOWN = ["DELIVERY", "BILLING", "FI_DOCUMENT", "MATERIAL_DOCUMENT", "INSPECTION_LOT"];
 
 export default function Designer() {
   const app = useApp();
