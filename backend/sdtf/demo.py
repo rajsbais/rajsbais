@@ -30,7 +30,15 @@ def create_demo_project(session: Session, actor: str = "architect", scale: int =
     tables = generate_landscape(LandscapeSpec(seed=seed, scale=scale))
     counts = import_tables(session, src.id, tables)
     # the target is a prepared S/4HANA shell: organisational configuration for SpinCo already exists
-    shell = {
+    shell = spinco_shell()
+    import_tables(session, tgt.id, shell)
+    record_event(session, actor, "PROJECT_CREATED", "PROJECT", project.id, {"source": src.id, "target": tgt.id, "rows_imported": sum(counts.values())})
+    return {"project": project, "source": src, "target": tgt, "import_counts": counts}
+
+
+def spinco_shell() -> dict[str, list[dict]]:
+    """Organisational configuration of the prepared S/4HANA target shell for SpinCo."""
+    return {
         "T001": [{"BUKRS": "SP01", "BUTXT": "Specialty Materials SpinCo GmbH", "LAND1": "DE", "WAERS": "EUR", "KTOPL": "INT", "PERIV": "K4", "SPRAS": "E"}],
         "T001W": [{"WERKS": "SP10", "NAME1": "Plant SP10 (DE)", "BWKEY": "SP10", "LAND1": "DE", "VKORG": "SP01", "EKORG": "SP01"}, {"WERKS": "SP20", "NAME1": "Plant SP20 (DE)", "BWKEY": "SP20", "LAND1": "DE", "VKORG": "SP01", "EKORG": "SP01"}],
         "T001K": [{"BWKEY": "SP10", "BUKRS": "SP01"}, {"BWKEY": "SP20", "BUKRS": "SP01"}],
@@ -40,9 +48,21 @@ def create_demo_project(session: Session, actor: str = "architect", scale: int =
         "T024E": [{"EKORG": "SP01", "BUKRS": "SP01", "EKOTX": "Purch org SpinCo"}],
         "T004": [{"KTOPL": "INT", "KTPLT": "Group chart of accounts"}],
     }
+
+
+def create_target_shell(session: Session, project: Project, sid: str, source: SapSystem | None = None, keep_source_org: bool = False) -> SapSystem:
+    """Register an additional prepared S/4HANA target. With keep_source_org the source organisational
+    configuration is copied as well (scenarios that keep company codes unchanged, e.g. reverse carve-outs)."""
+    tgt = SapSystem(project_id=project.id, sid=sid, client="100", role="TARGET", product="S4HANA", release="2025", connector="SYNTHETIC", connector_status="SIMULATED", logical_system=f"{sid}CLNT100")
+    session.add(tgt)
+    session.flush()
+    shell = spinco_shell()
+    if keep_source_org and source is not None:
+        store = RecordStore.load(session, source.id, tables=list(shell))
+        for t in shell:
+            shell[t] = shell[t] + list(store.rows(t))
     import_tables(session, tgt.id, shell)
-    record_event(session, actor, "PROJECT_CREATED", "PROJECT", project.id, {"source": src.id, "target": tgt.id, "rows_imported": sum(counts.values())})
-    return {"project": project, "source": src, "target": tgt, "import_counts": counts}
+    return tgt
 
 
 def demo_scope_definition(src: SapSystem, tgt: SapSystem, name: str = "SpinCo 5000 forward carve-out", **overrides) -> ScopeDefinition:

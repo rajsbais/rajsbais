@@ -107,8 +107,11 @@ def classify(defn: ScopeDefinition, g: Graph, idx: dict[str, BusinessObjectInsta
                 cls, reason = ("FULLY_TRANSFERRED", "Client-level master data reached through in-scope reference") if inclusion == "FULL" else ("REFERENCE_ONLY", "Client-level master data referenced only")
         else:  # TRANSACTIONAL
             owner = ccs[0] if ccs else None
+            year = inst.gjahr if inst else None
             if owner is not None and owner not in scope_ccs:
                 cls, reason = "RETAINED_BY_SELLER", f"Counterpart / related document owned by retained company code {owner}; linked from in-scope documents"
+            elif year and ((defn.fiscal_year_from and year < defn.fiscal_year_from) or (defn.fiscal_year_to and year > defn.fiscal_year_to)):
+                cls, reason = "RETAINED_BY_SELLER", f"Related document of fiscal year {year} outside the scoped range; retained as history (balance carry-forward required)"
             elif inside and outside:
                 cls = {"INCLUDE_FLAG": "PARTIALLY_TRANSFERRED", "REFERENCE": "REFERENCE_ONLY", "EXCLUDE": "EXCLUDED"}[defn.cross_company_policy]
                 reason = f"Cross-company document touching {sorted(ccs)}; policy={defn.cross_company_policy}"
@@ -150,6 +153,11 @@ def impact_of(classification: dict[str, dict], traces: list[dict], stopped: list
         warnings.append(f"{totals['MANUAL_DISPOSITION']} objects require manual disposition")
     if missing:
         warnings.append(f"{len(missing)} referenced objects are missing in the source (dangling references)")
+    # excluded objects that transferred documents still point at: referential integrity will fail in the target
+    transferred = {n for n, c in classification.items() if c["classification"] in ("FULLY_TRANSFERRED", "PARTIALLY_TRANSFERRED", "SHARED_DUPLICATED")}
+    excluded_referenced = sorted({t["node"] for t in traces if t.get("from") in transferred and classification.get(t["node"], {}).get("classification") == "EXCLUDED"})
+    if excluded_referenced:
+        warnings.append(f"{len(excluded_referenced)} excluded objects are referenced by transferred documents; referential integrity checks will fail unless they are duplicated or referenced")
     expanded = sum(1 for t in traces if t["policy"] != "SEED")
     return {
         "objects_total": len(classification),
@@ -163,6 +171,7 @@ def impact_of(classification: dict[str, dict], traces: list[dict], stopped: list
         "open_documents": open_docs,
         "approvals_required": approvals,
         "missing_references": len(missing),
+        "excluded_but_referenced": len(excluded_referenced),
         "warnings": warnings,
     }
 

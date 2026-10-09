@@ -30,7 +30,7 @@ migrations, deployment) for the Phase 1 foundation and the first vertical slice.
 ## Quick start
 ```bash
 python3 -m venv .venv && . .venv/bin/activate && pip install -e "backend[dev]"
-cd backend && pytest -q                      # 29 tests
+cd backend && pytest -q                      # 60 tests (+1 opt-in UI e2e)
 python -m sdtf.cli demo                      # full vertical slice, prints the execution report
 python -m sdtf.cli serve                     # API http://localhost:8000/docs
 cd ../frontend && npm install && npm run dev # UI http://localhost:5173 (login architect/architect)
@@ -52,6 +52,8 @@ Or: `docker compose -f deploy/docker-compose.yml up --build` (UI :8080, API :800
 | [09](docs/09-repository-deployment-architecture.md) | repository and deployment architecture |
 | [10](docs/10-backlog.md) | prioritised backlog |
 | [11](docs/11-vertical-slice-acceptance.md) | vertical slice acceptance criteria and verified results |
+| [capability review](docs/capability-review.md) | built / pending / cannot be built here, per brief section |
+| [test report](docs/test-report.md) | test campaign results, scenario matrix, scale timings, defects fixed |
 | [ADRs](docs/adr) | eight architecture decision records |
 | [operations](docs/operations.md) · [benchmarks](docs/benchmarks.md) · [capability status](docs/capability-status.md) | |
 

@@ -11,9 +11,9 @@ from datetime import datetime, timezone
 
 from sqlalchemy.orm import Session
 
+from .. import config
 from ..audit.service import record_event, write_evidence_package
 from ..catalog.store import RecordStore
-from ..config import settings
 from ..models import (
     MigrationRun,
     ReconciliationResult,
@@ -61,7 +61,7 @@ def start_run(session: Session, project_id: str, manifest_id: str, ruleset_id: s
     tgt = session.get(SapSystem, m.definition["target_system_id"])
     if src is None or tgt is None or src.project_id != project_id or tgt.project_id != project_id:
         raise RunPrecondition("source/target systems not found in project")
-    run = MigrationRun(project_id=project_id, manifest_id=m.id, ruleset_id=rs.id, source_system_id=src.id, target_system_id=tgt.id, mode=mode, status="RUNNING", started_by=actor, started_at=_now(), metrics={"workers": workers or settings.extraction_workers})
+    run = MigrationRun(project_id=project_id, manifest_id=m.id, ruleset_id=rs.id, source_system_id=src.id, target_system_id=tgt.id, mode=mode, status="RUNNING", started_by=actor, started_at=_now(), metrics={"workers": workers or config.settings.extraction_workers})
     session.add(run)
     session.flush()
     for i, name in enumerate(STAGES):
@@ -108,7 +108,7 @@ def execute_run(session: Session, run: MigrationRun, actor: str) -> MigrationRun
             elif name == "EXTRACT":
                 source_store = source_store or RecordStore.load(session, src.id)
                 ex = SyntheticStoreExtractor(source_store, cls, scope_ccs)
-                st.metrics = run_extraction(session, run.id, ex, st.checkpoint, workers=run.metrics.get("workers", settings.extraction_workers))
+                st.metrics = run_extraction(session, run.id, ex, st.checkpoint, workers=run.metrics.get("workers", config.settings.extraction_workers))
                 run.snapshot_id = st.metrics["snapshot_id"]
             elif name == "TRANSFORM":
                 st.metrics = run_transformation(session, run.id, rs)

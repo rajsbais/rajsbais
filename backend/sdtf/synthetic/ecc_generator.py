@@ -256,6 +256,12 @@ class EccLandscapeGenerator:
                 self.plant_materials.setdefault(p, []).append(matnr)
             if rng.random() < self.spec.export_controlled_ratio:
                 self.add("ZSD_EXPORT_CTRL", {"MATNR": matnr, "ECCN": "3A001", "CONTROLLED": "X", "LICENSE_REQ": "X"})
+        # guarantee that each company code owns at least one export-controlled material (carve-out compliance path)
+        flagged = {r["MATNR"] for r in self.tables["ZSD_EXPORT_CTRL"]}
+        for cc in self.spec.company_codes:
+            own = [m for p in cc.plants for m in self.plant_materials.get(p, [])]
+            if own and not flagged.intersection(own):
+                self.add("ZSD_EXPORT_CTRL", {"MATNR": own[0], "ECCN": "3A001", "CONTROLLED": "X", "LICENSE_REQ": "X"})
 
     def _assets(self):
         for cc in self.spec.company_codes:

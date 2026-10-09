@@ -9,7 +9,7 @@ from datetime import datetime, timezone
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from ..config import settings
+from .. import config
 from ..models import AuditEvent
 
 GENESIS = "0" * 64
@@ -54,7 +54,7 @@ def verify_chain(session: Session) -> dict:
 
 def write_evidence_package(run_id: str, artifacts: dict[str, str | dict]) -> dict:
     """Write evidence files to the evidence directory and return an index with content hashes."""
-    base = os.path.join(settings.evidence_dir, run_id)
+    base = os.path.join(config.settings.evidence_dir, run_id)
     os.makedirs(base, exist_ok=True)
     index = {}
     for name, content in artifacts.items():

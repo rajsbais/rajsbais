@@ -16,8 +16,8 @@ Landscape → Graph → Scope → Carve-out → Rules → Runs → Reconciliatio
 | 9 | Reconcile source and target | 233 checks: TECHNICAL 190 PASS, FUNCTIONAL 13 PASS, FINANCIAL 30 PASS (trial balance, GL balances, AR/AP open items, assets, inventory, intercompany, currency, fiscal period) | ✅ |
 | 10 | Generate an auditable execution report | report.json/md + manifest + ruleset + reconciliation evidence with SHA-256 index; hash-chained audit trail verified | ✅ |
 
-Test suite: 29 tests (`backend/tests`), lint clean (`ruff`), frontend type-checks and builds, all 18 screens render
-against the live API (Playwright smoke in the development session).
+Test suite: 61 tests (`backend/tests`, incl. an opt-in Playwright UI e2e), lint clean (`ruff`), frontend type-checks and
+builds, all 18 screens render against the live API. Details: `docs/test-report.md`; gap analysis: `docs/capability-review.md`.
 
 ## What this slice is not
 It is not a production migration. Extraction reads an in-platform record store, the loader writes to a simulated

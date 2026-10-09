@@ -10,6 +10,7 @@ run on the development container and exist only to validate the measurement plum
 | Load duration | LOAD stage | ≈ 0.11 s |
 | Reconciliation duration | RECONCILE stage (233 checks) | ≈ 0.09 s |
 | End-to-end vertical slice (generate + discover + graph + scope + run) | CLI `demo` | ≈ 3–4 s |
+| Scale 3 (≈33k rows, 1,596 objects, 4,702 records): extract 1.26 s @ 6.5k rec/s, transform 0.65 s, load 0.92 s, reconcile 0.38 s | `tests/test_scale.py` | 7.5 s total |
 
 ## Protocol for real measurements (required before Phase 6 claims)
 1. Source impact: CPU, IO, work-process utilisation on the SAP source during extraction at package sizes 10k/50k/200k.

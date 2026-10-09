@@ -166,7 +166,13 @@ def reconcile_run(session: Session, run: MigrationRun, manifest: ScopeManifest, 
     # expected after transformation (what was staged & loaded)
     exp_bal = _sum_lines([s.target_payload for s in by_table.get("BSEG", []) if s.load_status == "LOADED"])
     retained_docs = {n.split(":", 1)[1] for n, c in cls.items() if c["type"] == "FI.AccountingDocument" and c["classification"] not in TRANSFER}
+    classified_docs = {n.split(":", 1)[1] for n, c in cls.items() if c["type"] == "FI.AccountingDocument"}
+    # documents of in-scope company codes that never entered the manifest: removed by fiscal-year / status filters
+    filtered_docs = {f"{h['BUKRS']}|{h['BELNR']}|{h['GJAHR']}" for h in source.rows("BKPF") if h["BUKRS"] in scope_ccs} - classified_docs
     rejected_keys = {e.record_key for e in exceptions if e.table_name in ("BKPF", "BSEG")}
+
+    def _amt(l):
+        return float(l["DMBTR"]) if l["SHKZG"] == "S" else -float(l["DMBTR"])
     accounts = sorted({k[1] for k in src_bal} | {k[1] for k in tgt_bal})
     gl_fail = 0
     for cc in sorted(scope_ccs):
@@ -182,11 +188,13 @@ def reconcile_run(session: Session, run: MigrationRun, manifest: ScopeManifest, 
                 status, expl = "PASS", ""
             else:
                 # explain: amounts of retained / rejected documents on this account
-                retained_amt = round(sum((float(l["DMBTR"]) if l["SHKZG"] == "S" else -float(l["DMBTR"])) for l in src_bseg if l["BUKRS"] == cc and l["HKONT"] == acct and f"{cc}|{l['BELNR']}|{l['GJAHR']}" in retained_docs), 2)
-                rejected_amt = round(sum((float(l["DMBTR"]) if l["SHKZG"] == "S" else -float(l["DMBTR"])) for l in src_bseg if l["BUKRS"] == cc and l["HKONT"] == acct and f"{cc}|{l['BELNR']}|{l['GJAHR']}|{l['BUZEI']}" in rejected_keys), 2)
-                unexplained = round(var - retained_amt - rejected_amt, 2)
+                lines_cc = [l for l in src_bseg if l["BUKRS"] == cc and l["HKONT"] == acct]
+                retained_amt = round(sum(_amt(l) for l in lines_cc if f"{cc}|{l['BELNR']}|{l['GJAHR']}" in retained_docs), 2)
+                filtered_amt = round(sum(_amt(l) for l in lines_cc if f"{cc}|{l['BELNR']}|{l['GJAHR']}" in filtered_docs), 2)
+                rejected_amt = round(sum(_amt(l) for l in lines_cc if f"{cc}|{l['BELNR']}|{l['GJAHR']}|{l['BUZEI']}" in rejected_keys), 2)
+                unexplained = round(var - retained_amt - filtered_amt - rejected_amt, 2)
                 status = "WARN" if abs(unexplained) < 0.005 else "FAIL"
-                expl = f"Variance {var}: {retained_amt} in documents retained/excluded by scope policy, {rejected_amt} in documents rejected by transformation rules, unexplained {unexplained}"
+                expl = f"Variance {var}: {retained_amt} in documents retained/excluded by scope policy, {filtered_amt} in documents outside the fiscal-year/status filters (balance carry-forward required), {rejected_amt} in documents rejected by transformation rules, unexplained {unexplained}"
                 if abs(e - t) > 0.005:
                     status = "FAIL"
                     expl += f"; loaded content differs from staged expectation ({e} vs {t})"
