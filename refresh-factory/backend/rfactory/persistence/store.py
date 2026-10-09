@@ -1,0 +1,230 @@
+"""Durable platform state (SIMULATED SAP stays simulated; the *platform's* state becomes durable).
+
+Design
+  * State is split into aggregates (a system with its simulated adapter, a project with its plan and masking engine, a run, a delta
+    scenario, a dataset, a full-refresh program, the orchestration queue ...). Each is serialised, hashed, and written only when it changed.
+  * One SQLite transaction per save: either every changed aggregate is stored or none is. Saves happen at REQUEST BOUNDARIES (the API
+    serialises mutating requests), so the stored state is always consistent; a crash in the middle of a request loses that request's effects
+    as a whole. The hash-chained audit log is appended immediately and is not rolled back, so after such a crash it can show an attempt that
+    left no state behind: the audit log records what was tried, the store records what is true.
+  * Every blob is encrypted and authenticated with Fernet before it touches disk (state includes masking keys, token vault entries and the
+    pre-refresh target backups). Blobs are unpickled only after authentication and through an allow-listed unpickler.
+  * Key custody is the weak point: the key comes from RFACTORY_STATE_KEY, otherwise a 0600 key file next to the database (development only).
+
+NOT provided: PostgreSQL (the schema in db/schema.sql is still a design), multi-process writers, schema migrations (a version mismatch is
+refused), online backup, retention of old versions.
+"""
+from __future__ import annotations
+
+import hashlib
+import io
+import os
+import pickle
+import sqlite3
+import threading
+from datetime import datetime, timezone
+from pathlib import Path
+
+from cryptography.fernet import Fernet, InvalidToken
+
+SCHEMA_VERSION = 1
+KEY_CHECK = b"rfactory-state-key-check"
+
+
+class StoreError(RuntimeError):
+    pass
+
+
+_SAFE_BUILTINS = {"set", "frozenset", "dict", "list", "tuple", "str", "int", "float", "bool", "bytes", "bytearray", "complex", "slice", "range", "object"}
+_SAFE_PREFIXES = ("rfactory.", "pydantic", "datetime", "collections", "decimal", "enum", "copyreg", "uuid", "cryptography.fernet", "cryptography.hazmat.primitives", "cryptography.hazmat.bindings", "_cffi_backend", "typing", "zoneinfo")
+
+
+class _Unpickler(pickle.Unpickler):
+    def find_class(self, module: str, name: str):
+        if module == "builtins" and name in _SAFE_BUILTINS:
+            return super().find_class(module, name)
+        if module != "builtins" and (module + ".").startswith(_SAFE_PREFIXES) or module.startswith(_SAFE_PREFIXES):
+            return super().find_class(module, name)
+        raise StoreError(f"refusing to load {module}.{name}: not in the allow-list")
+
+
+def _dumps(obj) -> bytes:
+    return pickle.dumps(obj, protocol=pickle.HIGHEST_PROTOCOL)
+
+
+def _loads(data: bytes):
+    return _Unpickler(io.BytesIO(data)).load()
+
+
+def collect(svc) -> dict[tuple[str, str], object]:
+    """Every aggregate the platform holds, keyed by (kind, id). Objects inside one aggregate keep their mutual references."""
+    out: dict[tuple[str, str], object] = {}
+    for sid, s in svc.systems.items():
+        out[("system", sid)] = {"system": s, "adapter": svc.adapters[sid]}
+    for pid, p in svc.projects.items():
+        out[("project", pid)] = {"project": p, "sensitive": svc.required_sensitive.get(pid), "engine": svc.engines.get(pid)}
+    for rid, r in svc.runs.items():
+        out[("run", rid)] = r
+    for kind, mapping in (("delta", svc.delta.scenarios), ("tdm_policy", svc.tdm.policies), ("tdm_dataset", svc.tdm.datasets), ("tdm_request", svc.tdm.requests),
+                          ("lean_template", svc.lean.templates), ("lean_build", svc.lean.builds), ("pc_profile", svc.postcopy.profiles), ("pc_run", svc.postcopy.runs),
+                          ("full", svc.full.programs), ("job", svc.orch.jobs), ("schedule", svc.orch.schedules), ("pipeline", svc.orch.pipelines)):
+        for k, v in mapping.items():
+            out[(kind, k)] = v
+    out[("agents", "all")] = {"reports": svc.agents.reports, "recs": svc.agents.recs}
+    o = svc.orch
+    out[("orch", "state")] = {"windows": o.windows, "leases": o.leases, "events": o.events, "subs": o.subs, "outbox": o.outbox, "skew": o.skew}
+    return out
+
+
+def apply(svc, objs: dict[tuple[str, str], object]) -> None:
+    by: dict[str, dict] = {}
+    for (kind, k), v in objs.items():
+        by.setdefault(kind, {})[k] = v
+    for sid, pack in by.get("system", {}).items():
+        svc.systems[sid], svc.adapters[sid] = pack["system"], pack["adapter"]
+        pack["adapter"].system = pack["system"]
+    for pid, pack in by.get("project", {}).items():
+        svc.projects[pid] = pack["project"]
+        if pack["sensitive"] is not None:
+            svc.required_sensitive[pid] = pack["sensitive"]
+        if pack["engine"] is not None:
+            svc.engines[pid] = pack["engine"]
+    svc.runs.update(by.get("run", {}))
+    for kind, mapping in (("delta", svc.delta.scenarios), ("tdm_policy", svc.tdm.policies), ("tdm_dataset", svc.tdm.datasets), ("tdm_request", svc.tdm.requests),
+                          ("lean_template", svc.lean.templates), ("lean_build", svc.lean.builds), ("pc_profile", svc.postcopy.profiles), ("pc_run", svc.postcopy.runs),
+                          ("full", svc.full.programs), ("job", svc.orch.jobs), ("schedule", svc.orch.schedules), ("pipeline", svc.orch.pipelines)):
+        mapping.update(by.get(kind, {}))
+    if "agents" in by:
+        a = by["agents"]["all"]
+        svc.agents.reports, svc.agents.recs = a["reports"], a["recs"]
+    if "orch" in by:
+        s = by["orch"]["state"]
+        o = svc.orch
+        o.windows, o.leases, o.events, o.subs, o.outbox, o.skew = s["windows"], s["leases"], s["events"], s["subs"], s["outbox"], s["skew"]
+
+
+class StateStore:
+    def __init__(self, svc, path: Path, key: bytes | None = None):
+        self.svc, self.path = svc, Path(path)
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        self.key_source = "environment (RFACTORY_STATE_KEY)" if (key or os.environ.get("RFACTORY_STATE_KEY")) else "key file next to the database (development only)"
+        self._fernet = Fernet(self._resolve_key(key))
+        self._lock = threading.Lock()
+        self._db = sqlite3.connect(self.path, check_same_thread=False)
+        self._db.execute("PRAGMA journal_mode=WAL")
+        self._db.execute("PRAGMA synchronous=FULL")
+        self._db.execute("CREATE TABLE IF NOT EXISTS aggregates (kind TEXT NOT NULL, id TEXT NOT NULL, hash TEXT NOT NULL, blob BLOB NOT NULL, updated TEXT NOT NULL, PRIMARY KEY (kind, id))")
+        self._db.execute("CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value BLOB NOT NULL)")
+        self._hashes: dict[tuple[str, str], str] = {}
+        self.last_saved: str | None = None
+        self.last_save_stats: dict = {}
+        self.interrupted: list[str] = []
+
+    # ---------------------------------------------------------------- key handling
+    def _resolve_key(self, key: bytes | None) -> bytes:
+        if key:
+            return key
+        env = os.environ.get("RFACTORY_STATE_KEY")
+        if env:
+            return env.encode()
+        kf = self.path.with_suffix(".key")
+        if kf.exists():
+            return kf.read_bytes().strip()
+        k = Fernet.generate_key()
+        fd = os.open(kf, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        with os.fdopen(fd, "wb") as fh:
+            fh.write(k)
+        return k
+
+    # ---------------------------------------------------------------- load
+    def exists(self) -> bool:
+        return self._db.execute("SELECT COUNT(*) FROM aggregates").fetchone()[0] > 0 or self._meta("schema") is not None
+
+    def _meta(self, k: str):
+        r = self._db.execute("SELECT value FROM meta WHERE key=?", (k,)).fetchone()
+        return r[0] if r else None
+
+    def load(self) -> int:
+        """Restore the platform from disk. Refuses (never silently starts empty) on a wrong key, tampering, or a schema mismatch."""
+        with self._lock:
+            ver = self._meta("schema")
+            if ver is None:
+                if self._db.execute("SELECT COUNT(*) FROM aggregates").fetchone()[0]:
+                    raise StoreError("state database has data but no schema marker: refusing to load")
+                with self._db:
+                    self._db.execute("INSERT OR REPLACE INTO meta VALUES ('schema', ?)", (str(SCHEMA_VERSION).encode(),))
+                    self._db.execute("INSERT OR REPLACE INTO meta VALUES ('key_check', ?)", (self._fernet.encrypt(KEY_CHECK),))
+                return 0
+            if int(ver) != SCHEMA_VERSION:
+                raise StoreError(f"state schema version {int(ver)} is not supported by this build (expects {SCHEMA_VERSION}); no migration exists")
+            try:
+                if self._fernet.decrypt(self._meta("key_check")) != KEY_CHECK:
+                    raise InvalidToken
+            except InvalidToken:
+                raise StoreError("the state key does not match this database: set RFACTORY_STATE_KEY to the key it was created with")
+            objs: dict[tuple[str, str], object] = {}
+            for kind, k, h, blob in self._db.execute("SELECT kind, id, hash, blob FROM aggregates"):
+                try:
+                    plain = self._fernet.decrypt(blob)
+                except InvalidToken:
+                    raise StoreError(f"aggregate {kind}/{k} failed authentication: the database was modified or corrupted")
+                if hashlib.sha256(plain).hexdigest() != h:
+                    raise StoreError(f"aggregate {kind}/{k} does not match its recorded hash")
+                objs[(kind, k)] = _loads(plain)
+                self._hashes[(kind, k)] = h
+            apply(self.svc, objs)
+            self.interrupted = self.find_interrupted()
+            if self.interrupted:
+                self.svc.audit.append("system", "persistence.interrupted_work_found", "store", {"items": self.interrupted[:20]})
+            return len(objs)
+
+    def find_interrupted(self) -> list[str]:
+        """Work recorded as in progress when the state was saved. Saves happen at request boundaries, so this means the process was
+        stopped mid-request AFTER an explicit checkpoint, or a module left a status behind. It is reported, never silently 'fixed'."""
+        svc, out = self.svc, []
+        out += [f"project {k}" for k, p in svc.projects.items() if p.status == "RUNNING"]
+        out += [f"run {k}" for k, r in svc.runs.items() if r.status == "RUNNING"]
+        out += [f"delta {k}" for k, d in svc.delta.scenarios.items() if d.status == "RUNNING"]
+        out += [f"full-refresh {k}" for k, p in svc.full.programs.items() if p.status == "RUNNING"]
+        out += [f"post-copy {k}" for k, r in svc.postcopy.runs.items() if r.status == "RUNNING"]
+        out += [f"job {k}" for k, j in svc.orch.jobs.items() if j.status == "RUNNING"]
+        return out
+
+    # ---------------------------------------------------------------- save
+    def save(self) -> dict:
+        """Write every aggregate that changed since the last save, in one transaction."""
+        with self._lock:
+            now = datetime.now(timezone.utc).isoformat()
+            cur = collect(self.svc)
+            changed: list[tuple[tuple[str, str], str, bytes]] = []
+            for key, obj in cur.items():
+                plain = _dumps(obj)
+                h = hashlib.sha256(plain).hexdigest()
+                if self._hashes.get(key) != h:
+                    changed.append((key, h, plain))
+            gone = [k for k in self._hashes if k not in cur]
+            with self._db:  # one transaction: all or nothing
+                if self._meta("schema") is None:
+                    self._db.execute("INSERT OR REPLACE INTO meta VALUES ('schema', ?)", (str(SCHEMA_VERSION).encode(),))
+                    self._db.execute("INSERT OR REPLACE INTO meta VALUES ('key_check', ?)", (self._fernet.encrypt(KEY_CHECK),))
+                for (kind, k), h, plain in changed:
+                    self._db.execute("INSERT OR REPLACE INTO aggregates VALUES (?,?,?,?,?)", (kind, k, h, self._fernet.encrypt(plain), now))
+                for kind, k in gone:
+                    self._db.execute("DELETE FROM aggregates WHERE kind=? AND id=?", (kind, k))
+            for (key, h, _p) in changed:
+                self._hashes[key] = h
+            for k in gone:
+                self._hashes.pop(k, None)
+            self.last_saved = now
+            self.last_save_stats = {"written": len(changed), "deleted": len(gone), "aggregates": len(cur)}
+            return self.last_save_stats
+
+    def status(self) -> dict:
+        kinds: dict[str, int] = {}
+        for kind, _ in self._hashes:
+            kinds[kind] = kinds.get(kind, 0) + 1
+        size = self.path.stat().st_size if self.path.exists() else 0
+        return {"durable": True, "database": self.path.name, "bytes": size, "aggregates": len(self._hashes), "by_kind": kinds, "schema_version": SCHEMA_VERSION,
+                "interrupted_work": self.interrupted, "encrypted_at_rest": True, "key_source": self.key_source, "last_saved": self.last_saved, "last_save": self.last_save_stats,
+                "limits": ["single writer: mutating API requests are serialised", "SQLite, not PostgreSQL", "no schema migrations", "no online backup or version history",
+                           "the audit log (audit.jsonl) is append-only on disk and is not encrypted"]}

@@ -63,7 +63,7 @@ class Project:
 
 
 class RefreshService:
-    def __init__(self, data_dir: Path | None = None):
+    def __init__(self, data_dir: Path | None = None, persist: bool = False):
         self.data_dir = data_dir or Path(tempfile.mkdtemp(prefix="rfactory-"))
         self.data_dir.mkdir(parents=True, exist_ok=True)
         self.audit = AuditLog(self.data_dir / "audit.jsonl")
@@ -90,6 +90,15 @@ class RefreshService:
         self.full = FullRefreshService(self)
         from .orchestration.engine import OrchestrationService
         self.orch = OrchestrationService(self)
+        self.store = None
+        if persist:
+            from .persistence.store import StateStore
+            self.store = StateStore(self, self.data_dir / "state.db")
+            self.store.load()
+
+    def checkpoint(self) -> dict | None:
+        """Persist everything that changed (a no-op for an ephemeral service). The API calls this after every mutating request."""
+        return self.store.save() if self.store else None
 
     # ---------------- landscape ----------------
     def register_system(self, actor: Principal, system: SapSystem, adapter: SimulatedSap | None = None) -> SapSystem:

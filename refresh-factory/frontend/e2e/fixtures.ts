@@ -13,17 +13,17 @@ const freePort = () => new Promise<number>((resolve, reject) => {
   s.on("error", reject);
 });
 
-async function startBackend(): Promise<{ url: string; stop: () => Promise<void> }> {
+export async function startBackend(env: Record<string, string> = {}): Promise<{ url: string; stop: () => Promise<void> }> {
   const port = await freePort();
   const proc: ChildProcess = spawn("python", ["-m", "uvicorn", "rfactory.api.main:app", "--port", String(port), "--log-level", "warning"],
-    { cwd: BACKEND, stdio: "ignore", detached: true });
+    { cwd: BACKEND, stdio: "ignore", detached: true, env: { ...process.env, ...env } });
   const url = `http://127.0.0.1:${port}`;
   for (let i = 0; i < 100; i++) {
     try { if ((await fetch(`${url}/api/health`)).ok) break; } catch { /* not up yet */ }
     await new Promise((r) => setTimeout(r, 100));
     if (i === 99) throw new Error("backend did not start");
   }
-  return { url, stop: async () => { try { process.kill(-proc.pid!, "SIGTERM"); } catch { /* already gone */ } } };
+  return { url, stop: async () => { try { process.kill(-proc.pid!, "SIGTERM"); } catch { /* already gone */ } await new Promise((r) => setTimeout(r, 300)); } };
 }
 
 /** The Keystone UI as a user drives it. Every method uses roles and labels, never CSS selectors. */

@@ -1,6 +1,6 @@
 # Engineering backlog (ordered)
 
-1. **Persistence**: PostgreSQL repositories behind `RefreshService` (schema in `db/schema.sql`), durable runs, object-store staging.
+1. **Persistence** (SQLite state store exists, see M16): PostgreSQL repositories behind `RefreshService` (schema in `db/schema.sql`), migrations, KMS-held keys, backup/restore, multi-writer concurrency, object-store staging.
 2. **Real SAP connectivity** (also unlocks real client creation/copy for the lean client builder: SCC4/SCCL/SCC9 integration, user and authorization handling): RFC/OData adapter implementing `SourceAdapter`/`TargetAdapter` with metadata from DD02L/DD03L; read-only role on PRD; contract tests against a sandbox ECC and S/4HANA.
 3. **ABAP agent** (extraction + non-prod loader) and number-range handling with SNRO APIs.
 4. **SSO/ABAC/tenancy/KMS**, WORM audit sink.

@@ -1,10 +1,13 @@
 """REST API. Auth is a demo header (X-Demo-User) - see security/auth.py."""
 from __future__ import annotations
 
+import asyncio
+import os
 from datetime import timedelta
 from pathlib import Path
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request, Response
+from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import JSONResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
@@ -270,11 +273,32 @@ def project_dict(svc: RefreshService, p: Project) -> dict:
             "runs": p.runs, "created": p.created, "simulated": True}
 
 
-def create_app(data_dir: Path | None = None) -> FastAPI:
-    svc = RefreshService(data_dir)
+def create_app(data_dir: Path | None = None, persist: bool | None = None) -> FastAPI:
+    """`RFACTORY_DATA_DIR` makes the platform durable (state survives restarts); without it, or with persist=False, state is in memory."""
+    env_dir = os.environ.get("RFACTORY_DATA_DIR")
+    if data_dir is None and env_dir:
+        data_dir = Path(env_dir)
+    if persist is None:
+        persist = bool(env_dir)
+    svc = RefreshService(data_dir, persist=persist)
     app = FastAPI(title="SAP Intelligent Refresh Factory", version="0.1.0",
                   description="MVP control plane. All SAP interaction is SIMULATED; see /api/capabilities.")
     app.state.svc = svc
+
+    write_lock = asyncio.Lock()
+
+    @app.middleware("http")
+    async def single_writer(request: Request, call_next):
+        """Mutating requests run one at a time and the state is saved at the request boundary, so what is on disk is always consistent."""
+        if request.method in ("GET", "HEAD", "OPTIONS") or svc.store is None:
+            return await call_next(request)
+        async with write_lock:
+            resp = await call_next(request)
+            try:
+                await run_in_threadpool(svc.checkpoint)
+            except Exception as e:  # noqa: BLE001 - the effect happened in memory but is NOT durable: say so loudly
+                return JSONResponse({"detail": f"the request was applied but the state could not be saved: {type(e).__name__}: {e}"}, 500)
+            return resp
 
     @app.exception_handler(NotFound)
     async def _nf(_: Request, e: NotFound):
@@ -480,6 +504,18 @@ def create_app(data_dir: Path | None = None) -> FastAPI:
     @app.get("/api/audit/verify")
     def audit_verify(_: Principal = Depends(need("audit:read"))):
         return svc.audit.verify()
+
+    @app.get("/api/persistence/status")
+    def persistence_status(_: Principal = Depends(need("view"))):
+        if svc.store is None:
+            return {"durable": False, "note": "state is in memory and is lost on restart; set RFACTORY_DATA_DIR to make it durable"}
+        return svc.store.status()
+
+    @app.post("/api/persistence/checkpoint")
+    def persistence_checkpoint(_: Principal = Depends(need("system:write"))):
+        if svc.store is None:
+            raise HTTPException(409, "the platform is not durable (no RFACTORY_DATA_DIR)")
+        return {"saved": svc.checkpoint(), **svc.store.status()}
 
     # ---------------- AI refresh agents (module 12) ----------------
     from ..agents.service import AgentError

@@ -3,17 +3,38 @@ import { api, J } from "../api";
 import { Badge, Card, ErrorNote, StatusBadge, useAction } from "../components";
 import { useApp } from "../ctx";
 
+function Durability() {
+  const { me } = useApp();
+  const [d, setD] = useState<J>(null);
+  useEffect(() => { api.get("/api/persistence/status").then(setD).catch(() => undefined); }, [me?.id]);
+  if (!d) return null;
+  return (
+    <Card title="Platform durability">
+      {d.durable ? (
+        <>
+          <p><Badge kind="ok">durable</Badge> <span className="muted">State survives restarts: {d.aggregates} stored objects, encrypted at rest, last saved {d.last_saved?.slice(0, 19).replace("T", " ") ?? "—"} UTC.</span></p>
+          {d.interrupted_work.length > 0 && <p><Badge kind="warn">interrupted work found at start-up</Badge> {d.interrupted_work.join(", ")}</p>}
+          <p className="muted small">Key: {d.key_source}. {d.limits.join(" · ")}.</p>
+        </>) : (
+        <p><Badge kind="warn">in memory</Badge> <span className="muted">{d.note}</span></p>)}
+    </Card>
+  );
+}
+
 export function Readiness() {
   const { systems } = useApp();
   const [rows, setRows] = useState<J[]>([]);
   useEffect(() => { Promise.all(systems.map((s) => api.get(`/api/systems/${s.id}/readiness`))).then(setRows).catch(() => undefined); }, [systems]);
   return (
+    <>
+    <Durability />
     <Card title="Source and target readiness">
       {rows.map((r) => (
         <div key={r.system} className="ready-row"><strong>{r.system}</strong> <StatusBadge s={r.ready ? "pass" : "fail"} />
           <ul className="checks">{r.checks.map((c: J) => <li key={c.id}>{c.ok ? "✓" : "✗"} {c.name}</li>)}</ul></div>))}
       {!rows.length && <p className="muted">Register systems from the Control tower first.</p>}
     </Card>
+    </>
   );
 }
 

@@ -273,6 +273,12 @@ class SimulatedSap:
         self.changelog: list[dict] = []
         self.log_floor = 0  # oldest retained position; older positions raise ChangeLogGap
 
+    def __getstate__(self):
+        """Fault injectors are test hooks (closures): never persisted."""
+        d = dict(self.__dict__)
+        d["fault_injector"] = None
+        return d
+
     # --- read side -------------------------------------------------------
     def reference_date(self) -> date:
         return self.ref_date
