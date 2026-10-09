@@ -38,7 +38,7 @@ export default function RunsMonitor() {
   const registerTemplate = async (content: string, filename: string) => {
     if (!tplObject) { setErr("choose the business object the template belongs to"); return; }
     setTplBusy(true); setErr(null);
-    try { await api(`/projects/${projectId}/cockpit-templates`, { body: { object_type: tplObject, filename, content } }); templates.reload(); } catch (e: any) { setErr(e.message); } finally { setTplBusy(false); }
+    try { await api(`/projects/${projectId}/cockpit-templates`, { body: { object_type: tplObject, filename, content } }); templates.reload(); aliases.reload(); } catch (e: any) { setErr(e.message); } finally { setTplBusy(false); }
   };
   const uploadTemplate = async (e: React.ChangeEvent<HTMLInputElement>) => { const f = e.target.files?.[0]; if (!f) return; await registerTemplate(await f.text(), f.name); e.target.value = ""; };
   const useSample = async () => {
@@ -60,7 +60,7 @@ export default function RunsMonitor() {
   const aliases = useApi<any[]>(projectId ? `/projects/${projectId}/cockpit-aliases` : null, undefined, [projectId]);
   const decideAlias = async (a: any, status: string) => { setErr(null); try { await api(`/projects/${projectId}/cockpit-aliases/${a.id}/decide`, { body: { status } }); aliases.reload(); templates.reload(); } catch (e: any) { setErr(e.message); } };
   const proposeAliases = async () => { setErr(null); try { await api(`/projects/${projectId}/cockpit-aliases/propose`, { method: "POST" }); aliases.reload(); } catch (e: any) { setErr(e.message); } };
-  const deleteTemplate = async (t: any) => { setErr(null); try { await api(`/projects/${projectId}/cockpit-templates/${t.id}`, { method: "DELETE" }); templates.reload(); } catch (e: any) { setErr(e.message); } };
+  const deleteTemplate = async (t: any) => { setErr(null); try { await api(`/projects/${projectId}/cockpit-templates/${t.id}`, { method: "DELETE" }); templates.reload(); aliases.reload(); } catch (e: any) { setErr(e.message); } };
   const resume = async () => { setBusy(true); setErr(null); try { await api(`/runs/${run.id}/resume`, { method: "POST" }); runs.reload(); } catch (e: any) { setErr(e.message); } finally { setBusy(false); } };
   if (!projectId) return <Banner>Select a project.</Banner>;
   return (
