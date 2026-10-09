@@ -53,6 +53,20 @@ class CommentIn(BaseModel):
     comment: str = ""
 
 
+class AgentRunIn(BaseModel):
+    params: dict = Field(default_factory=dict)
+    narrate: bool = False
+
+
+class DecisionIn(BaseModel):
+    note: str | None = None
+
+
+class CopilotIn(BaseModel):
+    question: str
+    params: dict = Field(default_factory=dict)
+
+
 class StrategyIn(BaseModel):
     source_gb: float = 500.0
     config_change_needed: bool = False
@@ -412,6 +426,55 @@ def create_app(data_dir: Path | None = None) -> FastAPI:
     @app.get("/api/audit/verify")
     def audit_verify(_: Principal = Depends(need("audit:read"))):
         return svc.audit.verify()
+
+    # ---------------- AI refresh agents (module 12) ----------------
+    from ..agents.service import AgentError
+
+    def _agent(fn, *a, **k):
+        try:
+            return fn(*a, **k)
+        except AgentError as e:
+            raise HTTPException(409, str(e))
+        except ValueError as e:
+            raise HTTPException(422, str(e))
+        except KeyError as e:
+            raise HTTPException(404, f"not found: {e.args[0]}")
+
+    @app.get("/api/agents")
+    def ag_catalogue(_: Principal = Depends(need("view"))):
+        return svc.agents.catalogue()
+
+    @app.post("/api/agents/copilot")
+    def ag_copilot(b: CopilotIn, p: Principal = Depends(need("view"))):
+        return _agent(svc.agents.copilot, p, b.question, b.params)
+
+    @app.get("/api/agents/reports")
+    def ag_reports(agent_id: str | None = None, _: Principal = Depends(need("view"))):
+        return svc.agents.list_reports(agent_id)
+
+    @app.get("/api/agents/reports/{rid}")
+    def ag_report(rid: str, _: Principal = Depends(need("view"))):
+        return _agent(svc.agents.report, rid)
+
+    @app.get("/api/agents/recommendations")
+    def ag_recs(status: str | None = None, agent_id: str | None = None, _: Principal = Depends(need("view"))):
+        return svc.agents.list_recs(status, agent_id)
+
+    @app.post("/api/agents/recommendations/{rid}/accept")
+    def ag_accept(rid: str, b: DecisionIn, p: Principal = Depends(me)):
+        return _agent(svc.agents.accept, p, rid, b.note)
+
+    @app.post("/api/agents/recommendations/{rid}/reject")
+    def ag_reject(rid: str, b: DecisionIn, p: Principal = Depends(me)):
+        return _agent(svc.agents.reject, p, rid, b.note)
+
+    @app.post("/api/agents/recommendations/{rid}/apply")
+    def ag_apply(rid: str, p: Principal = Depends(me)):
+        return _agent(svc.agents.apply, p, rid)
+
+    @app.post("/api/agents/{agent_id}/run")
+    def ag_run(agent_id: str, b: AgentRunIn, p: Principal = Depends(need("view"))):
+        return _agent(svc.agents.run, p, agent_id, b.params, b.narrate)
 
     # ---------------- agents (advisory only) ----------------
     @app.post("/api/projects/{pid}/agents/strategy")

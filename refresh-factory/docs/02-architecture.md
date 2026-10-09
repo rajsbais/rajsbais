@@ -92,7 +92,7 @@ Implemented: RBAC with separation of duties (creator/editor/submitter ≠ approv
 Designed, **not** implemented: OIDC/SAML SSO, ABAC, tenant isolation, KMS/HSM keys, encryption at rest, WORM audit sink, export-control classification, retention jobs. Authentication is a demo header.
 
 ## 10. UI navigation
-Overview (Control tower, Landscape, Readiness) · Refresh (Selective designer, Dependencies, Conflicts, Masking, Execution, Reconciliation) · Basis (Full refresh, Post-copy) · Data (Test catalog [planned], Audit, Copilot).
+Overview (Control tower, Landscape, Readiness) · Refresh (Selective designer, Dependencies, Conflicts, Masking, Execution, Reconciliation) · Basis (Full refresh, Post-copy) · Data (Test catalog [planned], Audit, AI agents).
 
 ## 11. Repository structure
 `backend/rfactory/{sap,dependency,selective,masking,reconcile,security,fullrefresh,agents,api}` · `backend/tests` · `frontend/src` · `db/schema.sql` · `docs/`.

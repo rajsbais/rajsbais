@@ -16,7 +16,7 @@ import Conflicts from "./views/Conflicts";
 import Execution from "./views/Execution";
 import Reconciliation from "./views/Reconciliation";
 import Compliance from "./views/Compliance";
-import Copilot from "./views/Copilot";
+import Agents from "./views/Agents";
 
 const GROUPS: { group: string; views: { id: string; label: string; el: () => JSX.Element; perm?: string }[] }[] = [
   { group: "Overview", views: [
@@ -30,7 +30,7 @@ const GROUPS: { group: string; views: { id: string; label: string; el: () => JSX
   { group: "Basis", views: [{ id: "lean", label: "Lean client", el: LeanClient }, { id: "fullrefresh", label: "Full refresh", el: FullRefresh }, { id: "postcopy", label: "Post-copy", el: PostCopy }] },
   { group: "Data", views: [
     { id: "catalog", label: "Test catalog", el: TestCatalog }, { id: "compliance", label: "Audit", el: Compliance, perm: "audit:read" },
-    { id: "copilot", label: "Copilot", el: Copilot }] },
+    { id: "agents", label: "AI agents", el: Agents }] },
 ];
 const VIEWS = GROUPS.flatMap((g) => g.views);
 

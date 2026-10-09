@@ -7,7 +7,7 @@ Selective, business-consistent SAP non-production refresh with masking, conflict
 
 ## Run
 ```bash
-cd backend && pip install -e '.[test]' && python -m pytest          # 167 tests
+cd backend && pip install -e '.[test]' && python -m pytest          # 194 tests
 cd ../frontend && npm install && npm run build                       # UI served by the API from frontend/dist
 cd ../backend && uvicorn rfactory.api.main:app --port 8000           # http://localhost:8000  (API docs at /docs)
 # UI dev server: cd frontend && npm run dev   (proxies /api to :8000)

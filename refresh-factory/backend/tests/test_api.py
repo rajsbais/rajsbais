@@ -263,3 +263,25 @@ def test_post_copy_factory_over_http(client):
     plan = client.get(f"/api/full-refresh/plan?source_id={sid}&target_id={tid}", headers=H("tina.tester")).json()
     assert {p["no"] for p in plan["phases"] if p["status"].startswith("executable")} == {5, 8, 9, 12}
     assert client.get("/api/audit/verify", headers=H("erin.auditor")).json()["valid"]
+
+
+def test_ai_agents_over_http(client):
+    boot = client.post("/api/demo/bootstrap", headers=H("root.admin")).json()
+    cat = client.get("/api/agents", headers=H("erin.auditor")).json()
+    assert len(cat["agents"]) == 12
+    assert client.post("/api/agents/nope/run", json={}, headers=H("alice.basis")).status_code == 409
+    assert client.post("/api/agents/masking-recommendation/run", json={}, headers=H("alice.basis")).status_code == 422
+    r = client.post("/api/agents/landscape-discovery/run", json={}, headers=H("erin.auditor"))
+    assert r.status_code == 200
+    rec = next(x for x in r.json()["recommendations"] if x["action"]["kind"] == "lock_system")
+    assert client.get(f"/api/agents/reports/{r.json()['id']}", headers=H("erin.auditor")).json()["id"] == r.json()["id"]
+    assert client.get("/api/agents/reports/rpt-none", headers=H("erin.auditor")).status_code == 404
+    # agents and unauthorised humans cannot apply
+    assert client.post(f"/api/agents/recommendations/{rec['id']}/apply", headers=H("refresh.copilot")).status_code == 403
+    assert client.post(f"/api/agents/recommendations/{rec['id']}/apply", headers=H("erin.auditor")).status_code == 403
+    ok = client.post(f"/api/agents/recommendations/{rec['id']}/apply", headers=H("alice.basis"))
+    assert ok.status_code == 200 and ok.json()["status"] == "APPLIED"
+    assert client.post(f"/api/agents/recommendations/{rec['id']}/apply", headers=H("alice.basis")).status_code == 409
+    assert client.get("/api/agents/recommendations?status=APPLIED", headers=H("erin.auditor")).json()[0]["id"] == rec["id"]
+    c = client.post("/api/agents/copilot", json={"question": "is everything compliant?"}, headers=H("erin.auditor")).json()
+    assert c["routed_to"] == "compliance-verification" and c["report"]["artifacts"]["controls"]

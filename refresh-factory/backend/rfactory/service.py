@@ -84,6 +84,8 @@ class RefreshService:
         self.lean = LeanClientService(self)
         from .postcopy.engine import PostCopyService
         self.postcopy = PostCopyService(self)
+        from .agents.service import AgentService
+        self.agents = AgentService(self)
 
     # ---------------- landscape ----------------
     def register_system(self, actor: Principal, system: SapSystem, adapter: SimulatedSap | None = None) -> SapSystem:
