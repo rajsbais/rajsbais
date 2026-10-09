@@ -6,6 +6,7 @@ import ControlTower from "./views/ControlTower";
 import { FullRefresh, PostCopy, Readiness, TestCatalog } from "./views/Basis";
 import Landscape from "./views/Landscape";
 import Designer from "./views/Designer";
+import Delta from "./views/Delta";
 import Dependencies from "./views/Dependencies";
 import Masking from "./views/Masking";
 import Conflicts from "./views/Conflicts";
@@ -19,7 +20,8 @@ const GROUPS: { group: string; views: { id: string; label: string; el: () => JSX
     { id: "dashboard", label: "Control tower", el: ControlTower }, { id: "landscape", label: "Landscape", el: Landscape },
     { id: "readiness", label: "Readiness", el: Readiness }] },
   { group: "Refresh", views: [
-    { id: "designer", label: "Selective designer", el: Designer }, { id: "dependencies", label: "Dependencies", el: Dependencies },
+    { id: "designer", label: "Selective designer", el: Designer }, { id: "delta", label: "Delta refresh", el: Delta },
+    { id: "dependencies", label: "Dependencies", el: Dependencies },
     { id: "conflicts", label: "Conflicts", el: Conflicts }, { id: "masking", label: "Masking", el: Masking },
     { id: "execution", label: "Execution", el: Execution }, { id: "reconciliation", label: "Reconciliation", el: Reconciliation }] },
   { group: "Basis", views: [{ id: "fullrefresh", label: "Full refresh", el: FullRefresh }, { id: "postcopy", label: "Post-copy", el: PostCopy }] },

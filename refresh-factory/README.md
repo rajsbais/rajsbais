@@ -7,7 +7,7 @@ Selective, business-consistent SAP non-production refresh with masking, conflict
 
 ## Run
 ```bash
-cd backend && pip install -e '.[test]' && python -m pytest          # 79 tests
+cd backend && pip install -e '.[test]' && python -m pytest          # 104 tests
 cd ../frontend && npm install && npm run build                       # UI served by the API from frontend/dist
 cd ../backend && uvicorn rfactory.api.main:app --port 8000           # http://localhost:8000  (API docs at /docs)
 # UI dev server: cd frontend && npm run dev   (proxies /api to :8000)
@@ -19,5 +19,7 @@ build plan, analyze conflicts, apply SKIP policy, apply masking advice, submit; 
 Register systems · discover company codes/plants/objects · scope by company code and date · expand master + document-flow dependencies · volume preview ·
 conflict detection (identical/modified target objects, tester-owned documents, missing customizing, number ranges) · masking with discovery of custom PII fields ·
 approval with separation of duties · checkpointed load, resume, rollback · 34+ technical/business/security checks with a release gate · report + evidence ZIP + hash-chained audit.
+
+**Delta refresh:** *Delta refresh* screen → create the weekend QA sync, add the recommended masking rule (Dave), submit (Alice), approve (Carol), run; then *Simulate source activity* and preview/run again to see only the difference move.
 
 Docs: [capability matrix](docs/01-capability-matrix.md) · [architecture](docs/02-architecture.md) · [backlog](docs/03-backlog.md) · [OpenAPI](docs/openapi.json) · [DB schema (design)](db/schema.sql).

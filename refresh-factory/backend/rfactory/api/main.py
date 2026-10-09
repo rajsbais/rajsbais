@@ -62,6 +62,35 @@ class StrategyIn(BaseModel):
     cross_system_integrations: bool = False
 
 
+class DeltaIn(BaseModel):
+    name: str
+    source_id: str
+    target_id: str
+    scopes: list[dict]
+    include_downstream: list[str] = Field(default_factory=list)
+    masking_policy_id: str = "gdpr-standard"
+    conflict_policy: dict[str, str] = Field(default_factory=dict)
+    schedule: dict | None = None
+    full_sweep_every: int = 4
+    max_objects: int = 10000
+
+class DeltaPatch(BaseModel):
+    conflict_policy: dict[str, str] | None = None
+    schedule: dict | None = None
+    include_downstream: list[str] | None = None
+    scopes: list[dict] | None = None
+
+class RunIn(BaseModel):
+    full_sweep: bool = False
+
+class AckIn(BaseModel):
+    note: str
+
+class TickIn(BaseModel):
+    now: str | None = None
+
+
+
 def project_dict(svc: RefreshService, p: Project) -> dict:
     return {"id": p.id, "name": p.name, "status": p.status, "source": {**svc.system(p.source_id).model_dump(mode="json"), "family": svc.system(p.source_id).family},
             "target": {**svc.system(p.target_id).model_dump(mode="json"), "family": svc.system(p.target_id).family}, "created_by": p.created_by,
@@ -307,6 +336,92 @@ def create_app(data_dir: Path | None = None) -> FastAPI:
     @app.get("/api/post-copy/tasks")
     def pc(_: Principal = Depends(need("view"))):
         return runbook.POST_COPY_TASKS
+
+    # ---------------- delta refresh ----------------
+    def demo_spec(source_id: str, target_id: str) -> dict:
+        return {"name": "Weekend QA sync: customers, vendors, materials, sales and purchase orders (company 1000)",
+                "source_id": source_id, "target_id": target_id,
+                "scopes": [{"scope": {"object_type": "CUSTOMER", "company_codes": ["1000"]}},
+                           {"scope": {"object_type": "VENDOR", "company_codes": ["1000"]}},
+                           {"scope": {"object_type": "MATERIAL", "plants": ["1000", "1010"]}},
+                           {"scope": {"object_type": "SALES_ORDER", "company_codes": ["1000"]}, "rolling_days": 90},
+                           {"scope": {"object_type": "PURCHASE_ORDER", "company_codes": ["1000"]}, "rolling_days": 90}],
+                "include_downstream": ["DELIVERY", "BILLING", "FI_DOCUMENT"], "masking_policy_id": "gdpr-standard",
+                "conflict_policy": {"DUPLICATE_DIFFERENT": "SKIP"},
+                "schedule": {"kind": "weekly", "weekday": 5, "hour": 2, "window_hours": 4}, "full_sweep_every": 4}
+
+    @app.post("/api/delta/scenarios", status_code=201)
+    def d_create(b: DeltaIn, p: Principal = Depends(need("plan:write"))):
+        return svc.delta.create(p, b.model_dump()).public()
+
+    @app.post("/api/delta/scenarios/demo", status_code=201)
+    def d_demo(source_id: str, target_id: str, p: Principal = Depends(need("plan:write"))):
+        return svc.delta.create(p, demo_spec(source_id, target_id)).public()
+
+    @app.get("/api/delta/scenarios")
+    def d_list(_: Principal = Depends(need("view"))):
+        return [s.public() for s in svc.delta.scenarios.values()]
+
+    @app.get("/api/delta/scenarios/{sid}")
+    def d_get(sid: str, _: Principal = Depends(need("view"))):
+        return svc.delta.get(sid).public()
+
+    @app.patch("/api/delta/scenarios/{sid}")
+    def d_patch(sid: str, b: DeltaPatch, p: Principal = Depends(need("plan:write"))):
+        return svc.delta.update(p, sid, b.model_dump(exclude_none=True)).public()
+
+    @app.get("/api/delta/scenarios/{sid}/masking/recommended")
+    def d_mask_rec(sid: str, _: Principal = Depends(need("view"))):
+        return svc.delta.recommended_rules(sid)
+
+    @app.post("/api/delta/scenarios/{sid}/masking/rules")
+    def d_mask_rules(sid: str, b: RulesIn, p: Principal = Depends(need("masking:write"))):
+        return svc.delta.add_masking_rules(p, sid, b.rules).public()
+
+    @app.get("/api/delta/scenarios/{sid}/history")
+    def d_history(sid: str, _: Principal = Depends(need("view"))):
+        return list(reversed(svc.delta.get(sid).history))
+
+    @app.post("/api/delta/scenarios/{sid}/submit")
+    def d_submit(sid: str, p: Principal = Depends(need("plan:submit"))):
+        return svc.delta.submit(p, sid).public()
+
+    @app.post("/api/delta/scenarios/{sid}/approve")
+    def d_approve(sid: str, p: Principal = Depends(need("plan:approve"))):
+        return svc.delta.approve(p, sid).public()
+
+    @app.post("/api/delta/scenarios/{sid}/preview")
+    def d_preview(sid: str, b: RunIn, p: Principal = Depends(need("plan:write"))):
+        return svc.delta.preview(p, sid, b.full_sweep)
+
+    @app.post("/api/delta/scenarios/{sid}/run", status_code=202)
+    def d_run(sid: str, b: RunIn, p: Principal = Depends(need("run:execute"))):
+        return svc.delta.run(p, sid, "manual", b.full_sweep)
+
+    @app.post("/api/delta/scenarios/{sid}/resume")
+    def d_resume(sid: str, p: Principal = Depends(need("run:execute"))):
+        return svc.delta.resume(p, sid)
+
+    @app.post("/api/delta/scenarios/{sid}/rollback")
+    def d_rollback(sid: str, p: Principal = Depends(need("run:execute"))):
+        return svc.delta.rollback(p, sid)
+
+    @app.post("/api/delta/scenarios/{sid}/acknowledge")
+    def d_ack(sid: str, b: AckIn, p: Principal = Depends(need("run:execute"))):
+        return svc.delta.acknowledge(p, sid, b.note)
+
+    @app.post("/api/delta/tick")
+    def d_tick(b: TickIn, p: Principal = Depends(need("run:execute"))):
+        from datetime import datetime
+        return svc.delta.tick(p, datetime.fromisoformat(b.now) if b.now else None)
+
+    @app.post("/api/demo/simulate-source-changes")
+    def sim_changes(system_id: str, p: Principal = Depends(need("system:write"))):
+        from ..sap.synthetic import simulate_business_activity
+        a = svc.adapters[svc.system(system_id).id]
+        r = simulate_business_activity(a)
+        svc.audit.append(p.id, "demo.source_activity_simulated", system_id, {"change_seq": r["change_seq"]})
+        return {**r, "simulated": True}
 
     if STATIC.exists():
         app.mount("/", StaticFiles(directory=STATIC, html=True), name="ui")

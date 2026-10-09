@@ -37,6 +37,21 @@ A skipped or quarantined *document* quarantines every dependent (no document att
 Catalog + value-pattern discovery; substitution is character-class/length preserving with valid IBAN check digits (not NIST FF1). Modes: PSEUDONYMIZE (keyed, stable, re-identifiable with key), ANONYMIZE (per-run key destroyed),
 TOKENIZE (Fernet vault, re-identification needs `privacy_officer`). Keys cannot be masked. Submission requires every discovered sensitive field to be covered; release requires residual-PII and pattern scans to pass.
 
+## 6b. Delta refresh (`backend/rfactory/delta/engine.py`)
+A *scenario* is a standing, approved refresh: several **rolling scopes** (e.g. customers, vendors, materials, sales orders, purchase orders; `rolling_days` is resolved from the source's reference date on every run).
+Approval is bound to a configuration hash (scope, policy, masking rules, targets) with separation of duties; schedule edits do not need re-approval, any other change does. Delta runs require stable masking (PSEUDONYMIZE/TOKENIZE): per-run ANONYMIZE keys are rejected because names would differ between objects loaded in different runs.
+
+Each run: capture `to_seq` *before* reading the source → read change documents since the watermark → map changed rows to business objects → select candidates by mechanism → compare content hashes with what was last loaded → build the delta plan (new + changed + deferred) → conflict analysis → checkpointed execution → reconciliation → commit.
+
+| Mechanism | Used for | Finds |
+|---|---|---|
+| `change_documents` | masters, orders, deliveries, POs | any change from the change log |
+| `created_only` | billing, FI documents | only *new* documents from the log; modifications are left to the full sweep and reported as ignored |
+| `full_compare` | custom/unknown objects | every tracked object is hash-compared each run |
+
+A **full sweep** (first run, every N runs, on demand, or forced by a change-log gap) hash-compares every object. Objects a scenario loaded are *owned*: unchanged-in-target ones are replaced, **target drift** (edited in the target since) follows the `TARGET_DRIFT` policy (FAIL default, SKIP, REPLACE). Foreign objects use the normal duplicate/number-range analysis, so colliding keys are never overwritten. Skipped/quarantined objects are *deferred* and re-evaluated each run; skipped changes stay *stale* until applied.
+The watermark advances only when the run completed **and** the release gate passed. A held run needs rollback or an audited acknowledgement; a failed run can be resumed or rolled back; scheduled runs skip scenarios needing attention. Source deletions and objects leaving the window are reported and never deleted from the target. `POST /api/delta/tick` is called by an external scheduler (service account `svc.scheduler`, which can only trigger approved scenarios); runs outside the window are recorded as missed.
+
 ## 7. Full refresh and post-copy (design level)
 13-phase runbook, pair guard (never a PRD target, no heterogeneous DB, no ECC↔S/4), 11 post-copy task definitions with prerequisites, pre/post-check, rollback, evidence, approval.
 Execution needs SWPM/HANA/snapshot adapters — not built.

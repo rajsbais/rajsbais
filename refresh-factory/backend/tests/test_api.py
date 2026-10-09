@@ -103,3 +103,39 @@ def test_capability_matrix_is_honest(client):
     assert statuses <= {"implemented-simulated", "catalogued", "planned", "designed"}
     assert all(c["status"] != "production-ready" for c in caps)
     assert next(c for c in caps if c["module"].startswith("M2"))["status"] == "catalogued"
+
+
+def test_delta_refresh_over_http(client):
+    b = client.post("/api/demo/bootstrap", headers=H("alice.basis")).json()
+    sid, tid = b["source"]["id"], b["target"]["id"]
+    sc = client.post(f"/api/delta/scenarios/demo?source_id={sid}&target_id={tid}", headers=H("alice.basis"))
+    assert sc.status_code == 201
+    scid = sc.json()["id"]
+    assert client.post(f"/api/delta/scenarios/{scid}/run", json={}, headers=H("alice.basis")).status_code == 409  # not approved
+    assert client.post(f"/api/delta/scenarios/{scid}/submit", headers=H("alice.basis")).json()["status"] == "PENDING_APPROVAL"
+    assert client.post(f"/api/delta/scenarios/{scid}/approve", headers=H("alice.basis")).status_code == 403
+    assert client.post(f"/api/delta/scenarios/{scid}/approve", headers=H("refresh.copilot")).status_code == 403
+    ok = client.post(f"/api/delta/scenarios/{scid}/approve", headers=H("carol.approver")).json()
+    assert ok["status"] == "APPROVED" and ok["next_due"]
+    # the demo scenario lacks the Z-field masking rule: the first run must block, not leak
+    r = client.post(f"/api/delta/scenarios/{scid}/run", json={}, headers=H("alice.basis")).json()
+    assert r["status"] == "BLOCKED" and any("no masking rule" in x for x in r["blocking"])
+    assert client.get(f"/api/delta/scenarios/{scid}/history", headers=H("erin.auditor")).json()[0]["status"] == "BLOCKED"
+    rec = client.get(f"/api/delta/scenarios/{scid}/masking/recommended", headers=H("bob.steward")).json()
+    assert [(x["table"], x["field"]) for x in rec] == [("KNA1", "ZZ_CONTACT_EMAIL")]
+    assert client.post(f"/api/delta/scenarios/{scid}/masking/rules", json={"rules": rec}, headers=H("erin.auditor")).status_code == 403
+    chg = client.post(f"/api/delta/scenarios/{scid}/masking/rules", json={"rules": rec}, headers=H("dave.privacy")).json()
+    assert chg["status"] == "DRAFT" and chg["approval"] is None  # rules are part of what was approved
+    client.post(f"/api/delta/scenarios/{scid}/submit", headers=H("alice.basis"))
+    client.post(f"/api/delta/scenarios/{scid}/approve", headers=H("carol.approver"))
+    first = client.post(f"/api/delta/scenarios/{scid}/run", json={}, headers=H("alice.basis")).json()
+    assert first["status"] == "COMPLETED" and first["release"] == "RELEASED" and first["kind"] == "initial"
+    chg_ev = client.post(f"/api/demo/simulate-source-changes?system_id={sid}", headers=H("alice.basis")).json()
+    pv = client.post(f"/api/delta/scenarios/{scid}/preview", json={}, headers=H("alice.basis")).json()
+    assert pv["new"] >= 3 and pv["changed"] >= 3 and pv["blocking"] == []
+    second = client.post(f"/api/delta/scenarios/{scid}/run", json={}, headers=H("alice.basis")).json()
+    assert second["release"] == "RELEASED" and second["from_seq"] == first["to_seq"] and second["to_seq"] == chg_ev["change_seq"]
+    assert client.post("/api/delta/tick", json={}, headers=H("erin.auditor")).status_code == 403
+    assert client.post("/api/delta/tick", json={}, headers=H("svc.scheduler")).status_code == 200
+    assert client.post(f"/api/demo/simulate-source-changes?system_id={sid}", headers=H("erin.auditor")).status_code == 403
+    assert client.post(f"/api/demo/simulate-source-changes?system_id={sid}", headers=H("alice.basis")).json()["simulated"]

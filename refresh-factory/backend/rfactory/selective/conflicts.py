@@ -17,6 +17,7 @@ class ConflictType(str, Enum):
     CONFIG_MISSING = "CONFIG_MISSING"
     NUMBER_RANGE = "NUMBER_RANGE"
     CHAIN_INCONSISTENT = "CHAIN_INCONSISTENT"
+    TARGET_DRIFT = "TARGET_DRIFT"  # delta: an object this scenario loaded earlier was edited in the target since
     POLICY_INVALID = "POLICY_INVALID"
 
 
@@ -34,11 +35,13 @@ ALLOWED: dict[ConflictType, set[Action]] = {
     ConflictType.DUPLICATE_IDENTICAL: {Action.SKIP, Action.UPDATE, Action.FAIL},
     ConflictType.DUPLICATE_DIFFERENT: {Action.FAIL, Action.SKIP, Action.UPDATE, Action.REPLACE, Action.QUARANTINE, Action.REMAP},
     ConflictType.CONFIG_MISSING: {Action.FAIL, Action.QUARANTINE},
+    ConflictType.TARGET_DRIFT: {Action.FAIL, Action.SKIP, Action.REPLACE},
 }
 DEFAULT_POLICY = {
     ConflictType.DUPLICATE_IDENTICAL: Action.SKIP,
     ConflictType.DUPLICATE_DIFFERENT: Action.FAIL,
     ConflictType.CONFIG_MISSING: Action.QUARANTINE,
+    ConflictType.TARGET_DRIFT: Action.FAIL,
 }
 MASTER_TYPES = {"CUSTOMER", "VENDOR", "MATERIAL"}  # in-place update is only meaningful for master data
 EXECUTES = {Action.LOAD, Action.UPDATE, Action.REPLACE}
@@ -126,7 +129,11 @@ def _diff(plan_rows: dict[str, list[dict]], target: TargetAdapter, ignore: set[t
 
 
 def analyze(plan: Plan, target: TargetAdapter, manifest: Manifest, registry: Registry,
-            sensitive: set[tuple[str, str]]) -> ConflictReport:
+            sensitive: set[tuple[str, str]], owned: set[str] | None = None,
+            drift: dict[str, dict] | None = None) -> ConflictReport:
+    """`owned`: instances a delta scenario loaded earlier and whose target copy is unchanged (re-load = REPLACE, no conflict).
+    `drift`: owned instances whose target copy was edited since; resolved by the TARGET_DRIFT policy."""
+    owned, drift = owned or set(), drift or {}
     findings: list[Finding] = []
     n = [0]
 
@@ -190,6 +197,18 @@ def analyze(plan: Plan, target: TargetAdapter, manifest: Manifest, registry: Reg
             if act == Action.QUARANTINE:
                 decision = Action.QUARANTINE
 
+        # 2a. delta: objects this scenario already owns
+        if decision == Action.LOAD and iid in drift:
+            act = Action(override) if override else policy[ConflictType.TARGET_DRIFT]
+            sev = "blocking" if act == Action.FAIL else "warning"
+            add(ConflictType.TARGET_DRIFT, sev, iid,
+                f"{iid} was changed in the target after the last refresh; the source also changed it", act, **drift[iid])
+            decision = {Action.SKIP: Action.SKIP, Action.REPLACE: Action.REPLACE}.get(act, Action.FAIL)
+            if decision == Action.SKIP:
+                equivalent.add(iid)  # the previous version still exists in the target: dependants stay valid
+        elif decision == Action.LOAD and iid in owned:
+            decision = Action.REPLACE
+
         # 2. existing target data
         if decision == Action.LOAD:
             hdr = inst.rows[ot.header][0]
@@ -239,6 +258,8 @@ def analyze(plan: Plan, target: TargetAdapter, manifest: Manifest, registry: Reg
                     add(ConflictType.DUPLICATE_DIFFERENT, sev, iid, msg, act, **det)
 
         # 3. document-chain consistency: a dependency that was not loaded and is not equivalent in target
+        if decision == Action.QUARANTINE and iid in owned:
+            equivalent.add(iid)  # previous version stays in the target
         if decision in EXECUTES:
             broken = [d for d in inst.requires if d in excluded_nonequiv]
             if broken:

@@ -60,6 +60,10 @@ class ProductionWriteBlocked(PermissionError):
     pass
 
 
+class ChangeLogGap(RuntimeError):
+    """The requested change-log position is older than the retained log (archived/purged change documents)."""
+
+
 class TransientError(RuntimeError):
     """Retryable infrastructure error (RFC timeout, lock, etc.)."""
 
@@ -78,6 +82,8 @@ class SourceAdapter(Protocol):
     def get(self, table: str, key: tuple) -> Row | None: ...
     def count(self, table: str) -> int: ...
     def table_counts(self) -> dict[str, int]: ...
+    def change_seq(self) -> int: ...
+    def changes_since(self, seq: int) -> list[dict]: ...
 
 
 @runtime_checkable
@@ -98,7 +104,8 @@ class ReadOnlyView:
     raises AttributeError, so a production source can never be written through this object.
     """
 
-    _READ = {"system", "reference_date", "discover", "select", "lookup", "get", "count", "table_counts"}
+    _READ = {"system", "reference_date", "discover", "select", "lookup", "get", "count", "table_counts", "change_seq",
+             "changes_since"}
 
     def __init__(self, inner: SourceAdapter):
         object.__setattr__(self, "_inner", inner)

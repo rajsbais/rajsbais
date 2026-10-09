@@ -14,6 +14,7 @@ PERMISSIONS: dict[str, set[str]] = {
     "approver": {"plan:approve", "exception:approve", "view", "audit:read"},
     "privacy_officer": {"masking:write", "masking:reidentify", "view", "audit:read"},
     "auditor": {"audit:read", "view"},
+    "scheduler": {"run:execute", "view"},  # service account for the external scheduler: can only trigger approved runs
     "viewer": {"view"},
 }
 # Permissions that an AI agent principal may never hold, whatever roles it is given.
@@ -50,6 +51,7 @@ DEMO_USERS = {
     "dave.privacy": Principal("dave.privacy", "Dave (Privacy officer)", ("privacy_officer",)),
     "erin.auditor": Principal("erin.auditor", "Erin (Auditor)", ("auditor",)),
     "root.admin": Principal("root.admin", "Admin", ("admin", "basis", "approver")),
+    "svc.scheduler": Principal("svc.scheduler", "External scheduler (service)", ("scheduler",), kind="service"),
     "refresh.copilot": Principal("refresh.copilot", "AI Refresh Copilot", ("admin", "approver", "basis"), kind="agent"),
 }
 

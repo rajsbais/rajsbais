@@ -11,7 +11,7 @@ import random
 from datetime import date, timedelta
 from typing import Any, Callable
 
-from .adapter import ProductionWriteBlocked, Row, SapSystem
+from .adapter import ChangeLogGap, ProductionWriteBlocked, Row, SapSystem
 from .ddic import NUMBER_RANGE_OBJECTS, TABLES, key_of, key_str
 
 REF_DATE = date(2026, 9, 30)
@@ -265,10 +265,48 @@ class SimulatedSap:
         self._outbound = outbound if outbound is not None else []
         self._idx: dict[tuple[str, str], dict[Any, list[Row]]] = {}
         self.fault_injector: Callable[[str, str], None] | None = None  # (op, table) -> may raise
+        self.ref_date = REF_DATE
+        # change-document stand-in (CDHDR/CDPOS): every source mutation made through sim_* is logged
+        self.changelog: list[dict] = []
+        self.log_floor = 0  # oldest retained position; older positions raise ChangeLogGap
 
     # --- read side -------------------------------------------------------
     def reference_date(self) -> date:
-        return REF_DATE
+        return self.ref_date
+
+    # --- change documents (read side, part of SourceAdapter) ---------------
+    def change_seq(self) -> int:
+        return self.changelog[-1]["seq"] if self.changelog else self.log_floor
+
+    def changes_since(self, seq: int) -> list[dict]:
+        if seq < self.log_floor:
+            raise ChangeLogGap(f"change log retained from {self.log_floor}, requested {seq}")
+        return [dict(c) for c in self.changelog if c["seq"] > seq]
+
+    # --- SIMULATION helpers: business users posting/changing documents in the source ---
+    def _log(self, table: str, key: tuple, op: str) -> None:
+        self.changelog.append({"seq": self.change_seq() + 1, "table": table, "op": op,
+                               "key": dict(zip(TABLES[table].keys, key))})
+
+    def sim_insert(self, table: str, row: Row) -> None:
+        self.data[table].append(copy.deepcopy(row)); self._invalidate(table)
+        self._log(table, key_of(table, row), "I")
+
+    def sim_update(self, table: str, key: tuple, **fields) -> None:
+        row = self.get(table, key)
+        if row is None:
+            raise KeyError(f"{table}/{key}")
+        row.update(fields); self._invalidate(table)
+        self._log(table, key, "U")
+
+    def sim_delete(self, table: str, key: tuple) -> None:
+        self.data[table] = [r for r in self.data[table] if key_of(table, r) != tuple(key)]
+        self._invalidate(table)
+        self._log(table, tuple(key), "D")
+
+    def sim_purge_log(self) -> None:
+        """Archive the change documents: positions up to now can no longer be read."""
+        self.log_floor = self.change_seq(); self.changelog = []
 
     def _invalidate(self, table: str) -> None:
         for k in [k for k in self._idx if k[0] == table]:
@@ -376,3 +414,67 @@ def make_demo_pair(family: str = "ECC") -> tuple[SimulatedSap, SimulatedSap]:
                        outbound=[{"name": "EDI_PARTNER_OUT", "type": "IDoc", "active": False},
                                  {"name": "MAIL_RELAY", "type": "SMTP", "active": False}])
     return src, tgt
+
+
+def simulate_business_activity(src: SimulatedSap) -> dict:
+    """A realistic slice of source activity, all logged as change documents:
+    a new order for a NEW customer, a renamed customer (PII change), an order quantity change plus a removed item,
+    a new purchase order and a renamed vendor. Returns what happened (keys) for demos/tests."""
+    d, ref = src.data, src.reference_date().isoformat()
+    s4 = bool(d.get("BUT000"))
+    new_cust = "0000100099"
+    src.sim_insert("ADRC", {"ADDRNUMBER": "900099", "NAME1": "Zephyr Freight GmbH", "STREET": "7 Hafenstrasse", "CITY1": "Hamburg",
+                            "POST_CODE1": "20095", "TEL_NUMBER": "+49 40 5555 0199", "SMTP_ADDR": "office@zephyr-freight.com"})
+    src.sim_insert("KNA1", {"KUNNR": new_cust, "NAME1": "Zephyr Freight GmbH", "ORT01": "Hamburg", "PSTLZ": "20095",
+                            "STRAS": "7 Hafenstrasse", "TELF1": "+49 40 5555 0199", "STCD1": "DE555000199", "ADRNR": "900099",
+                            "LAND1": "DE", "ZZ_CONTACT_EMAIL": "kai.zephyr@zephyr-freight.com"})
+    src.sim_insert("KNB1", {"KUNNR": new_cust, "BUKRS": "1000", "AKONT": "140000"})
+    src.sim_insert("KNVV", {"KUNNR": new_cust, "VKORG": "1000", "VTWEG": "10", "SPART": "00", "KDGRP": "01"})
+    src.sim_insert("KNBK", {"KUNNR": new_cust, "BKVID": "0001", "BANKS": "DE", "BANKL": "20030000", "BANKN": "5550001990",
+                            "IBAN": "DE44200300005550001990", "KOINH": "Zephyr Freight GmbH"})
+    if s4:
+        src.sim_insert("BUT000", {"PARTNER": new_cust, "BU_GROUP": "CUST", "NAME_ORG1": "Zephyr Freight GmbH",
+                                  "BU_SORT1": "ZEPHYR FREIGHT GMBH", "TYPE": "2"})
+    vb = f"{max(int(r['VBELN']) for r in d['VBAK']) + 1:010d}"
+    mat = next(r["MATNR"] for r in d["MARC"] if r["WERKS"] == "1000")
+    src.sim_insert("VBAK", {"VBELN": vb, "ERDAT": ref, "AUART": "OR", "VKORG": "1000", "BUKRS_VF": "1000", "KUNNR": new_cust,
+                            "NETWR": 500.0, "WAERK": "EUR", "ERNAM": "BATCHUSR"})
+    src.sim_insert("VBAP", {"VBELN": vb, "POSNR": "000010", "MATNR": mat, "WERKS": "1000", "KWMENG": 10, "NETWR": 500.0})
+    for r in d["NRIV"]:
+        if r["OBJECT"] == "SD_ORDER":
+            r["NRLEVEL"] = int(vb)
+
+    cutoff = (src.reference_date() - timedelta(days=60)).isoformat()
+    inscope = sorted((r for r in d["VBAK"] if r["BUKRS_VF"] == "1000" and r["ERDAT"] >= cutoff and r["VBELN"] != vb),
+                     key=lambda r: r["VBELN"], reverse=True)  # newest documents: untouched by the demo target's tester orders
+    multi = next(r for r in inscope if len(src.lookup("VBAP", "VBELN", r["VBELN"])) > 1)
+    items = src.lookup("VBAP", "VBELN", multi["VBELN"])
+    keep, drop = items[0], items[-1]
+    src.sim_delete("VBAP", (drop["VBELN"], drop["POSNR"]))
+    src.sim_update("VBAP", (keep["VBELN"], keep["POSNR"]), KWMENG=keep["KWMENG"] + 5, NETWR=round(keep["NETWR"] + 100, 2))
+    remaining = src.lookup("VBAP", "VBELN", multi["VBELN"])
+    src.sim_update("VBAK", (multi["VBELN"],), NETWR=round(sum(r["NETWR"] for r in remaining), 2))  # header = sum of items
+
+    renamed = next(r for r in sorted(d["KNA1"], key=lambda r: r["KUNNR"], reverse=True)
+                   if any(k["KUNNR"] == r["KUNNR"] and k["BUKRS"] == "1000" for k in d["KNB1"]) and r["KUNNR"] != new_cust)
+    new_name = "Meridian Components AG"
+    src.sim_update("KNA1", (renamed["KUNNR"],), NAME1=new_name, TELF1="+49 89 7777 0001")
+    src.sim_update("ADRC", (renamed["ADRNR"],), NAME1=new_name, TEL_NUMBER="+49 89 7777 0001")
+    if s4:
+        src.sim_update("BUT000", (renamed["KUNNR"],), NAME_ORG1=new_name, BU_SORT1=new_name.upper()[:20])
+
+    eb = f"{max(int(r['EBELN']) for r in d['EKKO']) + 1:010d}"
+    ven = next(r["LIFNR"] for r in d["LFB1"] if r["BUKRS"] == "1000")
+    src.sim_insert("EKKO", {"EBELN": eb, "BUKRS": "1000", "LIFNR": ven, "BEDAT": ref, "EKORG": "1000", "BSART": "NB"})
+    src.sim_insert("EKPO", {"EBELN": eb, "EBELP": "00010", "MATNR": mat, "WERKS": "1000", "MENGE": 40, "NETPR": 12.5})
+    for r in d["NRIV"]:
+        if r["OBJECT"] == "MM_PO":
+            r["NRLEVEL"] = int(eb)
+    vendor = next(r for r in d["LFA1"] if r["LIFNR"] == ven)
+    src.sim_update("LFA1", (ven,), NAME1="Orchard Supply Partners")
+    src.sim_update("ADRC", (vendor["ADRNR"],), NAME1="Orchard Supply Partners")
+    if s4:
+        src.sim_update("BUT000", (ven,), NAME_ORG1="Orchard Supply Partners", BU_SORT1="ORCHARD SUPPLY PARTN")
+    return {"new_customer": new_cust, "new_order": vb, "changed_order": multi["VBELN"], "dropped_item": drop["POSNR"],
+            "renamed_customer": renamed["KUNNR"], "new_name": new_name, "new_po": eb, "renamed_vendor": ven,
+            "change_seq": src.change_seq()}

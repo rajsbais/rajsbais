@@ -76,6 +76,8 @@ class RefreshService:
         self.executor = Executor(self.registry, self.data_dir / "staging", self.audit)
         self.engines: dict[str, MaskingEngine] = {}
         self.required_sensitive: dict[str, list[dict]] = {}
+        from .delta.engine import DeltaService  # lazy: delta imports this module
+        self.delta = DeltaService(self)
 
     # ---------------- landscape ----------------
     def register_system(self, actor: Principal, system: SapSystem, adapter: SimulatedSap | None = None) -> SapSystem:
