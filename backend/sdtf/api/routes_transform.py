@@ -449,7 +449,7 @@ CAPABILITIES = [
     {"area": "Selective scope designer + manifest", "status": "IMPLEMENTED", "note": "Versioned, hashed, four-eyes approval"},
     {"area": "Carve-out classification & reports", "status": "IMPLEMENTED", "note": "Completeness, residual exposure, intercompany balances"},
     {"area": "Transformation rule DSL", "status": "IMPLEMENTED", "note": "YAML DSL, validation, embedded tests, dry run"},
-    {"area": "Extraction", "status": "SIMULATED", "note": "Synthetic store extractor; RFC/OData/CDS adapters planned"},
+    {"area": "Extraction", "status": "IMPLEMENTED", "note": "Synthetic store extractor and RFC adapter against the ABAP add-on contract (pushdown, snapshot token, checksums); RFC verified on the simulated add-on only, not on a live SAP system; OData/CDS adapters planned"},
     {"area": "Distributed extraction workers", "status": "IMPLEMENTED", "note": "Claim-based partition jobs with leases, crash re-queue, last-worker finalisation; `sdtf worker` processes / pods"},
     {"area": "Columnar staging (Parquet on local / S3 / GCS / Azure via fsspec, key-range sidecar index)", "status": "IMPLEMENTED", "note": "Per run/table/partition files, zstd; object-store path tested with the in-memory filesystem"},
     {"area": "Observability (OpenTelemetry traces, metrics, trace-correlated JSON logs)", "status": "IMPLEMENTED", "note": "OTLP/HTTP export when OTEL_EXPORTER_OTLP_ENDPOINT is set; no-op otherwise"},

@@ -1,8 +1,10 @@
 """SAP connectivity adapter contracts.
 
-Only the SyntheticStoreExtractor is implemented. The RFC, OData and CDS adapters define the production
-contract (partitioning, snapshot consistency, throttling, checkpoint/restart) and raise NotImplementedError
-so that nobody can mistake them for working connectors. See docs/02-sap-connectivity-design.md.
+Implemented: `SyntheticStoreExtractor` (in-platform record store) and `RfcExtractor` (SAP add-on through RFC,
+runtime/extraction.py + runtime/rfc.py; verified against the simulated add-on, not yet against a live SAP
+system). The OData and CDS adapters define the production contract (partitioning, snapshot consistency,
+throttling, checkpoint/restart) and raise NotImplementedError so that nobody can mistake them for working
+connectors. See docs/02-sap-connectivity-design.md.
 """
 from __future__ import annotations
 
@@ -34,31 +36,6 @@ class Extractor(Protocol):
     def snapshot(self) -> str: ...
     def partitions(self) -> list[Partition]: ...
     def extract(self, partition: Partition) -> Iterable[ExtractedRecord]: ...
-
-
-class RfcExtractor:
-    """ABAP/RFC-based extraction through a released read module in the SAP add-on (planned).
-
-    Contract: the add-on exposes an RFC-enabled function that accepts (table, selection predicate, package
-    size, cursor) and returns rows with an application-level consistency token. Authorization is enforced by
-    SAP (S_TABU_NAM / S_RFC) under a least-privilege technical user. Throttling via package size and a
-    server-side work-process budget.
-    """
-
-    name = "RFC"
-    status = "PLANNED"
-
-    def __init__(self, destination: str):
-        self.destination = destination
-
-    def snapshot(self) -> str:
-        raise NotImplementedError("RFC adapter is planned; no SAP connectivity exists in this build")
-
-    def partitions(self) -> list[Partition]:
-        raise NotImplementedError("RFC adapter is planned; no SAP connectivity exists in this build")
-
-    def extract(self, partition: Partition):
-        raise NotImplementedError("RFC adapter is planned; no SAP connectivity exists in this build")
 
 
 class ODataExtractor:
@@ -103,7 +80,7 @@ class CdsExtractor:
 
 ADAPTER_REGISTRY = {
     "SYNTHETIC": {"status": "SIMULATED", "description": "In-platform synthetic record store; no SAP system involved"},
-    "RFC": {"status": "PLANNED", "description": "ABAP add-on + RFC read module", "class": RfcExtractor},
+    "RFC": {"status": "IMPLEMENTED", "description": "ABAP add-on read modules over RFC (pyrfc) or the simulated add-on; not yet verified against a live SAP system", "note": "unverified against a live SAP system"},
     "ODATA": {"status": "PLANNED", "description": "Released OData APIs", "class": ODataExtractor},
     "CDS": {"status": "PLANNED", "description": "CDS views / ODP / supported HANA access", "class": CdsExtractor},
 }

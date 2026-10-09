@@ -5,7 +5,7 @@ Bluefield transformations. This repository contains **executable source code** (
 migrations, deployment) for the Phase 1 foundation and the first vertical slice.
 
 > **Honesty note.** Everything here runs against a synthetic ECC-like landscape and a simulated S/4HANA target.
-> No SAP system is read or written. Per-area status (IMPLEMENTED / SIMULATED / PARTIAL / PLANNED / UNSUPPORTED) is
+> No SAP system is read or written. The RFC adapter is verified against a simulated add-on, not a live system. Per-area status (IMPLEMENTED / SIMULATED / PARTIAL / PLANNED / UNSUPPORTED) is
 > maintained in [`docs/capability-status.md`](docs/capability-status.md) and shown in the product (`/platform/capabilities`).
 
 ## What works today (verified)
@@ -39,8 +39,9 @@ migrations, deployment) for the Phase 1 foundation and the first vertical slice.
 ## Quick start
 ```bash
 python3 -m venv .venv && . .venv/bin/activate && pip install -e "backend[dev]"
-cd backend && pytest -q                      # 100 tests (+ opt-in UI e2e, OIDC e2e and Neo4j integration)
+cd backend && pytest -q                      # 112 tests (+ opt-in UI e2e, OIDC e2e and Neo4j integration)
 python -m sdtf.cli demo                      # full vertical slice, prints the execution report
+python -m sdtf.cli demo --connector RFC      # same slice extracted through the RFC adapter on the simulated SAP add-on
 python -m sdtf.cli serve                     # API http://localhost:8000/docs
 cd ../frontend && npm install && npm run dev # UI http://localhost:5173 (login architect/architect)
 ```

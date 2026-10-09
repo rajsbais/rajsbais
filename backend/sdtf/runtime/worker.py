@@ -32,7 +32,7 @@ from ..models import ExtractionJob, MigrationRun, RuleSet, SapSystem, ScopeManif
 from ..reconciliation.service import reconcile_partition, reconcile_partitions, run_summary
 from ..rules.engine import parse_ruleset
 from ..staging import get_backend
-from .extraction import SyntheticStoreExtractor, extract_partition
+from .extraction import ManifestExtractor, build_extractor, extract_partition
 from .load import SimulatedTargetLoader
 from .transform import run_transformation
 
@@ -48,13 +48,13 @@ def _aware(dt: datetime | None) -> datetime | None:
     return dt if dt is None or dt.tzinfo else dt.replace(tzinfo=timezone.utc)
 
 
-def _extractor_for(session: Session, run: MigrationRun, cache: dict | None = None) -> SyntheticStoreExtractor:
+def _extractor_for(session: Session, run: MigrationRun, cache: dict | None = None) -> ManifestExtractor:
     cache = cache if cache is not None else {}
     key = ("ex", run.id)
     if key not in cache:
         m = session.get(ScopeManifest, run.manifest_id)
-        store = RecordStore.load(session, run.source_system_id)
-        cache[key] = SyntheticStoreExtractor(store, m.selection.get("classification", {}), set(m.definition["company_codes"]))
+        src = session.get(SapSystem, run.source_system_id)
+        cache[key] = build_extractor(session, src, m.selection.get("classification", {}), set(m.definition["company_codes"]))
     return cache[key]
 
 

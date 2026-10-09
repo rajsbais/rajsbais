@@ -27,6 +27,15 @@ Alembic (`backend/alembic.ini`, `backend/sdtf/migrations`). `alembic upgrade hea
   the token endpoint; the UI must be served over https (or localhost). `SDTF_OIDC_CLIENT_SECRET` only for confidential
   clients; `SDTF_OIDC_EXCHANGE=browser` if the provider must be called from the browser instead. Check
   `GET /api/v1/auth/oidc/config` (reports `error` when discovery fails) and set `SDTF_DEV_USERS=0`.
+* **Connect a real SAP source over RFC** (ADR-0013): have Basis import the add-on (`sap-abap/src/`, reviewed and
+  activated by an ABAP developer), create a technical user with `S_RFC` for FUGR `ZSDTF` and `S_TABU_NAM` 03 for the
+  tables in scope, install the SAP NW RFC SDK + `pyrfc` in the API/worker image, set `SDTF_RFC_DEST_<SID>` (JSON
+  `pyrfc.Connection` parameters, e.g. `{"ashost":"…","sysnr":"00","client":"100","user":"SDTF_READ","passwd":"env:ECP_PW"}`
+  or SNC parameters) and the referenced secret, register the system with connector `RFC`, then run
+  `POST /systems/{id}/connector/test`: it reports transport, snapshot, T001 metadata and a verified 5-row package, or
+  the exact error (`RFC_UNAVAILABLE`, `NOT_AUTHORIZED`, `SNAPSHOT_*`, `CHECKSUM_MISMATCH`, logon/communication
+  errors). Tune `SDTF_RFC_PACKAGE_SIZE` (default 5000, add-on cap 10 000) and `SDTF_RFC_KEY_CHUNK` to the source's
+  work-process budget. Without a system, `meta.rfc.transport = "simulated"` runs the same code path on synthetic data.
 * **SSO sign-in fails**: the callback screen shows the reason. `state mismatch` / `no login in progress`: the
   browser tab lost `sessionStorage` (private window, redirect across hosts) or the attempt is older than 10 minutes.
   `PKCE verification failed`: the provider does not support S256 or the client registration disables PKCE.

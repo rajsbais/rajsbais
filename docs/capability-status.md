@@ -11,7 +11,7 @@
 | Versioned immutable manifest, dispositions, four-eyes approval | IMPLEMENTED | |
 | Carve-out classification, completeness, residual exposure, IC balances | IMPLEMENTED | cleanup never executed automatically |
 | Transformation rule DSL, validation, tests, dry run, rule factory | IMPLEMENTED | |
-| Extraction | SIMULATED | synthetic store adapter; RFC/OData/CDS/File planned |
+| Extraction | IMPLEMENTED (RFC client) / SIMULATED (source) | synthetic store adapter; RFC adapter against the ABAP add-on contract (pyrfc or simulated add-on) verified end-to-end on the simulated add-on only; ABAP reference sources not compiled; OData/CDS/File planned |
 | Distributed stage workers: extraction, transformation and load as per-partition pipelined jobs, reconciliation as per-table/functional/financial jobs (claim/lease, crash re-queue, atomic stage closing, idle self-healing) | IMPLEMENTED | tested with in-process and separate worker processes; only report rendering runs in the closing worker |
 | Columnar staging (Parquet on local, S3, GCS, Azure or memory filesystems via fsspec) | IMPLEMENTED | parity-tested against relational staging; object-store path tested with the in-memory filesystem, not a live bucket |
 | Transformation stage with lineage & exceptions | IMPLEMENTED | |

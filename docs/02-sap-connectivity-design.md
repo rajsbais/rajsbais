@@ -1,6 +1,7 @@
 # 02 — Source and target SAP connectivity design
 
-**Status: design + contracts. Only the synthetic adapter is implemented.** See `backend/sdtf/runtime/adapters.py`
+**Status: synthetic and RFC adapters implemented; the RFC adapter is verified against the simulated add-on, not
+against a live SAP system (ADR-0013). OData/CDS/File remain contracts.** See `backend/sdtf/runtime/adapters.py`
 and `sap-abap/README.md`.
 
 ## Principles
@@ -14,10 +15,23 @@ and `sap-abap/README.md`.
 | Adapter | Mechanism | Fit | Status |
 |---|---|---|---|
 | SYNTHETIC | in-platform record store | development, CI, demos | SIMULATED |
-| RFC | ABAP add-on `Z_SDTF_READ_PACKAGE` (package cursor, consistency token, server-side predicate pushdown) | bulk transactional history on ECC | PLANNED |
+| RFC | ABAP add-on `Z_SDTF_READ_PACKAGE` (keyset package cursor, consistency token, server-side predicate pushdown, per-package checksum) via `pyrfc` or the simulated add-on (`runtime/rfc.py`) | bulk transactional history on ECC | IMPLEMENTED (unverified against a live system) |
 | CDS / ODP | CDS views with company-code/fiscal-year parameters, ODP delta queues | S/4 sources, high-volume tables, delta | PLANNED |
 | ODATA | released APIs | master data and open documents, low volume | PLANNED |
 | FILE | SAP-exported files (e.g. archive extracts) | one-off historical loads | PLANNED |
+
+### RFC adapter (implemented)
+`RfcExtractor` plans partitions from the approved manifest exactly like the synthetic adapter and, per partition,
+reads the header table with the organisational predicate (`BUKRS EQ <owner>`) plus the object keys as EQ ranges
+(chunks of `SDTF_RFC_KEY_CHUNK`, only while the partition has at most `SDTF_RFC_KEY_PUSHDOWN_LIMIT` objects; larger
+partitions push the organisational predicate only and filter keys client-side), then item tables by header-key
+ranges. T001K is read once per run. Every package is verified against `EV_CHECKSUM`; the run's snapshot id is the
+add-on's token. Extraction metrics report calls, packages, rows transferred and the pushdown mix (`adapter_stats`).
+Transports: `PyRfcTransport` (SAP NW RFC SDK through `pyrfc`, SAP-distributed, see github.com/SAP/PyRFC; not on
+PyPI for current releases) and `SimulatedAbapAddon` (Python implementation of the function modules over the
+record store, used by tests, `sdtf demo --connector RFC` and the connector test endpoint). Destination parameters
+come from `SDTF_RFC_DEST_<SID>` / `meta.rfc.dest` with secrets referenced as `env:NAME`; the API refuses to store
+passwords. SNC parameters are passed through to `pyrfc` unchanged.
 
 ### Consistency strategy
 1. `Z_SDTF_OPEN_SNAPSHOT` returns a token = (DB snapshot id where available, change watermark per table, timestamp).

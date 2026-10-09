@@ -12,13 +12,22 @@ export default function Landscape() {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const run = async () => { setBusy(true); setErr(null); try { await api(`/systems/${sysId}/discover`, { method: "POST" }); disc.reload(); reload(); } catch (e: any) { setErr(e.message); } finally { setBusy(false); } };
+  const [conn, setConn] = useState<any>(null);
+  const testConnector = async () => { setBusy(true); setErr(null); setConn(null); try { setConn(await api(`/systems/${sysId}/connector/test`, { method: "POST" })); } catch (e: any) { setErr(e.message); } finally { setBusy(false); } };
   const s = disc.data?.summary;
   if (!project) return <Banner>Select or create a project first.</Banner>;
   return (
     <div>
-      <Card title="Systems" actions={<><select value={sysId || ""} onChange={(e) => setSys(e.target.value)}>{project.systems.map((x: any) => <option key={x.id} value={x.id}>{x.role} {x.sid}/{x.client} ({x.product} {x.release})</option>)}</select> <button disabled={busy || !sysId} onClick={run}>{busy ? "Discovering…" : "Run discovery"}</button></>}>
+      <Card title="Systems" actions={<><select value={sysId || ""} onChange={(e) => setSys(e.target.value)}>{project.systems.map((x: any) => <option key={x.id} value={x.id}>{x.role} {x.sid}/{x.client} ({x.product} {x.release})</option>)}</select> <button disabled={busy || !sysId} onClick={run}>{busy ? "Discovering…" : "Run discovery"}</button>{system?.connector === "RFC" && <button className="secondary" disabled={busy} onClick={testConnector}>Test RFC connector</button>}</>}>
         <Table cols={[{ k: "role", h: "Role" }, { k: "sid", h: "SID" }, { k: "client", h: "Client" }, { k: "product", h: "Product" }, { k: "release", h: "Release" }, { k: "database", h: "Database" }, { k: "connector", h: "Connector" }, { k: "connector_status", h: "Connector status", r: (r) => <Pill value={r.connector_status} /> }, { k: "logical_system", h: "Logical system" }]} rows={[source, target].filter(Boolean)} />
         <ErrorBox error={err} />
+        {conn && <div className="grid2" style={{ marginTop: 10 }}>
+          <Card title={conn.ok ? "RFC connector test passed" : "RFC connector test failed"}>
+            <KV obj={conn.ok ? { transport: conn.transport, snapshot: conn.snapshot, valid_until: conn.valid_until, table: conn.table?.table, key_fields: (conn.table?.key_fields || []).join(", "), rows_in_table: conn.table?.rows, sample_rows: conn.sample_rows, checksum_verified: conn.checksum_verified ? "yes" : "no", duration_ms: conn.duration_ms } : { error: conn.error, detail: conn.detail, duration_ms: conn.duration_ms }} />
+            <p className="muted">{conn.transport === "SIMULATED_ADDON" ? "Simulated SAP add-on: the contract runs on synthetic data; no SAP system is involved." : "Live SAP system via pyrfc: snapshot opened, T001 metadata read and one 5-row package verified against its checksum."}</p>
+          </Card>
+          <Card title="Destination (secrets masked)"><KV obj={conn.destination || {}} /></Card>
+        </div>}
       </Card>
       {disc.error && <Banner>No discovery snapshot for {system?.sid}. Run discovery to collect release, organisational, table and object information.</Banner>}
       {s && <>

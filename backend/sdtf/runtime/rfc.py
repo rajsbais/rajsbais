@@ -1,0 +1,386 @@
+"""RFC transport for the SAP add-on contract (sap-abap/README.md).
+
+Three layers:
+* `RfcTransport` - anything with `call(function_name, **params) -> dict` using RFC parameter names
+  (IV_TABLE, IT_PREDICATE, ET_ROWS, ...). `PyRfcTransport` binds to SAP's NW RFC SDK through `pyrfc`;
+  `SimulatedAbapAddon` is a Python implementation of the add-on's function modules over a `RecordStore`.
+* `AbapAddonClient` - typed calls on top of a transport: open snapshot, table metadata, package reads with
+  checksum verification and keyset cursors.
+* `resolve_destination` - RFC destination parameters for a system, secrets taken from the environment.
+
+The simulated add-on is the executable specification of the contract: every behaviour it enforces (snapshot
+validity, S_TABU_NAM-style authorization, predicate semantics, package cap, primary-key ordering, checksum) is
+what the ABAP reference implementation in `sap-abap/src/` must provide. It involves no SAP system.
+"""
+from __future__ import annotations
+
+import base64
+import contextlib
+import hashlib
+import json
+import os
+import secrets
+import threading
+import time
+from dataclasses import dataclass, field
+from fnmatch import fnmatchcase
+from typing import Any, Iterator, Protocol
+
+from ..catalog.tables import TABLES, record_key
+from . import rfc_config
+
+# ------------------------------------------------------------------------------------------------ contract constants
+FM_OPEN_SNAPSHOT = "Z_SDTF_OPEN_SNAPSHOT"
+FM_TABLE_METADATA = "Z_SDTF_TABLE_METADATA"
+FM_READ_PACKAGE = "Z_SDTF_READ_PACKAGE"
+FM_CDC_POLL = "Z_SDTF_CDC_POLL"
+ABAP_TRUE, ABAP_FALSE = "X", ""
+POSITIVE_OPS = ("EQ", "BT", "GE", "GT", "LE", "LT", "CP")
+NEGATIVE_OPS = ("NE", "NB", "NP")
+SERVER_MAX_PACKAGE = 10000  # the add-on clamps IV_PACKAGE to this
+
+
+class RfcError(Exception):
+    """An ABAP exception of the add-on (key as in the function module's EXCEPTIONS) or a transport failure."""
+
+    def __init__(self, key: str, message: str = ""):
+        super().__init__(f"{key}: {message}" if message else key)
+        self.key, self.message = key, message
+
+
+class RfcIntegrityError(RfcError):
+    def __init__(self, message: str):
+        super().__init__("CHECKSUM_MISMATCH", message)
+
+
+class RfcUnavailable(RfcError):
+    def __init__(self, message: str):
+        super().__init__("RFC_UNAVAILABLE", message)
+
+
+class RfcTransport(Protocol):
+    name: str
+
+    def call(self, function_name: str, **params: Any) -> dict: ...
+
+
+def row_json(row: dict) -> str:
+    return json.dumps(row, sort_keys=True, separators=(",", ":"), ensure_ascii=False, default=str)
+
+
+def package_checksum(json_rows: list[str]) -> str:
+    """SHA-256 over the row JSON strings exactly as transmitted, joined by '\\n' (so field order on the ABAP side is irrelevant)."""
+    return hashlib.sha256("\n".join(json_rows).encode("utf-8")).hexdigest()
+
+
+# -------------------------------------------------------------------------------------------------------- predicates
+def predicate(field_name: str, op: str, low: Any, high: Any = None) -> dict:
+    op = op.upper()
+    if op not in POSITIVE_OPS + NEGATIVE_OPS:
+        raise ValueError(f"unsupported predicate op {op}")
+    return {"FIELD": field_name.upper(), "OP": op, "LOW": "" if low is None else str(low), "HIGH": "" if high is None else str(high)}
+
+
+def _match_one(value: str, p: dict) -> bool:
+    op, low, high = p["OP"], p["LOW"], p.get("HIGH", "")
+    if op in ("EQ", "NE"):
+        r = value == low
+    elif op in ("BT", "NB"):
+        r = low <= value <= high
+    elif op == "GE":
+        r = value >= low
+    elif op == "GT":
+        r = value > low
+    elif op == "LE":
+        r = value <= low
+    elif op == "LT":
+        r = value < low
+    elif op in ("CP", "NP"):
+        r = fnmatchcase(value, low.replace("+", "?"))
+    else:
+        raise RfcError("INVALID_PREDICATE", f"op {op}")
+    return (not r) if op in NEGATIVE_OPS else r
+
+
+def predicates_match(row: dict, preds: list[dict]) -> bool:
+    """SAP range-table semantics: predicates on the same field - positive ones OR-ed, negative ones AND-ed
+    (exclusions); different fields AND-ed. An empty list matches everything."""
+    by_field: dict[str, list[dict]] = {}
+    for p in preds:
+        by_field.setdefault(p["FIELD"], []).append(p)
+    for f, ps in by_field.items():
+        v = "" if row.get(f) is None else str(row.get(f))
+        pos = [p for p in ps if p["OP"] in POSITIVE_OPS]
+        neg = [p for p in ps if p["OP"] in NEGATIVE_OPS]
+        if pos and not any(_match_one(v, p) for p in pos):
+            return False
+        if neg and not all(_match_one(v, p) for p in neg):
+            return False
+    return True
+
+
+def _pred_hash(preds: list[dict]) -> str:
+    return hashlib.sha1(json.dumps(preds, sort_keys=True).encode()).hexdigest()[:12]
+
+
+# --------------------------------------------------------------------------------------------- simulated ABAP add-on
+@dataclass
+class AddonStats:
+    calls: int = 0
+    packages: int = 0
+    rows_served: int = 0
+    max_package: int = 0
+    tables: dict[str, int] = field(default_factory=dict)
+    full_scans: int = 0  # reads without any predicate
+
+
+class SimulatedAbapAddon:
+    """Python implementation of the add-on's RFC-enabled function modules over an in-memory RecordStore.
+
+    Faithful to the contract, not to SAP internals: it validates the snapshot token, enforces a table allow-list
+    (the equivalent of S_TABU_NAM), pushes predicates down, orders by primary key, pages with an opaque keyset
+    cursor, caps the package size and signs every package with a checksum. Used in tests, demos and as the
+    reference behaviour for the ABAP implementation."""
+
+    name = "SIMULATED_ADDON"
+
+    def __init__(self, store, allowed_tables: set[str] | None = None, snapshot_ttl: float = 3600.0, server_max_package: int = SERVER_MAX_PACKAGE, clock=None):
+        self.store = store
+        self.allowed = {t.upper() for t in allowed_tables} if allowed_tables is not None else None
+        self.snapshot_ttl = snapshot_ttl
+        self.server_max_package = server_max_package
+        self._clock = clock or time.time
+        self._snapshots: dict[str, float] = {}
+        self._sorted: dict[str, list[tuple[tuple[str, ...], dict]]] = {}
+        self._lock = threading.Lock()
+        self.stats = AddonStats()
+
+    # -- helpers
+    def _authorize(self, table: str) -> None:
+        if table not in TABLES and not (table.startswith("Z") or table.startswith("Y")):
+            raise RfcError("TABLE_UNKNOWN", f"table {table} does not exist in the DDIC")
+        if self.allowed is not None and table not in self.allowed:
+            raise RfcError("NOT_AUTHORIZED", f"no S_TABU_NAM authorization for {table} (activity 03)")
+
+    def _check_snapshot(self, token: str) -> None:
+        exp = self._snapshots.get(token)
+        if exp is None:
+            raise RfcError("SNAPSHOT_UNKNOWN", "open a snapshot with Z_SDTF_OPEN_SNAPSHOT first")
+        if exp < self._clock():
+            raise RfcError("SNAPSHOT_EXPIRED", "consistency token expired; open a new snapshot and restart the partition")
+
+    def _key_tuple(self, table: str, row: dict) -> tuple[str, ...]:
+        td = TABLES.get(table)
+        keys = td.key_fields if td else sorted(row)
+        return tuple("" if row.get(k) is None else str(row.get(k)) for k in keys)
+
+    def _rows_sorted(self, table: str) -> list[tuple[tuple[str, ...], dict]]:
+        if table not in self._sorted:
+            self._sorted[table] = sorted(((self._key_tuple(table, r), r) for r in self.store.rows(table)), key=lambda kr: kr[0])
+        return self._sorted[table]
+
+    @staticmethod
+    def _encode_cursor(table: str, phash: str, last_key: tuple[str, ...], snapshot: str) -> str:
+        return base64.urlsafe_b64encode(json.dumps({"t": table, "p": phash, "k": list(last_key), "s": snapshot}).encode()).decode()
+
+    @staticmethod
+    def _decode_cursor(cursor: str) -> dict:
+        try:
+            return json.loads(base64.urlsafe_b64decode(cursor.encode()))
+        except Exception as e:  # noqa: BLE001
+            raise RfcError("INVALID_CURSOR", "cursor is not one issued by this add-on") from e
+
+    # -- function modules
+    def call(self, function_name: str, **params: Any) -> dict:
+        with self._lock:
+            self.stats.calls += 1
+        fm = {FM_OPEN_SNAPSHOT: self._open_snapshot, FM_TABLE_METADATA: self._table_metadata, FM_READ_PACKAGE: self._read_package, FM_CDC_POLL: self._cdc_poll}.get(function_name)
+        if fm is None:
+            raise RfcError("FU_NOT_FOUND", f"function module {function_name} does not exist")
+        return fm(**{k.upper(): v for k, v in params.items()})
+
+    def _open_snapshot(self, IT_TABLES: list | None = None, **_: Any) -> dict:
+        token = "snap-" + secrets.token_hex(8)
+        valid_until = self._clock() + self.snapshot_ttl
+        self._snapshots[token] = valid_until
+        tables = [t["TABNAME"] if isinstance(t, dict) else str(t) for t in (IT_TABLES or [])] or self.store.tables()
+        wm = [{"TABNAME": t, "WATERMARK": f"rows={self.store.count(t)}"} for t in tables]
+        return {"EV_SNAPSHOT": token, "EV_VALID_UNTIL": time.strftime("%Y%m%d%H%M%S", time.gmtime(valid_until)), "ET_WATERMARKS": wm}
+
+    def _table_metadata(self, IV_TABLE: str = "", **_: Any) -> dict:
+        table = IV_TABLE.upper()
+        self._authorize(table)
+        td = TABLES.get(table)
+        fields = [{"FIELDNAME": f, "KEYFLAG": ABAP_TRUE if (td and f in td.key_fields) else ABAP_FALSE, "DATATYPE": "CHAR", "LENG": 0} for f in (td.fields if td else sorted({k for r in self.store.rows(table)[:50] for k in r}))]
+        n = self.store.count(table)
+        return {"ET_FIELDS": fields, "EV_ROWS": n, "EV_SIZE_MB": round(n * (td.avg_row_bytes if td else 256) / 1048576, 3), "EV_TABCLASS": "TRANSP", "EV_AUTHORIZED": ABAP_TRUE}
+
+    def _read_package(self, IV_TABLE: str = "", IT_PREDICATE: list | None = None, IV_PACKAGE: int = 1000, IV_CURSOR: str = "", IV_SNAPSHOT: str = "", **_: Any) -> dict:
+        table = IV_TABLE.upper()
+        self._authorize(table)
+        self._check_snapshot(IV_SNAPSHOT)
+        preds = [{"FIELD": p["FIELD"].upper(), "OP": p["OP"].upper(), "LOW": str(p.get("LOW", "")), "HIGH": str(p.get("HIGH", ""))} for p in (IT_PREDICATE or [])]
+        for p in preds:
+            if p["OP"] not in POSITIVE_OPS + NEGATIVE_OPS:
+                raise RfcError("INVALID_PREDICATE", f"op {p['OP']} on {p['FIELD']}")
+        phash = _pred_hash(preds)
+        package = max(1, min(int(IV_PACKAGE or 1000), self.server_max_package))
+        after: tuple[str, ...] | None = None
+        if IV_CURSOR:
+            c = self._decode_cursor(IV_CURSOR)
+            if c.get("t") != table or c.get("p") != phash or c.get("s") != IV_SNAPSHOT:
+                raise RfcError("INVALID_CURSOR", "cursor belongs to a different table, predicate or snapshot")
+            after = tuple(c["k"])
+        out: list[dict] = []
+        last: tuple[str, ...] | None = None
+        eof = True
+        for key, row in self._rows_sorted(table):
+            if after is not None and key <= after:
+                continue
+            if not predicates_match(row, preds):
+                continue
+            if len(out) == package:
+                eof = False
+                break
+            out.append(row)
+            last = key
+        json_rows = [row_json(r) for r in out]
+        with self._lock:
+            self.stats.packages += 1
+            self.stats.rows_served += len(out)
+            self.stats.max_package = max(self.stats.max_package, len(out))
+            self.stats.tables[table] = self.stats.tables.get(table, 0) + len(out)
+            if not preds:
+                self.stats.full_scans += 1
+        return {"ET_ROWS": [{"ROWNO": i + 1, "JSON": j} for i, j in enumerate(json_rows)], "EV_CURSOR": self._encode_cursor(table, phash, last, IV_SNAPSHOT) if (last is not None and not eof) else "", "EV_EOF": ABAP_TRUE if eof else ABAP_FALSE, "EV_CHECKSUM": package_checksum(json_rows), "EV_ROWS": len(out)}
+
+    def _cdc_poll(self, **_: Any) -> dict:
+        raise RfcError("NOT_IMPLEMENTED", "Z_SDTF_CDC_POLL is not part of this increment (delta capture is on the backlog, docs/07)")
+
+
+# ------------------------------------------------------------------------------------------------------ pyrfc binding
+class PyRfcTransport:
+    """SAP NW RFC SDK binding through the `pyrfc` package (SAP-distributed; not on PyPI for recent releases:
+    https://github.com/SAP/PyRFC). Calls are serialised on one connection. Not verified against a live SAP
+    system in this repository."""
+
+    name = "PYRFC"
+
+    def __init__(self, destination: dict):
+        try:
+            import pyrfc  # type: ignore
+        except ImportError as e:  # pragma: no cover - depends on the environment
+            raise RfcUnavailable("pyrfc (SAP NW RFC SDK) is not installed; see docs/02-sap-connectivity-design.md") from e
+        self._pyrfc = pyrfc
+        self._lock = threading.Lock()
+        try:
+            self._conn = pyrfc.Connection(**destination)
+        except Exception as e:  # noqa: BLE001
+            raise RfcError(type(e).__name__.upper(), str(e)) from e
+
+    def call(self, function_name: str, **params: Any) -> dict:
+        with self._lock:
+            try:
+                return self._conn.call(function_name, **params)
+            except Exception as e:  # noqa: BLE001
+                key = getattr(e, "key", None) or type(e).__name__.upper()
+                raise RfcError(str(key), getattr(e, "message", None) or str(e)) from e
+
+    def close(self) -> None:
+        with contextlib.suppress(Exception):
+            self._conn.close()
+
+
+SECRET_KEYS = ("passwd", "password", "snc_myname", "x509cert")
+
+
+def resolve_destination(sid: str, meta: dict | None = None) -> dict:
+    """RFC destination parameters (pyrfc.Connection kwargs) for a system. Sources, in order: `meta.rfc.dest`
+    (no secrets in the DB: values 'env:NAME' are resolved from the environment), then `SDTF_RFC_DEST_<SID>`
+    (JSON) with the same convention, then `SDTF_RFC_DEST_<SID>_PASSWD` for the password."""
+    rfc = (meta or {}).get("rfc", {}) if meta else {}
+    dest = dict(rfc.get("dest") or {})
+    if not dest:
+        raw = os.getenv(f"SDTF_RFC_DEST_{sid.upper()}", "")
+        dest = json.loads(raw) if raw else {}
+    out = {}
+    for k, v in dest.items():
+        if isinstance(v, str) and v.startswith("env:"):
+            v = os.getenv(v[4:], "")
+        out[k] = v
+    pw = os.getenv(f"SDTF_RFC_DEST_{sid.upper()}_PASSWD")
+    if pw and not out.get("passwd"):
+        out["passwd"] = pw
+    return out
+
+
+def mask_destination(dest: dict) -> dict:
+    return {k: ("***" if k in SECRET_KEYS and v else v) for k, v in dest.items()}
+
+
+def make_transport(sid: str, meta: dict | None, store_loader=None) -> RfcTransport:
+    """Transport for a system: `meta.rfc.transport` = simulated | pyrfc, default from settings (auto: pyrfc when a
+    destination exists, else an error that names the fix)."""
+    rfc = (meta or {}).get("rfc", {}) or {}
+    mode = (rfc.get("transport") or rfc_config.transport_mode()).lower()
+    if mode == "simulated":
+        if store_loader is None:
+            raise RfcUnavailable("simulated add-on needs the system's record store")
+        return SimulatedAbapAddon(store_loader(), allowed_tables=set(rfc["allowed_tables"]) if rfc.get("allowed_tables") else None)
+    dest = resolve_destination(sid, meta)
+    if mode == "pyrfc" or (mode == "auto" and dest):
+        if not dest:
+            raise RfcUnavailable(f"no RFC destination for {sid}: set SDTF_RFC_DEST_{sid.upper()} (JSON pyrfc.Connection parameters) or meta.rfc.dest")
+        return PyRfcTransport(dest)
+    raise RfcUnavailable(f"no RFC destination configured for {sid}; set SDTF_RFC_DEST_{sid.upper()} or register the system with meta.rfc.transport='simulated'")
+
+
+# ------------------------------------------------------------------------------------------------------------ client
+class AbapAddonClient:
+    """Typed access to the add-on through any transport. Verifies package checksums, drives keyset cursors."""
+
+    def __init__(self, transport: RfcTransport, package_size: int | None = None):
+        self.t = transport
+        self.package_size = package_size or rfc_config.package_size()
+        self.snapshot: str | None = None
+        self.valid_until: str | None = None
+        self.calls = 0
+        self.packages = 0
+        self.rows = 0
+
+    def open_snapshot(self, tables: list[str] | None = None) -> str:
+        self.calls += 1
+        r = self.t.call(FM_OPEN_SNAPSHOT, IT_TABLES=[{"TABNAME": t} for t in (tables or [])])
+        self.snapshot, self.valid_until = r["EV_SNAPSHOT"], r.get("EV_VALID_UNTIL")
+        return self.snapshot
+
+    def table_metadata(self, table: str) -> dict:
+        self.calls += 1
+        r = self.t.call(FM_TABLE_METADATA, IV_TABLE=table.upper())
+        return {"table": table.upper(), "fields": [f["FIELDNAME"] for f in r.get("ET_FIELDS", [])], "key_fields": [f["FIELDNAME"] for f in r.get("ET_FIELDS", []) if f.get("KEYFLAG") == ABAP_TRUE], "rows": int(r.get("EV_ROWS", 0)), "size_mb": float(r.get("EV_SIZE_MB", 0)), "authorized": r.get("EV_AUTHORIZED") == ABAP_TRUE}
+
+    def read_package(self, table: str, preds: list[dict], cursor: str = "") -> tuple[list[dict], str, bool]:
+        if not self.snapshot:
+            self.open_snapshot()
+        self.calls += 1
+        r = self.t.call(FM_READ_PACKAGE, IV_TABLE=table.upper(), IT_PREDICATE=preds, IV_PACKAGE=self.package_size, IV_CURSOR=cursor, IV_SNAPSHOT=self.snapshot)
+        json_rows = [e["JSON"] for e in r.get("ET_ROWS", [])]
+        expected = r.get("EV_CHECKSUM", "")
+        actual = package_checksum(json_rows)
+        if expected != actual:
+            raise RfcIntegrityError(f"package of {table} failed checksum verification (expected {expected[:12]}…, got {actual[:12]}…)")
+        rows = [json.loads(j) for j in json_rows]
+        self.packages += 1
+        self.rows += len(rows)
+        return rows, r.get("EV_CURSOR", "") or "", r.get("EV_EOF") == ABAP_TRUE
+
+    def read_all(self, table: str, preds: list[dict]) -> Iterator[dict]:
+        cursor, eof = "", False
+        while not eof:
+            rows, cursor, eof = self.read_package(table, preds, cursor)
+            yield from rows
+            if not eof and not cursor:
+                raise RfcError("INVALID_CURSOR", "add-on reported more data but returned no cursor")
+
+    def read_keyed(self, table: str, preds: list[dict]) -> dict[str, dict]:
+        return {record_key(table, r): r for r in self.read_all(table, preds)} if table in TABLES else {row_json(r): r for r in self.read_all(table, preds)}

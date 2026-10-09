@@ -21,7 +21,7 @@ from ..catalog.store import RecordStore
 from ..models import MigrationRun, RuleSet, SapSystem, ScopeManifest
 from ..reconciliation.service import reconcile_merge_group
 from ..rules.engine import RuleError, SkipRecord, parse_ruleset, target_key, transform_record
-from .extraction import TRANSFER_CLASSES, SyntheticStoreExtractor
+from .extraction import TRANSFER_CLASSES, build_extractor
 from .pipeline import RunPrecondition, start_run
 
 
@@ -56,13 +56,17 @@ def plan_merge(session: Session, project_id: str, sources: list[dict]) -> dict:
         tables = sorted({BUSINESS_OBJECTS[c["type"]].header_table for c in cls.values() if c["classification"] in TRANSFER_CLASSES and c["type"] in BUSINESS_OBJECTS})
         tables += sorted({t for c in cls.values() if c["classification"] in TRANSFER_CLASSES and c["type"] in BUSINESS_OBJECTS for t in BUSINESS_OBJECTS[c["type"]].item_tables} | {"T001K"})
         store = RecordStore.load(session, src.id, tables=sorted(set(tables)))
-        extractor = SyntheticStoreExtractor(store, cls, set(m.definition["company_codes"]))
+        extractor = build_extractor(session, src, cls, set(m.definition["company_codes"]), store=store)
         n_keys, n_skipped, n_rejected = 0, 0, 0
+        sources = {p.id: extractor._source_for(p) for p in extractor.partitions()}
+        node_part = {nid: pid for pid, nodes in extractor.plan().objects_by_partition.items() for nid in nodes}
         for nid, c in cls.items():
             if c["classification"] not in TRANSFER_CLASSES or c["type"] not in BUSINESS_OBJECTS:
                 continue
             bo = BUSINESS_OBJECTS[c["type"]]
-            for table, row in extractor._rows_for_object(bo.id, nid.split(":", 1)[1]):
+            if nid not in node_part:
+                continue
+            for table, row in extractor._rows_for_object(sources[node_part[nid]], bo.id, nid.split(":", 1)[1]):
                 try:
                     out, _ = transform_record(rs, table, row)
                 except SkipRecord:

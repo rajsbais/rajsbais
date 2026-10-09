@@ -1,6 +1,8 @@
 """Auth, projects, systems, records, discovery, graph."""
 from __future__ import annotations
 
+import time
+
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 from sqlalchemy import func, select
@@ -119,6 +121,7 @@ class ProjectCreate(BaseModel):
 class DemoCreate(BaseModel):
     scale: int = Field(1, ge=1, le=10)
     seed: int = 42
+    connector: str = Field("SYNTHETIC", pattern="^(SYNTHETIC|RFC)$")
     name: str = "Project Aurora - Specialty Materials carve-out"
 
 
@@ -151,7 +154,7 @@ def create_project(req: ProjectCreate, db: Session = Depends(get_db), p: Princip
 
 @router.post("/projects/demo", tags=["projects"], status_code=201)
 def create_demo(req: DemoCreate, db: Session = Depends(get_db), p: Principal = Depends(require("project:write"))):
-    ctx = create_demo_project(db, p.username, scale=req.scale, seed=req.seed, name=req.name)
+    ctx = create_demo_project(db, p.username, scale=req.scale, seed=req.seed, name=req.name, connector=req.connector)
     ctx["project"].tenant_id = p.tenant_id
     db.flush()
     return {"project": _project_out(db, ctx["project"]), "import_counts": ctx["import_counts"]}
@@ -171,6 +174,17 @@ class SystemCreate(BaseModel):
     connector: str = "SYNTHETIC"
     database: str = ""
     os_name: str = ""
+    meta: dict = Field(default_factory=dict)  # RFC: {"rfc": {"transport": "simulated" | "pyrfc", "dest": {...}, "allowed_tables": [...]}}
+
+
+def _connector_status(connector: str, meta: dict) -> str:
+    if connector == "RFC":
+        return "SIMULATED" if (meta.get("rfc") or {}).get("transport") == "simulated" else ADAPTER_REGISTRY["RFC"]["status"]
+    return ADAPTER_REGISTRY[connector]["status"]
+
+
+def _uses_record_store(s: SapSystem) -> bool:
+    return s.connector == "SYNTHETIC" or (s.connector == "RFC" and (s.meta.get("rfc") or {}).get("transport") == "simulated")
 
 
 @router.post("/projects/{project_id}/systems", tags=["systems"], status_code=201)
@@ -178,11 +192,38 @@ def create_system(project_id: str, req: SystemCreate, db: Session = Depends(get_
     assert_project_access(db, p, project_id)
     if req.connector not in ADAPTER_REGISTRY:
         raise HTTPException(400, f"unknown connector {req.connector}")
-    s = SapSystem(project_id=project_id, sid=req.sid, client=req.client, role=req.role, product=req.product, release=req.release, connector=req.connector, connector_status=ADAPTER_REGISTRY[req.connector]["status"], database=req.database, os_name=req.os_name, logical_system=f"{req.sid}CLNT{req.client}")
+    from ..runtime.rfc import SECRET_KEYS
+
+    meta = dict(req.meta)
+    if any(k in (meta.get("rfc", {}).get("dest") or {}) for k in SECRET_KEYS):
+        raise HTTPException(400, "RFC secrets are never stored: reference them as 'env:NAME' or set SDTF_RFC_DEST_<SID>_PASSWD")
+    s = SapSystem(project_id=project_id, sid=req.sid, client=req.client, role=req.role, product=req.product, release=req.release, connector=req.connector, connector_status=_connector_status(req.connector, meta), database=req.database, os_name=req.os_name, logical_system=f"{req.sid}CLNT{req.client}", meta=meta)
     db.add(s)
     db.flush()
     record_event(db, p.username, "SYSTEM_REGISTERED", "SYSTEM", s.id, {"sid": s.sid, "connector": s.connector})
     return _system_out(s)
+
+
+@router.post("/systems/{system_id}/connector/test", tags=["systems"])
+def test_connector(s: SapSystem = Depends(get_system), db: Session = Depends(get_db), p: Principal = Depends(require("project:write"))):
+    """Open a snapshot, read the metadata of T001 and one small package through the system's RFC transport.
+    Proves connectivity, authorization and the contract end to end; never touches application data beyond T001."""
+    from ..runtime import rfc as rfcmod
+
+    if s.connector != "RFC":
+        raise HTTPException(409, f"connector test is only defined for RFC systems (this one is {s.connector})")
+    t0 = time.monotonic()
+    try:
+        transport = rfcmod.make_transport(s.sid, s.meta, store_loader=lambda: RecordStore.load(db, s.id, tables=["T001", "T001K"]))
+        client = rfcmod.AbapAddonClient(transport, package_size=5)
+        snap = client.open_snapshot(["T001"])
+        meta = client.table_metadata("T001")
+        rows, cursor, eof = client.read_package("T001", [])
+        out = {"ok": True, "connector": "RFC", "transport": getattr(transport, "name", "?"), "snapshot": snap, "valid_until": client.valid_until, "table": meta, "sample_rows": len(rows), "eof": eof, "checksum_verified": True, "destination": rfcmod.mask_destination(rfcmod.resolve_destination(s.sid, s.meta)), "duration_ms": round((time.monotonic() - t0) * 1000, 1)}
+    except rfcmod.RfcError as e:
+        out = {"ok": False, "connector": "RFC", "error": e.key, "detail": e.message, "destination": rfcmod.mask_destination(rfcmod.resolve_destination(s.sid, s.meta)), "duration_ms": round((time.monotonic() - t0) * 1000, 1)}
+    record_event(db, p.username, "CONNECTOR_TESTED", "SYSTEM", s.id, {k: v for k, v in out.items() if k in ("ok", "transport", "error", "snapshot")})
+    return out
 
 
 class SyntheticImport(BaseModel):
@@ -192,8 +233,8 @@ class SyntheticImport(BaseModel):
 
 @router.post("/systems/{system_id}/import-synthetic", tags=["systems"])
 def import_synthetic(req: SyntheticImport, s: SapSystem = Depends(get_system), db: Session = Depends(get_db), p: Principal = Depends(require("project:write"))):
-    if s.connector != "SYNTHETIC":
-        raise HTTPException(409, "synthetic import is only possible for SYNTHETIC systems")
+    if not _uses_record_store(s):
+        raise HTTPException(409, "synthetic import is only possible for SYNTHETIC systems or RFC systems on the simulated add-on")
     counts = import_tables(db, s.id, generate_landscape(LandscapeSpec(seed=req.seed, scale=req.scale)))
     record_event(db, p.username, "SYNTHETIC_IMPORTED", "SYSTEM", s.id, {"rows": sum(counts.values())})
     return {"system_id": s.id, "import_counts": counts, "rows": sum(counts.values())}

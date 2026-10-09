@@ -31,7 +31,7 @@ Reviewed against the master build prompt (sections A–S) on the current branch.
 | Capability | Status |
 |---|---|
 | Rule DSL: deterministic, testable, versioned, validated, lineage, dry run, approval | **Built** |
-| Extraction: full/selective, partitioning, parallel workers, checkpoint/restart, throttling, snapshot token | **Built** on the synthetic store; **RFC/CDS/OData/File adapters pending**; **real SAP extraction cannot be built here** (needs ABAP add-on transported into a customer system and an SAP technical user) |
+| Extraction: full/selective, partitioning, parallel workers, checkpoint/restart, throttling, snapshot token | **Built** on the synthetic store and through the **RFC adapter** (predicate pushdown, keyset packages, consistency token, checksums; pyrfc or simulated add-on, ADR-0013); ABAP reference sources written but **not compiled**; **CDS/OData/File adapters pending**; **verification against a real SAP system cannot be done here** (needs the add-on transported into a customer system, the NW RFC SDK and a technical user) |
 | Streaming, compression, encryption in transit | **Pending** (object-storage staging backend) |
 | Near-zero-downtime: delta capture, continuous sync, backlog, freeze, final delta | **Pending, design only** (doc 07); **downtime claims cannot be made here**: they require measured benchmarks on a real source/target topology |
 | Object packages FI/SD/MM/PP incl. tests | **Built (simulated)**; QM/PM/PS/EWM/TM/MDG/industry **pending** |

@@ -16,6 +16,7 @@ def main(argv=None):
     d.add_argument("--scale", type=int, default=1)
     d.add_argument("--seed", type=int, default=42)
     d.add_argument("--json", action="store_true")
+    d.add_argument("--connector", choices=["SYNTHETIC", "RFC"], default="SYNTHETIC", help="RFC runs extraction through the simulated SAP add-on over the RFC adapter")
     w = sub.add_parser("worker", help="run a distributed extraction worker (claims partition jobs)")
     w.add_argument("--worker-id", default=None)
     w.add_argument("--until-idle", action="store_true", help="exit when no job is available")
@@ -44,7 +45,7 @@ def main(argv=None):
         from .demo import run_vertical_slice
 
         with session_scope() as session:
-            out = run_vertical_slice(session, scale=a.scale, seed=a.seed)
+            out = run_vertical_slice(session, scale=a.scale, seed=a.seed, connector=a.connector)
             run = out["run"]
             if a.json:
                 print(json.dumps({"project_id": out["project"].id, "manifest_id": out["manifest"].id, "run_id": run.id, "status": run.status, "reconciliation": run.report["reconciliation"]}, indent=2, default=str))

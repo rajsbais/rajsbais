@@ -19,11 +19,16 @@ from .synthetic.ecc_generator import LandscapeSpec, generate_landscape
 DEMO_SPINCO = "5000"
 
 
-def create_demo_project(session: Session, actor: str = "architect", scale: int = 1, seed: int = 42, name: str = "Project Aurora - Specialty Materials carve-out") -> dict:
+def create_demo_project(session: Session, actor: str = "architect", scale: int = 1, seed: int = 42, name: str = "Project Aurora - Specialty Materials carve-out", connector: str = "SYNTHETIC") -> dict:
+    """connector=RFC registers the source as an RFC-connected system served by the simulated add-on, so the
+    whole RFC extraction path (snapshot, pushdown, packages, checksums) runs on the synthetic landscape."""
+    if connector not in ("SYNTHETIC", "RFC"):
+        raise ValueError("demo connector must be SYNTHETIC or RFC")
     project = Project(name=name, scenario_type="CARVE_OUT", description="Divestiture of Nordlicht Specialty Materials GmbH (company code 5000) into an independent S/4HANA landscape", created_by=actor, meta={"reference_scenario": "ECC 6.0 EHP8 -> S/4HANA 2025 SpinCo", "scale": scale, "seed": seed})
     session.add(project)
     session.flush()
-    src = SapSystem(project_id=project.id, sid="ECP", client="100", role="SOURCE", product="ECC", release="6.0 EHP8", database="Oracle 19c (synthetic)", os_name="Linux (synthetic)", connector="SYNTHETIC", connector_status="SIMULATED", logical_system="ECPCLNT100", meta={"seed": seed, "scale": scale})
+    src_meta = {"seed": seed, "scale": scale, **({"rfc": {"transport": "simulated"}} if connector == "RFC" else {})}
+    src = SapSystem(project_id=project.id, sid="ECP", client="100", role="SOURCE", product="ECC", release="6.0 EHP8", database="Oracle 19c (synthetic)", os_name="Linux (synthetic)", connector=connector, connector_status="SIMULATED", logical_system="ECPCLNT100", meta=src_meta)
     tgt = SapSystem(project_id=project.id, sid="S4P", client="100", role="TARGET", product="S4HANA", release="2025", database="SAP HANA (synthetic)", os_name="Linux (synthetic)", connector="SYNTHETIC", connector_status="SIMULATED", logical_system="S4PCLNT100", meta={"deployment": "private cloud (synthetic)"})
     session.add_all([src, tgt])
     session.flush()
@@ -81,8 +86,8 @@ def demo_scope_definition(src: SapSystem, tgt: SapSystem, name: str = "SpinCo 50
     return ScopeDefinition(**base)
 
 
-def run_vertical_slice(session: Session, scale: int = 1, seed: int = 42, creator: str = "architect", approver: str = "approver") -> dict:
-    ctx = create_demo_project(session, creator, scale=scale, seed=seed)
+def run_vertical_slice(session: Session, scale: int = 1, seed: int = 42, creator: str = "architect", approver: str = "approver", connector: str = "SYNTHETIC") -> dict:
+    ctx = create_demo_project(session, creator, scale=scale, seed=seed, connector=connector)
     project, src, tgt = ctx["project"], ctx["source"], ctx["target"]
     store = RecordStore.load(session, src.id)
     snap = discover_system(session, src, creator, store)

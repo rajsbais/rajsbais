@@ -15,7 +15,7 @@ synthetic data but replaces an SAP system with an in-platform store) · **PARTIA
 | 6 | Selective scope & manifest | `scope` | scope DSL (Pydantic), evaluation, classification, impact, versioned immutable manifest, dispositions, four-eyes approval, what-if comparison | IMPLEMENTED |
 | 7 | Carve-out intelligence | `carveout` | ParentCo/SpinCo buckets, detections, intercompany balances, completeness & residual reports | IMPLEMENTED |
 | 8 | Transformation rules | `rules` | YAML DSL, compiler/validator, deterministic engine with lineage, embedded tests, dry run, rule factory | IMPLEMENTED |
-| 9 | Extraction | `runtime/extraction`, `runtime/adapters` | partitioned, parallel, checkpointed extraction; adapter contracts | SIMULATED (synthetic store) / RFC-OData-CDS PLANNED |
+| 9 | Extraction | `runtime/extraction`, `runtime/adapters`, `runtime/rfc` | partitioned, parallel, checkpointed extraction; RFC adapter with pushdown, snapshot token, checksums; adapter contracts | IMPLEMENTED (RFC client, verified on the simulated add-on) / SIMULATED (synthetic store) / OData-CDS PLANNED |
 | 10 | Load | `runtime/load` | idempotent upsert, duplicate/conflict detection, config matching, load-method selection by target | SIMULATED |
 | 11 | Reconciliation | `reconciliation` | technical, functional, financial checks with variance explanations | IMPLEMENTED |
 | 12 | Audit & evidence | `audit` | hash-chained events, evidence packages, approvals | IMPLEMENTED |

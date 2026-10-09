@@ -28,7 +28,7 @@ from ..reconciliation.service import reconcile_run
 from ..rules.engine import parse_ruleset
 from ..scope.service import verify_manifest_integrity
 from ..staging import get_backend
-from .extraction import SyntheticStoreExtractor, run_extraction
+from .extraction import build_extractor, run_extraction
 from .load import SimulatedTargetLoader
 from .transform import run_transformation
 
@@ -140,7 +140,7 @@ def execute_run(session: Session, run: MigrationRun, actor: str) -> MigrationRun
                 st.metrics = {"manifest_hash": m.content_hash, "ruleset_hash": rs_row.content_hash, "source": f"{src.sid}/{src.client}", "target": f"{tgt.sid}/{tgt.client}", "objects_in_scope": m.impact.get("objects_total", 0)}
             elif name == "EXTRACT":
                 source_store = source_store or RecordStore.load(session, src.id)
-                ex = SyntheticStoreExtractor(source_store, cls, scope_ccs)
+                ex = build_extractor(session, src, cls, scope_ccs, store=source_store)
                 st.metrics = run_extraction(session, run.id, ex, st.checkpoint, workers=run.metrics.get("workers", config.settings.extraction_workers), backend=backend)
                 run.snapshot_id = st.metrics["snapshot_id"]
             elif name == "TRANSFORM":

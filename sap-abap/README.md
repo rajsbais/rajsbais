@@ -1,8 +1,10 @@
-# SAP add-on (ABAP) — interface contract, not implemented
+# SAP add-on (ABAP) — interface contract and reference implementation
 
-Status: **PLANNED**. No ABAP code ships in this repository. This directory fixes the contract that the external
-platform expects from an SAP-side add-on so that the extraction/CDC adapters (`backend/sdtf/runtime/adapters.py`)
-can be implemented without changing the orchestration layer.
+Status: **contract fixed; platform-side RFC adapter IMPLEMENTED (`backend/sdtf/runtime/rfc.py`,
+`runtime/extraction.py::RfcExtractor`); ABAP sources in `src/` are a REFERENCE IMPLEMENTATION that has not been
+compiled, transported or run on an SAP system.** The executable specification of the contract is the simulated
+add-on (`SimulatedAbapAddon`), which the adapter is tested against; an ABAP developer must review `src/` against
+the target release before use. The platform never needs production SAP credentials to run its own tests.
 
 ## Why an add-on at all (hybrid architecture, ADR-0001)
 * Application-level consistency tokens and package cursors cannot be obtained safely through generic DB readers.
@@ -25,8 +27,36 @@ Z_SDTF_READ_PACKAGE
 ```
 Z_SDTF_OPEN_SNAPSHOT   -> consistency token (DB snapshot / timestamp + last-change watermark per table)
 Z_SDTF_TABLE_METADATA  -> DDIC keys, fields, sizes, growth statistics (read-only)
-Z_SDTF_CDC_POLL        -> change records since watermark (change pointers / CDHDR-CDPOS / table-log based, per object)
+Z_SDTF_CDC_POLL        -> change records since watermark (change pointers / CDHDR-CDPOS / table-log based, per object) - NOT in this increment
 ```
+
+## Precise semantics (what the adapter relies on, what the simulated add-on enforces)
+* **Authorization**: `S_TABU_NAM` activity 03 per table → exception `NOT_AUTHORIZED`; unknown table → `TABLE_UNKNOWN`.
+* **Snapshot**: every read carries `IV_SNAPSHOT` from `Z_SDTF_OPEN_SNAPSHOT`; unknown → `SNAPSHOT_UNKNOWN`, past
+  `EV_VALID_UNTIL` → `SNAPSHOT_EXPIRED`. The adapter opens one token per run and restarts a partition on expiry.
+* **Predicates** (`ZSDTF_T_PREDICATE`: FIELD, OP, LOW, HIGH): range-table semantics - predicates on the same field
+  with positive ops (EQ BT GE GT LE LT CP) are OR-ed, negative ops (NE NB NP) are AND-ed exclusions, different
+  fields are AND-ed; `CP` uses SAP patterns (`*`, `+`). Unknown op or field → `INVALID_PREDICATE`.
+* **Ordering and cursor**: rows come in primary-key order; `EV_CURSOR` is opaque (base64 JSON of table, predicate
+  hash, last primary key, snapshot) and valid only for the same table, predicate and snapshot → else `INVALID_CURSOR`.
+  Keyset pagination, so no `OFFSET` is needed (works on NW 7.40+).
+* **Package**: `IV_PACKAGE` rows per call, clamped server-side to 10 000; `EV_EOF = 'X'` on the last package.
+* **Rows**: `ZSDTF_T_ROW` entries `(ROWNO, JSON)`, one JSON object per row with uppercase field names (`/ui2/cl_json`).
+* **Checksum**: `EV_CHECKSUM` = lowercase hex SHA-256 over the row JSON strings exactly as transmitted, joined by
+  LF. The adapter hashes the received strings before parsing and refuses the package on mismatch.
+* **No writes**: the function group contains read modules only.
+
+## Reference sources (`src/`)
+`z_sdtf_read_package.abap`, `z_sdtf_open_snapshot.abap`, `z_sdtf_table_metadata.abap`, and `DDIC.md` for the types,
+the `ZSDTF_SNAP` table and the helper classes. They are written for NW 7.50 (ECC 6.0 EHP8) syntax and have not been
+activated anywhere.
+
+## Platform side
+* `SDTF_RFC_DEST_<SID>` (JSON `pyrfc.Connection` parameters; secrets as `env:NAME`) or `meta.rfc.dest` on the
+  registered system; `SDTF_RFC_TRANSPORT=auto|pyrfc|simulated`, `SDTF_RFC_PACKAGE_SIZE`, `SDTF_RFC_KEY_CHUNK`,
+  `SDTF_RFC_KEY_PUSHDOWN_LIMIT`.
+* `POST /systems/{id}/connector/test` opens a snapshot, reads T001 metadata and one 5-row package.
+* `python -m sdtf.cli demo --connector RFC` runs the whole vertical slice through the adapter on the simulated add-on.
 ## Non-goals
 * No write modules: loads go through released APIs, BAPIs or the Migration Cockpit on the target (ADR-0007).
 * No direct database access that bypasses SAP semantics.

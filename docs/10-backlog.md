@@ -25,7 +25,8 @@ Legend: P0 next increment · P1 following · P2 later. Sizes are relative (S/M/L
 ## Phase 4 — SAP connectivity
 | P | Item | Size |
 |---|---|---|
-| P0 | ABAP add-on: `Z_SDTF_READ_PACKAGE`, `Z_SDTF_OPEN_SNAPSHOT`, metadata module; RFC adapter | XL |
+| ✅ | RFC adapter against the add-on contract: transports (pyrfc, simulated add-on), pushdown, keyset packages, snapshot token, checksums, connector test endpoint, `demo --connector RFC` (ADR-0013) | L |
+| P0 | ABAP add-on activation: compile/review `sap-abap/src/` on an SAP development system, authorizations, transport; live verification of the adapter | XL (needs an SAP system) |
 | P0 | Discovery against real DDIC (DD02L/DD03L, table sizes via DBSTATC/HANA views), real org tables | M |
 | P1 | CDS/ODP adapter for S/4 sources; OData adapter for masters | L |
 | P1 | Loaders: Business Partner API, Product API, Journal Entry SOAP, Migration Cockpit staging | XL |
