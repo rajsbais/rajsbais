@@ -102,7 +102,7 @@ def test_capability_matrix_is_honest(client):
     statuses = {c["status"] for c in caps}
     assert statuses <= {"implemented-simulated", "catalogued", "planned", "designed"}
     assert all(c["status"] != "production-ready" for c in caps)
-    assert next(c for c in caps if c["module"].startswith("M2"))["status"] == "catalogued"
+    assert next(c for c in caps if c["module"].startswith("M2"))["status"] == "implemented-simulated"
 
 
 def test_delta_refresh_over_http(client):
@@ -261,7 +261,7 @@ def test_post_copy_factory_over_http(client):
     assert client.post(f"/api/postcopy/runs/{rid}/rollback", headers=H("refresh.copilot")).status_code == 403
     assert client.post(f"/api/postcopy/runs/{rid}/rollback", headers=H("bastian.lead")).json()["status"] == "ROLLED_BACK"
     plan = client.get(f"/api/full-refresh/plan?source_id={sid}&target_id={tid}", headers=H("tina.tester")).json()
-    assert {p["no"] for p in plan["phases"] if p["status"].startswith("executable")} == {5, 8, 9, 12}
+    assert all(p["status"] == "executable-simulated" for p in plan["phases"] if p["no"] != 7)
     assert client.get("/api/audit/verify", headers=H("erin.auditor")).json()["valid"]
 
 

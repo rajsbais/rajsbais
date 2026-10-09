@@ -1,7 +1,8 @@
 """Full system refresh: phase model, target guard and post-copy task catalog.
 
-STATUS: the phase model and pair guard live here. The system copy itself (phase 7) has NO execution engine: it must be driven by
-SAP-supported tooling (SWPM, HANA backup/recovery, storage/VM snapshots) through adapters that are not implemented.
+STATUS: the phase model and pair guard live here; `fullrefresh/engine.py` executes the program against SIMULATED systems. The copy
+mechanism (phase 7) is an in-memory stand-in: real copies must be driven by SAP-supported tooling (SWPM, HANA backup/recovery,
+storage/VM snapshots) through adapters that are not implemented.
 """
 from __future__ import annotations
 
@@ -51,8 +52,8 @@ def validate_pair(source: SapSystem, target: SapSystem) -> dict:
 
 def plan_full_refresh(source: SapSystem, target: SapSystem) -> dict:
     v = validate_pair(source, target)
-    return {"validation": v, "executable": False,
-            "note": "Execution engine not implemented; phases below are the approved runbook skeleton.",
+    return {"validation": v, "executable": "simulated",
+            "note": "Executable end to end against simulated systems (see /api/full-refresh/programs); the real copy mechanism is not built.",
             "phases": [{"no": n, "name": name, "performed_by": who, "approval_required": ap, "rollback": rb,
-                        "status": "blocked" if (not v["ok"] and n >= 3) else ("executable-simulated (post-copy factory)" if n in (5, 8, 9, 12) else "design-only")}
+                        "status": "blocked" if (not v["ok"] and n >= 3) else ("simulated-mechanism" if n == 7 else "executable-simulated")}
                        for n, name, who, ap, rb in PHASES]}

@@ -426,6 +426,9 @@ def compliance_verification(svc, params, rep: AgentReport) -> None:
     ctl("C12", "Non-production systems free of active production references", not refs, ", ".join(refs) or "clean")
     full = [p.name for p in svc.projects.values() if p.manifest and not p.manifest.scope.dims() and not p.manifest.scope.explicit_keys and not (p.manifest.scope.date_from)]
     ctl("C13", "Data minimisation: no unbounded scopes", not full, ", ".join(full) or "all scopes bounded")
+    unm = [f"{svc.system(p.target_id).label} (program {p.id}, phase {p.checkpoint + 1})" for p in svc.full.programs.values() if p.unmasked_target]
+    ctl("C14", "No target holds unmasked production data", not unm, "; ".join(unm) or "none",
+        [ev("fullrefresh", u, "target holds unmasked copied data until phase 11 completes") for u in unm])
     rep.artifacts["controls"] = controls
     f = sum(1 for c in controls if c["status"] == "fail")
     rep.summary = f"{len(controls) - f}/{len(controls)} controls pass."
@@ -499,7 +502,7 @@ def specs() -> list[AgentSpec]:
                   [P("run_id", "Limit to one run")], ["run reconciliation"], ["rollback_run", "decision"], reconciliation_analysis),
         AgentSpec("performance-optimization", 10, "Performance Optimization", "Where observed run time goes (simulation only).",
                   [], ["runs"], ["decision"], performance_optimization),
-        AgentSpec("compliance-verification", 11, "Compliance Verification", "13 control checks against platform state.",
+        AgentSpec("compliance-verification", 11, "Compliance Verification", "14 control checks against platform state.",
                   [], ["audit", "projects", "runs", "delta", "tdm", "systems"], ["decision"], compliance_verification),
         AgentSpec("refresh-documentation", 12, "Refresh Documentation", "Generates markdown documentation from recorded facts.",
                   [P("kind", "project | postcopy_run | lean_build", True), P("id", "Record id", True)], ["records", "audit"], ["decision"], documentation),

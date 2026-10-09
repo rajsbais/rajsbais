@@ -53,6 +53,20 @@ class CommentIn(BaseModel):
     comment: str = ""
 
 
+class FullRefreshIn(BaseModel):
+    name: str | None = None
+    source_id: str
+    target_id: str
+    profile_id: str
+    backup_ref: str
+    masking_policy_id: str = "gdpr-standard"
+    mechanism: str = "simulated-homogeneous-copy"
+
+
+class ApprovalIn(BaseModel):
+    label: str
+
+
 class AgentRunIn(BaseModel):
     params: dict = Field(default_factory=dict)
     narrate: bool = False
@@ -495,6 +509,42 @@ def create_app(data_dir: Path | None = None) -> FastAPI:
     @app.get("/api/full-refresh/plan")
     def fr_plan(source_id: str, target_id: str, _: Principal = Depends(need("view"))):
         return runbook.plan_full_refresh(svc.system(source_id), svc.system(target_id))
+
+    @app.post("/api/full-refresh/programs", status_code=201)
+    def fr_create(b: FullRefreshIn, p: Principal = Depends(me)):
+        return svc.full.create(p, b.model_dump()).public()
+
+    @app.get("/api/full-refresh/programs")
+    def fr_list(_: Principal = Depends(need("view"))):
+        return [x.public() for x in reversed(list(svc.full.programs.values()))]
+
+    @app.get("/api/full-refresh/programs/{pid}")
+    def fr_get(pid: str, _: Principal = Depends(need("view"))):
+        return svc.full.get(pid).public()
+
+    @app.post("/api/full-refresh/programs/{pid}/approve")
+    def fr_approve(pid: str, b: ApprovalIn, p: Principal = Depends(me)):
+        return svc.full.approve(p, pid, b.label).public()
+
+    @app.post("/api/full-refresh/programs/{pid}/run")
+    def fr_run(pid: str, p: Principal = Depends(me)):
+        return svc.full.run(p, pid).public()
+
+    @app.post("/api/full-refresh/programs/{pid}/security-signoff")
+    def fr_signoff(pid: str, p: Principal = Depends(me)):
+        return svc.full.sign_off(p, pid).public()
+
+    @app.post("/api/full-refresh/programs/{pid}/release")
+    def fr_release(pid: str, p: Principal = Depends(me)):
+        return svc.full.release(p, pid).public()
+
+    @app.post("/api/full-refresh/programs/{pid}/rollback")
+    def fr_rollback(pid: str, p: Principal = Depends(me)):
+        return svc.full.rollback(p, pid).public()
+
+    @app.get("/api/full-refresh/programs/{pid}/evidence")
+    def fr_evidence(pid: str, _: Principal = Depends(need("audit:read"))):
+        return svc.full.evidence_report(pid)
 
     @app.get("/api/post-copy/tasks")
     def pc(_: Principal = Depends(need("view"))):
