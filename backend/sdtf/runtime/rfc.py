@@ -144,8 +144,9 @@ class SimulatedAbapAddon:
 
     name = "SIMULATED_ADDON"
 
-    def __init__(self, store, allowed_tables: set[str] | None = None, snapshot_ttl: float = 3600.0, server_max_package: int = SERVER_MAX_PACKAGE, clock=None):
+    def __init__(self, store, allowed_tables: set[str] | None = None, snapshot_ttl: float = 3600.0, server_max_package: int = SERVER_MAX_PACKAGE, clock=None, change_log: list[dict] | None = None):
         self.store = store
+        self.change_log = sorted(change_log or [], key=lambda e: int(e["SEQ"]))  # the source's change log (see runtime/activity.py)
         self.allowed = {t.upper() for t in allowed_tables} if allowed_tables is not None else None
         self.snapshot_ttl = snapshot_ttl
         self.server_max_package = server_max_package
@@ -205,7 +206,8 @@ class SimulatedAbapAddon:
         self._snapshots[token] = valid_until
         tables = [t["TABNAME"] if isinstance(t, dict) else str(t) for t in (IT_TABLES or [])] or self.store.tables()
         wm = [{"TABNAME": t, "WATERMARK": f"rows={self.store.count(t)}"} for t in tables]
-        return {"EV_SNAPSHOT": token, "EV_VALID_UNTIL": time.strftime("%Y%m%d%H%M%S", time.gmtime(valid_until)), "ET_WATERMARKS": wm}
+        cdc_wm = str(self.change_log[-1]["SEQ"]) if self.change_log else "0"
+        return {"EV_SNAPSHOT": token, "EV_VALID_UNTIL": time.strftime("%Y%m%d%H%M%S", time.gmtime(valid_until)), "ET_WATERMARKS": wm, "EV_CDC_WATERMARK": cdc_wm}
 
     def _table_metadata(self, IV_TABLE: str = "", **_: Any) -> dict:
         table = IV_TABLE.upper()
@@ -254,8 +256,46 @@ class SimulatedAbapAddon:
                 self.stats.full_scans += 1
         return {"ET_ROWS": [{"ROWNO": i + 1, "JSON": j} for i, j in enumerate(json_rows)], "EV_CURSOR": self._encode_cursor(table, phash, last, IV_SNAPSHOT) if (last is not None and not eof) else "", "EV_EOF": ABAP_TRUE if eof else ABAP_FALSE, "EV_CHECKSUM": package_checksum(json_rows), "EV_ROWS": len(out)}
 
-    def _cdc_poll(self, **_: Any) -> dict:
-        raise RfcError("NOT_IMPLEMENTED", "Z_SDTF_CDC_POLL is not part of this increment (delta capture is on the backlog, docs/07)")
+    def _cdc_poll(self, IV_WATERMARK: str = "0", IT_OBJECTS: list | None = None, IV_PACKAGE: int = 1000, **_: Any) -> dict:
+        """Change events after the watermark for the listed tables (range-table predicates per table, evaluated on the
+        row image; deletes carry no image and pass the table filter). Watermark = last delivered sequence."""
+        try:
+            after = int(IV_WATERMARK or 0)
+        except ValueError as e:
+            raise RfcError("INVALID_WATERMARK", f"watermark {IV_WATERMARK!r} was not issued by this add-on") from e
+        preds_by_table: dict[str, list[dict]] = {}
+        for o in IT_OBJECTS or []:
+            t = str(o.get("TABNAME", "")).upper()
+            if not t:
+                continue
+            self._authorize(t)
+            preds_by_table.setdefault(t, [])
+            if o.get("FIELD"):
+                preds_by_table[t].append({"FIELD": str(o["FIELD"]).upper(), "OP": str(o.get("OP", "EQ")).upper(), "LOW": str(o.get("LOW", "")), "HIGH": str(o.get("HIGH", ""))})
+        package = max(1, min(int(IV_PACKAGE or 1000), self.server_max_package))
+        out: list[dict] = []
+        last = after
+        eof = True
+        for e in self.change_log:
+            if int(e["SEQ"]) <= after:
+                continue
+            t = e["TABNAME"]
+            if preds_by_table and t not in preds_by_table:
+                last = int(e["SEQ"])  # filtered events still advance the watermark
+                continue
+            if e["OP"] != "D" and preds_by_table.get(t) and not predicates_match(json.loads(e["JSON"]), preds_by_table[t]):
+                last = int(e["SEQ"])
+                continue
+            if len(out) == package:
+                eof = False
+                break
+            out.append({k: e[k] for k in ("SEQ", "CHANGENR", "OBJECT_TYPE", "TABNAME", "KEY", "OP", "CHANGED_AT", "CHANGED_BY", "JSON")})
+            last = int(e["SEQ"])
+        json_events = [row_json(ev) for ev in out]
+        with self._lock:
+            self.stats.packages += 1
+            self.stats.rows_served += len(out)
+        return {"ET_EVENTS": out, "EV_WATERMARK": str(last), "EV_EOF": ABAP_TRUE if eof else ABAP_FALSE, "EV_CHECKSUM": package_checksum(json_events), "EV_EVENTS": len(out)}
 
 
 # ------------------------------------------------------------------------------------------------------ pyrfc binding
@@ -318,7 +358,7 @@ def mask_destination(dest: dict) -> dict:
     return {k: ("***" if k in SECRET_KEYS and v else v) for k, v in dest.items()}
 
 
-def make_transport(sid: str, meta: dict | None, store_loader=None) -> RfcTransport:
+def make_transport(sid: str, meta: dict | None, store_loader=None, change_log_loader=None) -> RfcTransport:
     """Transport for a system: `meta.rfc.transport` = simulated | pyrfc, default from settings (auto: pyrfc when a
     destination exists, else an error that names the fix)."""
     rfc = (meta or {}).get("rfc", {}) or {}
@@ -326,7 +366,7 @@ def make_transport(sid: str, meta: dict | None, store_loader=None) -> RfcTranspo
     if mode == "simulated":
         if store_loader is None:
             raise RfcUnavailable("simulated add-on needs the system's record store")
-        return SimulatedAbapAddon(store_loader(), allowed_tables=set(rfc["allowed_tables"]) if rfc.get("allowed_tables") else None)
+        return SimulatedAbapAddon(store_loader(), allowed_tables=set(rfc["allowed_tables"]) if rfc.get("allowed_tables") else None, change_log=change_log_loader() if change_log_loader else None)
     dest = resolve_destination(sid, meta)
     if mode == "pyrfc" or (mode == "auto" and dest):
         if not dest:
@@ -347,11 +387,14 @@ class AbapAddonClient:
         self.calls = 0
         self.packages = 0
         self.rows = 0
+        self.last_watermark: str | None = None
+        self.cdc_watermark: str | None = None
 
     def open_snapshot(self, tables: list[str] | None = None) -> str:
         self.calls += 1
         r = self.t.call(FM_OPEN_SNAPSHOT, IT_TABLES=[{"TABNAME": t} for t in (tables or [])])
         self.snapshot, self.valid_until = r["EV_SNAPSHOT"], r.get("EV_VALID_UNTIL")
+        self.cdc_watermark = str(r.get("EV_CDC_WATERMARK", "")) or None  # where delta capture starts for this snapshot
         return self.snapshot
 
     def table_metadata(self, table: str) -> dict:
@@ -381,6 +424,31 @@ class AbapAddonClient:
             yield from rows
             if not eof and not cursor:
                 raise RfcError("INVALID_CURSOR", "add-on reported more data but returned no cursor")
+
+    def cdc_poll(self, watermark: str, objects: list[dict], package: int | None = None) -> tuple[list[dict], str, bool]:
+        """One Z_SDTF_CDC_POLL package: events (dicts with the contract's upper-case keys, JSON already parsed into
+        `row`), the new watermark and eof. Checksum verified over the events as transmitted."""
+        self.calls += 1
+        r = self.t.call(FM_CDC_POLL, IV_WATERMARK=str(watermark), IT_OBJECTS=objects, IV_PACKAGE=package or self.package_size)
+        events = r.get("ET_EVENTS", [])
+        expected, actual = r.get("EV_CHECKSUM", ""), package_checksum([row_json(e) for e in events])
+        if expected != actual:
+            raise RfcIntegrityError(f"CDC package failed checksum verification (expected {expected[:12]}…, got {actual[:12]}…)")
+        for e in events:
+            e["row"] = json.loads(e["JSON"]) if e.get("JSON") else None
+        self.packages += 1
+        self.rows += len(events)
+        return events, str(r.get("EV_WATERMARK", watermark)), r.get("EV_EOF") == ABAP_TRUE
+
+    def cdc_events(self, watermark: str, objects: list[dict], max_packages: int | None = None) -> Iterator[dict]:
+        """All events after the watermark; `self.last_watermark` holds the watermark to persist afterwards."""
+        self.last_watermark = watermark
+        eof, n = False, 0
+        while not eof and (max_packages is None or n < max_packages):
+            events, watermark, eof = self.cdc_poll(watermark, objects)
+            self.last_watermark = watermark
+            n += 1
+            yield from events
 
     def read_keyed(self, table: str, preds: list[dict]) -> dict[str, dict]:
         return {record_key(table, r): r for r in self.read_all(table, preds)} if table in TABLES else {row_json(r): r for r in self.read_all(table, preds)}

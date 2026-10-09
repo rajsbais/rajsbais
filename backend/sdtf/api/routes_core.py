@@ -226,6 +226,27 @@ def test_connector(s: SapSystem = Depends(get_system), db: Session = Depends(get
     return out
 
 
+class SimulateChanges(BaseModel):
+    seed: int = 1
+    count: int = Field(10, ge=1, le=500)
+    company_codes: list[str] | None = None
+
+
+@router.post("/systems/{system_id}/simulate-changes", tags=["systems"])
+def simulate_changes(req: SimulateChanges, s: SapSystem = Depends(get_system), db: Session = Depends(get_db), p: Principal = Depends(require("project:write"))):
+    """Play business activity on a simulated source (documents created/changed/deleted after the initial
+    extraction) and write its change log, which the simulated add-on serves through Z_SDTF_CDC_POLL. Respects a
+    declared business freeze. Not available for real SAP systems."""
+    from ..runtime.activity import simulate_business_activity
+    from ..runtime.delta import frozen_company_codes
+
+    if not _uses_record_store(s) or s.role != "SOURCE":
+        raise HTTPException(409, "business activity can only be simulated on a SYNTHETIC or simulated-RFC source system")
+    out = simulate_business_activity(db, s, seed=req.seed, count=req.count, company_codes=req.company_codes, frozen_ccs=frozen_company_codes(db, s.project_id), actor=p.username)
+    record_event(db, p.username, "SOURCE_ACTIVITY_SIMULATED", "SYSTEM", s.id, {k: v for k, v in out.items() if k != "by_kind"})
+    return out
+
+
 class SyntheticImport(BaseModel):
     scale: int = Field(1, ge=1, le=10)
     seed: int = 42

@@ -19,7 +19,7 @@
 | Reconciliation (technical/functional/financial) | IMPLEMENTED | on simulated data |
 | Audit trail (hash chain), approvals, evidence packages | IMPLEMENTED | |
 | Run restart / checkpoint recovery | IMPLEMENTED | partition-level for extraction, stage-level otherwise |
-| Delta capture / continuous sync / NDT | PLANNED | design in docs/07 |
+| Delta capture / continuous sync / NDT | SIMULATED | CDC through the add-on contract (`Z_SDTF_CDC_POLL`) over RFC, ordered idempotent replay with conflict detection, business freeze, final delta + full reconciliation, backlog/lag monitor; verified on the simulated add-on only; ABAP reference not compiled; no downtime figure claimed (ADR-0014) |
 | Cutover command center | PARTIAL | runbook, critical path, forecast, rollback gates, go/no-go; execution tracking planned |
 | AI agents (12) | IMPLEMENTED | heuristic reasoner; LLM reasoner planned |
 | Security: RBAC/ABAC, tenant segregation, masking, OIDC SSO (RS256/JWKS, group→role map), browser PKCE login with API-side code exchange, refresh and provider logout | IMPLEMENTED | verified end-to-end against the bundled test-only provider, not yet against a live Keycloak/Entra/Okta tenant; dev users remain for local use |

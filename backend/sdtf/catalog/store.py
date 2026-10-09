@@ -105,3 +105,41 @@ def import_tables(session: Session, system_id: str, tables: dict[str, list[dict]
         session.execute(SapRecord.__table__.insert(), buf)
     session.flush()
     return counts
+
+
+def _record_columns(table: str, row: dict) -> dict:
+    td = TABLES[table]
+    org = td.org_field
+    bukrs = row.get("BUKRS") or (row.get(org) if org and org.startswith("BUKRS") else None)
+    werks = row.get("WERKS") or (row.get(org) if org and org in ("WERKS", "DWERK") else None)
+    year_val = row.get(td.year_field) if td.year_field else None
+    return {"bukrs": bukrs, "werks": werks, "gjahr": int(year_val) if year_val else None, "payload": row}
+
+
+def upsert_records(session: Session, system_id: str, table: str, rows: Iterable[dict]) -> dict[str, int]:
+    """Insert or replace rows of one table in a system's record store (delta apply, simulated source changes)."""
+    from sqlalchemy import update
+
+    n = {"inserted": 0, "updated": 0}
+    for r in rows:
+        key = record_key(table, r)
+        cols = _record_columns(table, r)
+        res = session.execute(update(SapRecord).where(SapRecord.system_id == system_id, SapRecord.table_name == table, SapRecord.record_key == key).values(**cols))
+        if res.rowcount:
+            n["updated"] += 1
+        else:
+            session.execute(SapRecord.__table__.insert(), [{"system_id": system_id, "table_name": table, "record_key": key, **cols}])
+            n["inserted"] += 1
+    session.flush()
+    return n
+
+
+def delete_records(session: Session, system_id: str, table: str, keys: Iterable[str]) -> int:
+    from sqlalchemy import delete
+
+    keys = list(keys)
+    if not keys:
+        return 0
+    res = session.execute(delete(SapRecord).where(SapRecord.system_id == system_id, SapRecord.table_name == table, SapRecord.record_key.in_(keys)))
+    session.flush()
+    return res.rowcount or 0

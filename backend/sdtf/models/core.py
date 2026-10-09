@@ -325,3 +325,46 @@ class ExtractionJob(IdMixin, Base):
     metrics: Mapped[dict] = mapped_column(JSON, default=dict)
     error: Mapped[str] = mapped_column(Text, default="")
     __table_args__ = (UniqueConstraint("run_id", "stage", "partition_id", name="uq_extraction_job"), Index("ix_jobs_status", "status", "lease_until"))
+
+
+class SourceChangeEvent(Base):
+    """Change log of a simulated source (what a real system exposes through Z_SDTF_CDC_POLL). One row per changed
+    table row; CHANGENR groups the rows of one business change so replay can treat a document atomically."""
+
+    __tablename__ = "source_change_log"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    system_id: Mapped[str] = mapped_column(ForeignKey("sap_systems.id"), nullable=False)
+    seq: Mapped[int] = mapped_column(Integer, nullable=False)
+    changenr: Mapped[str] = mapped_column(String(32), nullable=False)
+    object_type: Mapped[str] = mapped_column(String(48), default="")
+    table_name: Mapped[str] = mapped_column(String(30), nullable=False)
+    record_key: Mapped[str] = mapped_column(String(200), nullable=False)
+    op: Mapped[str] = mapped_column(String(1), nullable=False)  # I / U / D
+    changed_at: Mapped[str] = mapped_column(String(14), nullable=False)  # YYYYMMDDHHMMSS (UTC)
+    changed_by: Mapped[str] = mapped_column(String(64), default="")
+    payload: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    __table_args__ = (UniqueConstraint("system_id", "seq", name="uq_change_seq"),)
+
+
+class DeltaEvent(IdMixin, Base):
+    """A captured change event and what the delta engine did with it (audit trail + idempotency ledger)."""
+
+    __tablename__ = "delta_events"
+    run_id: Mapped[str] = mapped_column(ForeignKey("migration_runs.id"), nullable=False, index=True)  # the delta cycle
+    baseline_run_id: Mapped[str] = mapped_column(ForeignKey("migration_runs.id"), nullable=False, index=True)
+    seq: Mapped[int] = mapped_column(Integer, nullable=False)
+    changenr: Mapped[str] = mapped_column(String(32), default="")
+    object_type: Mapped[str] = mapped_column(String(48), default="")
+    object_key: Mapped[str] = mapped_column(String(200), default="")
+    table_name: Mapped[str] = mapped_column(String(30), nullable=False)
+    record_key: Mapped[str] = mapped_column(String(200), nullable=False)
+    op: Mapped[str] = mapped_column(String(1), nullable=False)
+    changed_at: Mapped[str] = mapped_column(String(14), default="")
+    changed_by: Mapped[str] = mapped_column(String(64), default="")
+    source_payload: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    target_payload: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    target_key: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    status: Mapped[str] = mapped_column(String(20), default="CAPTURED", nullable=False)  # CAPTURED / FILTERED / REJECTED / APPLIED / SKIPPED_DUPLICATE / SKIPPED_MISSING / CONFLICT
+    action: Mapped[str] = mapped_column(String(16), default="")  # INSERTED / UPDATED / DELETED
+    message: Mapped[str] = mapped_column(Text, default="")
+    __table_args__ = (UniqueConstraint("baseline_run_id", "seq", name="uq_delta_event_seq"), Index("ix_delta_target", "baseline_run_id", "table_name", "target_key"))

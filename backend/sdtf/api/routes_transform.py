@@ -458,7 +458,7 @@ CAPABILITIES = [
     {"area": "Audit trail & evidence packages", "status": "IMPLEMENTED", "note": "Hash-chained events, evidence index"},
     {"area": "AI agents", "status": "IMPLEMENTED", "note": "12 bounded heuristic agents; LLM reasoner planned"},
     {"area": "Multi-source merger / consolidation", "status": "IMPLEMENTED", "note": "Merge groups, cross-system key collision planning, master-data dedup, group-level financial reconciliation (simulated runtime)"},
-    {"area": "Delta capture / near-zero downtime", "status": "PLANNED", "note": "Design in docs/07; no CDC adapter exists"},
+    {"area": "Delta capture / near-zero downtime", "status": "SIMULATED", "note": "CDC through the SAP add-on contract (Z_SDTF_CDC_POLL) over RFC, ordered idempotent replay, freeze, final delta + full reconciliation; verified on the simulated add-on only, no downtime figure claimed (ADR-0014)"},
     {"area": "Cutover command center", "status": "PARTIAL", "note": "Runbook generation, critical path, forecast; execution tracking planned"},
     {"area": "SSO / enterprise identity", "status": "IMPLEMENTED", "note": "OIDC RS256 bearer tokens verified against JWKS with group-to-role mapping; dev users remain for local use"},
     {"area": "Production SAP migration", "status": "UNSUPPORTED", "note": "This build never connects to or writes into an SAP system"},
@@ -492,7 +492,63 @@ def portfolio(db: Session = Depends(get_db), p: Principal = Depends(require("pro
 
 @router.get("/platform/delta/status", tags=["platform"])
 def delta_status(p: Principal = Depends(current_principal)):
-    return {"status": "PLANNED", "stages": ["Initial extraction", "Initial transformation", "Initial target load", "Delta capture", "Delta transformation", "Continuous synchronization", "Backlog monitoring", "Business freeze coordination", "Final delta synchronization", "Final reconciliation", "Cutover authorization", "Business validation", "Production handover"], "implemented_stages": ["Initial extraction", "Initial transformation", "Initial target load", "Final reconciliation"], "note": "No change-data-capture adapter exists in this build. See docs/07-ndt-cdc-consistency-recovery.md for the design."}
+    stages = ["Initial extraction", "Initial transformation", "Initial target load", "Delta capture", "Delta transformation", "Continuous synchronization", "Backlog monitoring", "Business freeze coordination", "Final delta synchronization", "Final reconciliation", "Cutover authorization", "Business validation", "Production handover"]
+    status = {s: "SIMULATED" for s in stages[:10]}
+    status["Cutover authorization"] = "PARTIAL"
+    status["Business validation"] = "PLANNED"
+    status["Production handover"] = "PLANNED"
+    return {"status": "SIMULATED", "stages": stages, "implemented_stages": stages[:10], "stage_status": status, "note": "Delta capture runs through the SAP add-on contract (Z_SDTF_CDC_POLL) over the RFC adapter and is verified on the simulated add-on only; apply targets the simulated record store. Cutover authorization is the runbook go/no-go gate; business validation and production handover are human stages. No downtime figure is derived from simulated cycles. See docs/07-ndt-cdc-consistency-recovery.md and ADR-0014."}
+
+
+# ------------------------------------------------------------------------------------ delta sync
+class DeltaCycleRequest(BaseModel):
+    final: bool = False
+
+
+class FreezeRequest(BaseModel):
+    note: str = ""
+
+
+@router.get("/runs/{run_id}/delta", tags=["delta"])
+def delta_get(backlog: bool = True, r: MigrationRun = Depends(get_run), db: Session = Depends(get_db), p: Principal = Depends(require("project:read"))):
+    from ..runtime.delta import delta_state
+
+    base = db.get(MigrationRun, r.metrics["baseline_run_id"]) if r.metrics.get("kind") == "DELTA" else r
+    return delta_state(db, base, with_backlog=backlog)
+
+
+@router.post("/runs/{run_id}/delta/cycles", tags=["delta"], status_code=201)
+def delta_cycle(req: DeltaCycleRequest, r: MigrationRun = Depends(get_run), db: Session = Depends(get_db), p: Principal = Depends(require("run:start"))):
+    from ..runtime.delta import start_delta_cycle
+
+    try:
+        return run_out(start_delta_cycle(db, r.id, p.username, final=req.final), full=True)
+    except RunPrecondition as e:
+        raise HTTPException(409, str(e)) from None
+
+
+@router.post("/runs/{run_id}/delta/freeze", tags=["delta"])
+def delta_freeze(req: FreezeRequest, r: MigrationRun = Depends(get_run), db: Session = Depends(get_db), p: Principal = Depends(require("approve:run"))):
+    from ..runtime.delta import declare_freeze
+
+    if r.metrics.get("kind") == "DELTA":
+        raise HTTPException(409, "declare the freeze on the baseline run")
+    try:
+        return declare_freeze(db, r, p.username, req.note)
+    except RunPrecondition as e:
+        raise HTTPException(409, str(e)) from None
+
+
+@router.get("/runs/{run_id}/delta/events", tags=["delta"])
+def delta_events(status: str | None = None, limit: int = Query(200, ge=1, le=2000), r: MigrationRun = Depends(get_run), db: Session = Depends(get_db), p: Principal = Depends(require("project:read"))):
+    from ..models import DeltaEvent
+
+    col = DeltaEvent.run_id if r.metrics.get("kind") == "DELTA" else DeltaEvent.baseline_run_id
+    stmt = select(DeltaEvent).where(col == r.id)
+    if status:
+        stmt = stmt.where(DeltaEvent.status == status)
+    rows = db.execute(stmt.order_by(DeltaEvent.seq.desc()).limit(limit)).scalars().all()
+    return [{"id": e.id, "cycle_run_id": e.run_id, "seq": e.seq, "changenr": e.changenr, "object_type": e.object_type, "object_key": e.object_key, "table": e.table_name, "record_key": e.record_key, "op": e.op, "changed_at": e.changed_at, "changed_by": e.changed_by, "status": e.status, "action": e.action, "target_key": e.target_key, "message": e.message} for e in rows]
 
 
 # ------------------------------------------------------------------------------------------ merger

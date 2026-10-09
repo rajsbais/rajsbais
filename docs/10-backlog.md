@@ -42,7 +42,8 @@ Legend: P0 next increment · P1 following · P2 later. Sizes are relative (S/M/L
 ## Phase 6 — NDT & cutover
 | P | Item | Size |
 |---|---|---|
-| P0 | CDC adapter (change pointers/CDHDR) + delta replay engine with ordering and idempotency | XL |
+| ✅ | CDC adapter against the add-on contract (`Z_SDTF_CDC_POLL`, simulated + ABAP reference) and delta replay engine with scope filter, atomic change sets, dependency ordering, idempotency ledger, conflicts, freeze, final delta + full reconciliation, backlog monitor (ADR-0014) | XL |
+| P0 | Activate `Z_SDTF_CDC_POLL` on a real release (change-document coverage per table, timestamp granularity, table logging for deletes); delta loaders through released APIs on a real target | XL (needs SAP systems) |
 | P0 | Benchmark harness and benchmark report (docs/benchmarks.md) | M |
 | P1 | Cutover execution tracking, incident escalation, resource assignment, mock cutover management | M |
 

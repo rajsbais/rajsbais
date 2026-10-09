@@ -36,6 +36,14 @@ Alembic (`backend/alembic.ini`, `backend/sdtf/migrations`). `alembic upgrade hea
   the exact error (`RFC_UNAVAILABLE`, `NOT_AUTHORIZED`, `SNAPSHOT_*`, `CHECKSUM_MISMATCH`, logon/communication
   errors). Tune `SDTF_RFC_PACKAGE_SIZE` (default 5000, add-on cap 10 000) and `SDTF_RFC_KEY_CHUNK` to the source's
   work-process budget. Without a system, `meta.rfc.transport = "simulated"` runs the same code path on synthetic data.
+* **Delta synchronisation** (ADR-0014): after a completed baseline run on an RFC source, run cycles from the Delta
+  Synchronization Monitor or `POST /runs/{baseline}/delta/cycles`; each cycle is a run with CAPTURE/TRANSFORM/APPLY/
+  RECONCILE stages and an event ledger (`GET .../delta/events`: FILTERED reasons, REJECTED change sets, CONFLICT
+  stale events). Conflicts: inspect the event, fix the target or re-trigger the change at the source, re-run a cycle
+  (the ledger never re-applies a known sequence). Before cutover an approver declares the freeze
+  (`POST .../delta/freeze`), then run `{"final": true}`; the baseline is cutover-ready only when the final full
+  reconciliation passes. A failed cycle leaves the watermark at the last completed cycle; the next cycle re-captures.
+  Lag and backlog figures from the simulated source are not performance data.
 * **SSO sign-in fails**: the callback screen shows the reason. `state mismatch` / `no login in progress`: the
   browser tab lost `sessionStorage` (private window, redirect across hosts) or the attempt is older than 10 minutes.
   `PKCE verification failed`: the provider does not support S256 or the client registration disables PKCE.

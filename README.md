@@ -39,7 +39,7 @@ migrations, deployment) for the Phase 1 foundation and the first vertical slice.
 ## Quick start
 ```bash
 python3 -m venv .venv && . .venv/bin/activate && pip install -e "backend[dev]"
-cd backend && pytest -q                      # 112 tests (+ opt-in UI e2e, OIDC e2e and Neo4j integration)
+cd backend && pytest -q                      # 121 tests (+ opt-in UI e2e, OIDC e2e and Neo4j integration)
 python -m sdtf.cli demo                      # full vertical slice, prints the execution report
 python -m sdtf.cli demo --connector RFC      # same slice extracted through the RFC adapter on the simulated SAP add-on
 python -m sdtf.cli serve                     # API http://localhost:8000/docs
@@ -63,7 +63,7 @@ Or: `docker compose -f deploy/docker-compose.yml up --build` (UI :8080, API :800
 | [04](docs/04-dependency-graph-schema.md) | dependency graph schema and traversal |
 | [05](docs/05-transformation-rule-dsl.md) | transformation rule DSL |
 | [06](docs/06-carve-out-scenario-model.md) | carve-out scenario model |
-| [07](docs/07-ndt-cdc-consistency-recovery.md) | NDT/CDC consistency and recovery design (planned) |
+| [07](docs/07-ndt-cdc-consistency-recovery.md) | NDT/CDC consistency and recovery: delta cycles, freeze, final delta (simulated) |
 | [08](docs/08-security-approval-model.md) | security and approval model |
 | [09](docs/09-repository-deployment-architecture.md) | repository and deployment architecture |
 | [10](docs/10-backlog.md) | prioritised backlog |

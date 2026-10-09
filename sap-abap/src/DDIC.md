@@ -11,6 +11,11 @@
 | `ZSDTF_S_WATERMARK` | structure | `TABNAME TYPE TABNAME`, `WATERMARK TYPE STRING` |
 | `ZSDTF_T_WATERMARK` | table type | standard table of `ZSDTF_S_WATERMARK` |
 | `ZSDTF_T_TABNAME` | table type | standard table of `TABNAME` |
+| `ZSDTF_S_CDC_OBJECT` | structure | `OBJECT_TYPE TYPE CHAR48`, `TABNAME TYPE TABNAME`, `FIELD TYPE FIELDNAME`, `OP TYPE CHAR2`, `LOW TYPE STRING`, `HIGH TYPE STRING` (one row per table or per predicate range; empty FIELD = subscribe without predicate) |
+| `ZSDTF_T_CDC_OBJECT` | table type | standard table of `ZSDTF_S_CDC_OBJECT` |
+| `ZSDTF_S_CDC_EVENT` | structure | `SEQ TYPE I`, `CHANGENR TYPE CHAR32`, `OBJECT_TYPE TYPE CHAR48`, `TABNAME TYPE TABNAME`, `KEY TYPE STRING` (primary key values joined by `\|`, without MANDT), `OP TYPE CHAR1` (I/U/D), `CHANGED_AT TYPE CHAR14` (UTC YYYYMMDDHHMMSS), `CHANGED_BY TYPE SYUNAME`, `JSON TYPE STRING` (current row image; empty for D) |
+| `ZSDTF_T_CDC_EVENT` | table type | standard table of `ZSDTF_S_CDC_EVENT` |
+| `ZSDTF_S_CDC_WM` | structure | `UDATE TYPE D`, `UTIME TYPE T`, `CHANGENR TYPE CHAR32` (encoded into the opaque watermark string) |
 | `ZSDTF_SNAP` | transparent table | `TOKEN TYPE CHAR40` (key), `CREATED_AT TYPE TIMESTAMP`, `CREATED_BY TYPE SYUNAME`, `VALID_UNTIL TYPE TIMESTAMP` |
 
 Helper classes referenced by the function modules (to be implemented in the same package):
@@ -22,6 +27,7 @@ Helper classes referenced by the function modules (to be implemented in the same
   the normalised predicate list used to bind cursors.
 * `ZCL_SDTF_PREDICATE=>KEY_FIELDS( iv_table )` — primary key fields without `MANDT`, in key order.
 * `ZCL_SDTF_PREDICATE=>BUILD_KEYSET_AFTER( it_keyfields, it_lastkey )` — `(k1 > a) OR (k1 = a AND k2 > b) OR …`.
+* `ZCL_SDTF_CDC` — `DECODE_WATERMARK` / `ENCODE_WATERMARK`, `COLLECT_DOCUMENT_CHANGES` (timestamp-watermarked header tables, items re-read with their header under the header's CHANGENR), `SEQUENCE_OF` (monotonic sequence derived from timestamp + change number), `OBJECT_TYPE_OF`, `KEY_STRING_OF` (CDPOS TABKEY → key string without MANDT), `ROW_IMAGE_JSON` (current row, predicates applied).
 * `ZCL_SDTF_CURSOR=>ENCODE/DECODE` — base64 JSON `{t, p, k[], s}`; `DECODE` raises `INVALID` when the table,
   predicate hash or snapshot differ from the current call.
 

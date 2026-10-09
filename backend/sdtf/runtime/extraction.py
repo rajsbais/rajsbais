@@ -298,7 +298,7 @@ class RfcExtractor(ManifestExtractor):
         return cache
 
     def adapter_stats(self) -> dict:
-        return {"adapter": self.name, "transport": getattr(self.client.t, "name", "?"), "rfc_calls": self.client.calls, "packages": self.client.packages, "rows_transferred": self.client.rows, "package_size": self.client.package_size, "pushdown": dict(self.pushdown), "snapshot_valid_until": self.client.valid_until}
+        return {"adapter": self.name, "transport": getattr(self.client.t, "name", "?"), "rfc_calls": self.client.calls, "packages": self.client.packages, "rows_transferred": self.client.rows, "package_size": self.client.package_size, "pushdown": dict(self.pushdown), "snapshot_valid_until": self.client.valid_until, "cdc_watermark": self.client.cdc_watermark}
 
 
 def build_extractor(session: Session, source, classification: dict[str, dict], scope_ccs: set[str], store: RecordStore | None = None) -> ManifestExtractor:

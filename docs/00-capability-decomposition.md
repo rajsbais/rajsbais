@@ -21,7 +21,7 @@ synthetic data but replaces an SAP system with an in-platform store) · **PARTIA
 | 12 | Audit & evidence | `audit` | hash-chained events, evidence packages, approvals | IMPLEMENTED |
 | 13 | Run orchestration | `runtime/pipeline` | stage machine, preconditions, checkpoints, restart | IMPLEMENTED (SIMULATED mode only) |
 | 14 | Cutover | `cutover` | runbook generation, critical path, downtime forecast, rollback gates | PARTIAL |
-| 15 | Delta / NDT | — | CDC adapters, delta replay, backlog monitoring | PLANNED (design in doc 07) |
+| 15 | Delta / NDT | `runtime/delta`, `runtime/activity`, `runtime/rfc` (CDC) | CDC through the add-on contract, delta cycles (capture/transform/apply/reconcile), freeze, final delta, backlog monitoring | SIMULATED (verified on the simulated add-on; ADR-0014) |
 | 16 | AI agents | `agents` | 12 bounded agents, proposals, confidence, evidence, human decision | IMPLEMENTED (heuristic reasoner); LLM reasoner PLANNED |
 | 17 | Security & governance | `security` | dev auth, OIDC SSO, RBAC/ABAC, tenant segregation, masking | IMPLEMENTED |
 | 19 | Merger orchestration | `runtime/merge`, `catalog/dedup` | merge groups, collision planner, dedup, group reconciliation | IMPLEMENTED (simulated runtime) |

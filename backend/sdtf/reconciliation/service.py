@@ -148,11 +148,13 @@ def _hdr_map(staged) -> tuple[dict, set[str]]:
     return hdr_map, tables
 
 
-def reconcile_run(session: Session, run: MigrationRun, manifest: ScopeManifest, source: RecordStore, target: RecordStore, financial: bool = True, backend=None) -> dict:
+def reconcile_run(session: Session, run: MigrationRun, manifest: ScopeManifest, source: RecordStore, target: RecordStore, financial: bool = True, backend=None, result_run_id: str | None = None) -> dict:
     """Inline reconciliation: all three layers in one call. Distributed runs execute the same functions as
-    RECONCILE jobs (see reconcile_partition)."""
+    RECONCILE jobs (see reconcile_partition). `result_run_id` stores the results under another run (a final
+    delta cycle reconciles its baseline's staging but owns the results)."""
     results: list[ReconciliationResult] = []
     rid = run.id
+    out_rid = result_run_id or rid
     cls = manifest.selection.get("classification", {})
     backend = backend or get_backend(run.metrics.get("staging_backend"), session=session)
     staged = list(backend.iter_records(rid))
@@ -162,15 +164,15 @@ def reconcile_run(session: Session, run: MigrationRun, manifest: ScopeManifest, 
         by_table[s.table_name].append(s)
     key_collisions = 0
     for table, recs in sorted(by_table.items()):
-        res, dups = technical_checks_for_table(rid, table, recs, target)
+        res, dups = technical_checks_for_table(out_rid, table, recs, target)
         results.extend(res)
         key_collisions += dups
     hdr_map, tables = _hdr_map(staged)
-    results.extend(functional_checks(rid, manifest, hdr_map, tables, target))
+    results.extend(functional_checks(out_rid, manifest, hdr_map, tables, target))
     gl_fail = 0
     if financial:
         ctx = source_context(manifest, source, cls, exceptions, [s.target_payload for s in by_table.get("BSEG", []) if s.load_status == "LOADED"])
-        fin, gl_fail = financial_checks(rid, [ctx], target)
+        fin, gl_fail = financial_checks(out_rid, [ctx], target)
         results.extend(fin)
 
     session.add_all(results)

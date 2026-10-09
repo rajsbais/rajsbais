@@ -58,8 +58,7 @@ def test_authorization_and_unknown_tables(store):
         a.call(rfc.FM_READ_PACKAGE, IV_TABLE="NOPE", IV_SNAPSHOT=s)
     with pytest.raises(rfc.RfcError, match="FU_NOT_FOUND"):
         a.call("Z_SDTF_WRITE_ROWS")
-    with pytest.raises(rfc.RfcError, match="NOT_IMPLEMENTED"):
-        a.call(rfc.FM_CDC_POLL)
+    assert a.call(rfc.FM_CDC_POLL, IV_WATERMARK="0")["EV_EOF"] == "X"  # no change log yet: nothing to deliver
 
 
 def test_predicate_semantics_follow_sap_ranges():
