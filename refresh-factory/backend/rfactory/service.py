@@ -82,6 +82,8 @@ class RefreshService:
         self.tdm = TdmService(self)
         from .leanclient.engine import LeanClientService
         self.lean = LeanClientService(self)
+        from .postcopy.engine import PostCopyService
+        self.postcopy = PostCopyService(self)
 
     # ---------------- landscape ----------------
     def register_system(self, actor: Principal, system: SapSystem, adapter: SimulatedSap | None = None) -> SapSystem:

@@ -13,6 +13,7 @@ from typing import Any, Callable
 
 from .adapter import ChangeLogGap, ProductionWriteBlocked, Row, SapSystem
 from .ddic import NUMBER_RANGE_OBJECTS, TABLES, key_of, key_str
+from .techstate import TechState
 
 REF_DATE = date(2026, 9, 30)
 
@@ -259,8 +260,9 @@ class SimulatedSap:
     """In-memory SAP stand-in implementing both SourceAdapter and TargetAdapter."""
 
     def __init__(self, system: SapSystem, data: dict[str, list[Row]], owners: dict[str, str] | None = None,
-                 outbound: list[dict] | None = None):
+                 outbound: list[dict] | None = None, tech: TechState | None = None):
         self.system = system
+        self.tech = tech if tech is not None else TechState.default_for(system)  # simulated technical configuration
         self.data = data
         self.owners = owners or {}
         self._outbound = outbound if outbound is not None else []

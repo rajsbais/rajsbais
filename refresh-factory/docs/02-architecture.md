@@ -70,9 +70,17 @@ Validation: client role non-production; client-wide relational integrity (no orp
 Afterwards: protection (training and regression clients are locked against being overwritten by other modules; owners can unlock), retention with an expiry sweep that locks but never deletes, and decommission (human approver only, refused while a project, delta scenario, TDM policy or live dataset still references the client).
 `provision.py` holds the plan/execute building blocks shared with test data management.
 
-## 7. Full refresh and post-copy (design level)
-13-phase runbook, pair guard (never a PRD target, no heterogeneous DB, no ECC↔S/4), 11 post-copy task definitions with prerequisites, pre/post-check, rollback, evidence, approval.
-Execution needs SWPM/HANA/snapshot adapters — not built.
+## 7. Full refresh and post-copy
+**Full refresh** (`fullrefresh/runbook.py`): 13-phase runbook model and a pair guard (never a production target, no heterogeneous DB, no ECC↔S/4). The system copy itself (phase 7: SWPM / HANA backup-restore / snapshots) has no execution engine. Phases 5, 8, 9 and 12 are executable through the post-copy factory below.
+
+**Post-copy factory** (`postcopy/`, `sap/techstate.py`). Runs against a *simulated technical configuration* of each system (logical system, RFC destinations, jobs, SMTP node, IDoc partners/ports, external schedulers, printers, monitoring targets, cloud and PI/PO/Integration Suite endpoints, gateway aliases, certificates and SSO trusts, users, licence, TMS, instance parameters, HANA state). `simulate_system_copy` reproduces what a real homogeneous copy leaves behind: every database-resident setting of production arrives in the target, the licence is invalid, TMS is inconsistent, file-based parameters stay.
+1. **Capture** (phase 5): a *target profile* of the target's own configuration, taken while it is clean. Refused if the target references production (capture BEFORE the copy) or if it is production. Submitted and approved by someone other than its author; hash-bound.
+2. **Assess**: read-only per-category count of production references (an item counts as production if it is labelled prod OR its host/destination is a known production host, so a mislabelled endpoint cannot hide).
+3. **Plan**: version-compatible tasks ordered by dependency (BDLS after jobs and RFC; HANA check after licence); only tasks that would change something require approval, by label: basis lead, integration owner, security officer. The planner cannot approve; agents cannot approve; a role cannot approve another role's label.
+4. **Execute** (phase 8/9): per task pre-check → snapshot → action (bounded retry on transient errors) → post-check. A failed post-check or action restores that task's snapshot and halts the run; resume continues. Tasks are idempotent (already compliant = nothing changes). Neutralising only ever deactivates or deletes: nothing pointing at production is (re)activated, profile items that point to production block the task; certificates and trusts are always removed.
+5. **Gate** (phase 12): independent verification: no active reference to production anywhere, mail would reach a non-production relay, no copied privileged or production user unlocked, and every applicable task's target configuration is complete.
+6. **Rollback / evidence**: whole-run rollback by a human basis lead restores every task in reverse; the evidence package holds per-task before/after, change lists, approvals, gate result, profile, audit chain and SHA-256 sums (no credentials).
+Honest limits: nothing here calls SAP; BDLS is a count conversion; user handling covers lock, SAP_ALL removal and password-reset flags; release-specific task variants and real per-task adapters are future work.
 
 ## 8. ABAP agent architecture (design, not built)
 Original add-on in a customer namespace (`/KSTN/`): released-API-first extraction (RFC-enabled function modules + OData), package-based object readers mirroring `Relationship` records, change-document reader for delta,

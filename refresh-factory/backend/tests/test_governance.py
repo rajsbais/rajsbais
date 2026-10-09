@@ -41,14 +41,17 @@ def test_full_refresh_guard():
     plan = runbook.plan_full_refresh(qa, prd)
     assert plan["executable"] is False and len(plan["phases"]) == 13
     assert all(p["status"] == "blocked" for p in plan["phases"] if p["no"] >= 3)
+    ok = runbook.plan_full_refresh(prd, qa)
+    assert {p["no"] for p in ok["phases"] if p["status"].startswith("executable")} == {5, 8, 9, 12}   # covered by the post-copy factory
+    assert next(p for p in ok["phases"] if p["no"] == 7)["status"] == "design-only"                   # the system copy itself is not
 
 
-def test_post_copy_catalog_is_complete():
+def test_post_copy_catalog_is_complete_and_executable():
     required = {"id", "name", "versions", "prerequisites", "precheck", "action", "postcheck", "rollback", "evidence", "approval"}
-    assert len(runbook.POST_COPY_TASKS) >= 10
+    assert len(runbook.POST_COPY_TASKS) >= 15
     for t in runbook.POST_COPY_TASKS:
         assert required <= set(t) and t["never_reactivate_production_interfaces"]
-        assert t["status"].startswith("catalogued")
+        assert t["status"].startswith("implemented") and t["approval_label"] in ("none", "basis_lead", "integration_owner", "security_officer")
 
 
 def test_landscape_readiness_and_combinations(svc):

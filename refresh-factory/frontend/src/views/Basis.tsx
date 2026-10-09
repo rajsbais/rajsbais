@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { api, J } from "../api";
-import { Badge, Card, DataTable, StatusBadge } from "../components";
+import { Badge, Card, StatusBadge } from "../components";
 import { useApp } from "../ctx";
 
 export function Readiness() {
@@ -31,19 +31,6 @@ export function FullRefresh() {
           <ol className="phases">{fr.phases.map((p: J) => (
             <li key={p.no}><strong>{p.name}</strong> <span className="muted">{p.performed_by}{p.approval_required ? ` · approval: ${p.rollback === "none" ? "required" : "required"}` : ""} · rollback: {p.rollback}</span> <Badge>{p.status}</Badge></li>))}</ol>
         </>)}
-    </Card>
-  );
-}
-
-export function PostCopy() {
-  const [tasks, setTasks] = useState<J[]>([]);
-  useEffect(() => { api.get("/api/post-copy/tasks").then(setTasks).catch(() => undefined); }, []);
-  return (
-    <Card title="Post-copy automation catalog">
-      <p><Badge kind="warn">catalogued — not executable</Badge> <span className="muted">Each task defines prerequisites, checks, rollback, evidence and approval. Production interfaces are never re-activated.</span></p>
-      <DataTable rows={tasks} cols={[
-        { key: "id", title: "ID" }, { key: "name", title: "Task" }, { key: "area", title: "Area" }, { key: "precheck", title: "Pre-check" },
-        { key: "action", title: "Action" }, { key: "postcheck", title: "Post-check" }, { key: "rollback", title: "Rollback" }, { key: "approval", title: "Approval" }]} pageSize={6} />
     </Card>
   );
 }

@@ -174,6 +174,23 @@ class ProtectIn(BaseModel):
     locked: bool
 
 
+class CaptureIn(BaseModel):
+    system_id: str
+    name: str
+
+
+class PcRunIn(BaseModel):
+    target_id: str
+    profile_id: str
+    source_id: str | None = None
+    tasks: list[str] | None = None
+    mode: str = "deactivate"
+
+
+class LabelIn(BaseModel):
+    label: str
+
+
 def project_dict(svc: RefreshService, p: Project) -> dict:
     return {"id": p.id, "name": p.name, "status": p.status, "source": {**svc.system(p.source_id).model_dump(mode="json"), "family": svc.system(p.source_id).family},
             "target": {**svc.system(p.target_id).model_dump(mode="json"), "family": svc.system(p.target_id).family}, "created_by": p.created_by,
@@ -678,6 +695,77 @@ def create_app(data_dir: Path | None = None) -> FastAPI:
     @app.post("/api/lean/sweep")
     def l_sweep(p: Principal = Depends(need("run:execute"))):
         return svc.lean.sweep(p)
+
+    # ---------------- post-copy automation factory ----------------
+    @app.get("/api/postcopy/tasks")
+    def pc_tasks(_: Principal = Depends(need("view"))):
+        from ..postcopy.tasks import catalog
+        return catalog()
+
+    @app.get("/api/postcopy/systems/{sid}/tech")
+    def pc_tech(sid: str, _: Principal = Depends(need("view"))):
+        return {"system": svc.system(sid).label, "state": svc.postcopy.tech(sid).snapshot(), "simulated": True}
+
+    @app.get("/api/postcopy/systems/{sid}/assessment")
+    def pc_assess(sid: str, profile_id: str | None = None, _: Principal = Depends(need("view"))):
+        return svc.postcopy.assess(sid, profile_id)
+
+    @app.get("/api/postcopy/systems/{sid}/gate")
+    def pc_gate(sid: str, profile_id: str | None = None, _: Principal = Depends(need("view"))):
+        return svc.postcopy.gate(sid, profile_id)
+
+    @app.post("/api/postcopy/profiles", status_code=201)
+    def pc_capture(b: CaptureIn, p: Principal = Depends(need("plan:write"))):
+        return svc.postcopy.capture_profile(p, b.system_id, b.name).public()
+
+    @app.get("/api/postcopy/profiles")
+    def pc_profiles(_: Principal = Depends(need("view"))):
+        return [x.public() for x in svc.postcopy.profiles.values()]
+
+    @app.post("/api/postcopy/profiles/{pid}/submit")
+    def pc_profile_submit(pid: str, p: Principal = Depends(need("plan:submit"))):
+        return svc.postcopy.submit_profile(p, pid).public()
+
+    @app.post("/api/postcopy/profiles/{pid}/approve")
+    def pc_profile_approve(pid: str, p: Principal = Depends(need("plan:approve"))):
+        return svc.postcopy.approve_profile(p, pid).public()
+
+    @app.post("/api/postcopy/runs", status_code=201)
+    def pc_run_create(b: PcRunIn, p: Principal = Depends(need("plan:write"))):
+        return svc.postcopy.create_run(p, b.model_dump()).public()
+
+    @app.get("/api/postcopy/runs")
+    def pc_runs(_: Principal = Depends(need("view"))):
+        return [r.public() for r in reversed(list(svc.postcopy.runs.values()))]
+
+    @app.get("/api/postcopy/runs/{rid}")
+    def pc_run(rid: str, _: Principal = Depends(need("view"))):
+        return svc.postcopy.get_run(rid).public()
+
+    @app.post("/api/postcopy/runs/{rid}/approvals")
+    def pc_approve(rid: str, b: LabelIn, p: Principal = Depends(need("view"))):
+        return svc.postcopy.approve_run(p, rid, b.label).public()
+
+    @app.post("/api/postcopy/runs/{rid}/execute")
+    def pc_execute(rid: str, p: Principal = Depends(need("run:execute"))):
+        return svc.postcopy.execute(p, rid).public()
+
+    @app.post("/api/postcopy/runs/{rid}/resume")
+    def pc_resume(rid: str, p: Principal = Depends(need("run:execute"))):
+        return svc.postcopy.resume(p, rid).public()
+
+    @app.post("/api/postcopy/runs/{rid}/rollback")
+    def pc_rollback(rid: str, p: Principal = Depends(need("view"))):
+        return svc.postcopy.rollback(p, rid).public()
+
+    @app.get("/api/postcopy/runs/{rid}/evidence")
+    def pc_evidence(rid: str, _: Principal = Depends(need("audit:read"))):
+        return Response(svc.postcopy.evidence_package(rid), media_type="application/zip",
+                        headers={"Content-Disposition": f'attachment; filename="{rid}-evidence.zip"'})
+
+    @app.post("/api/demo/simulate-system-copy")
+    def pc_simulate_copy(source_id: str, target_id: str, p: Principal = Depends(need("system:write"))):
+        return svc.postcopy.simulate_copy(p, source_id, target_id)
 
     if STATIC.exists():
         app.mount("/", StaticFiles(directory=STATIC, html=True), name="ui")

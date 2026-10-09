@@ -16,10 +16,14 @@ PERMISSIONS: dict[str, set[str]] = {
     "privacy_officer": {"masking:write", "masking:reidentify", "view", "audit:read"},
     "auditor": {"audit:read", "view"},
     "scheduler": {"run:execute", "view"},  # service account for the external scheduler: can only trigger approved runs
+    "basis_lead": {"postcopy:approve:basis_lead", "view"},
+    "integration_owner": {"postcopy:approve:integration_owner", "view"},
+    "security_officer": {"postcopy:approve:security_officer", "view", "audit:read"},
     "viewer": {"view"},
 }
 # Permissions that an AI agent principal may never hold, whatever roles it is given.
-AGENT_FORBIDDEN = {"plan:approve", "exception:approve", "run:execute", "masking:reidentify", "system:write"}
+AGENT_FORBIDDEN = {"plan:approve", "exception:approve", "run:execute", "masking:reidentify", "system:write",
+                   "postcopy:approve:basis_lead", "postcopy:approve:integration_owner", "postcopy:approve:security_officer"}
 
 
 @dataclass(frozen=True)
@@ -52,6 +56,9 @@ DEMO_USERS = {
     "dave.privacy": Principal("dave.privacy", "Dave (Privacy officer)", ("privacy_officer",)),
     "erin.auditor": Principal("erin.auditor", "Erin (Auditor)", ("auditor",)),
     "root.admin": Principal("root.admin", "Admin", ("admin", "basis", "approver")),
+    "bastian.lead": Principal("bastian.lead", "Bastian (Basis lead)", ("basis_lead",)),
+    "ingrid.integration": Principal("ingrid.integration", "Ingrid (Integration owner)", ("integration_owner",)),
+    "sven.security": Principal("sven.security", "Sven (Security officer)", ("security_officer",)),
     "svc.scheduler": Principal("svc.scheduler", "External scheduler (service)", ("scheduler",), kind="service"),
     "tina.tester": Principal("tina.tester", "Tina (Tester)", ("tester",)),
     "tom.tester": Principal("tom.tester", "Tom (Tester)", ("tester",)),

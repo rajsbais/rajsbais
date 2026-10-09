@@ -7,7 +7,7 @@ Selective, business-consistent SAP non-production refresh with masking, conflict
 
 ## Run
 ```bash
-cd backend && pip install -e '.[test]' && python -m pytest          # 148 tests
+cd backend && pip install -e '.[test]' && python -m pytest          # 167 tests
 cd ../frontend && npm install && npm run build                       # UI served by the API from frontend/dist
 cd ../backend && uvicorn rfactory.api.main:app --port 8000           # http://localhost:8000  (API docs at /docs)
 # UI dev server: cd frontend && npm run dev   (proxies /api to :8000)
@@ -25,5 +25,7 @@ approval with separation of duties · checkpointed load, resume, rollback · 34+
 **Test data catalog:** *Test catalog* screen → create the default policy (Alice), submit, approve (Carol), request materials as Alice (subset), then as Tina request an O2C chain (subset or synthetic), record usage, release; curators can scan the target, make datasets golden and restore them.
 
 **Lean client builder:** *Lean client* screen → create a template from a purpose preset (Alice), submit, approve (Carol), estimate lean vs full client copy, build client 320 into the QA system, then lock/unlock or decommission it.
+
+**Post-copy factory:** *Post-copy* screen → capture a profile of the clean QA target (Alice), submit, approve (Carol), *simulate a system copy*, plan a run, approve as Basis lead (Bastian), Integration owner (Ingrid) and Security officer (Sven), execute (Alice), review the verification gate, roll back if needed.
 
 Docs: [capability matrix](docs/01-capability-matrix.md) · [architecture](docs/02-architecture.md) · [backlog](docs/03-backlog.md) · [OpenAPI](docs/openapi.json) · [DB schema (design)](db/schema.sql).

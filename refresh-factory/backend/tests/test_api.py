@@ -223,3 +223,43 @@ def test_lean_client_builder_over_http(client):
     assert client.post(f"/api/lean/builds/{build['id']}/decommission", headers=H("carol.approver")).status_code == 200
     assert client.post("/api/lean/sweep", headers=H("svc.scheduler")).status_code == 200
     assert client.get("/api/audit/verify", headers=H("erin.auditor")).json()["valid"]
+
+
+def test_post_copy_factory_over_http(client):
+    b = client.post("/api/demo/bootstrap", headers=H("alice.basis")).json()
+    sid, tid = b["source"]["id"], b["target"]["id"]
+    tasks = client.get("/api/postcopy/tasks", headers=H("tina.tester")).json()
+    assert len(tasks) == 17 and all(t["status"].startswith("implemented") for t in tasks)
+    assert client.get(f"/api/postcopy/systems/{tid}/assessment", headers=H("tina.tester")).json()["active_production_references"] == 0
+    assert client.post("/api/postcopy/profiles", json={"system_id": sid, "name": "p"}, headers=H("alice.basis")).status_code == 403   # production
+    pid = client.post("/api/postcopy/profiles", json={"system_id": tid, "name": "EQ1 pre-copy"}, headers=H("alice.basis")).json()["id"]
+    client.post(f"/api/postcopy/profiles/{pid}/submit", headers=H("alice.basis"))
+    assert client.post(f"/api/postcopy/profiles/{pid}/approve", headers=H("alice.basis")).status_code == 403
+    assert client.post(f"/api/postcopy/profiles/{pid}/approve", headers=H("carol.approver")).json()["status"] == "APPROVED"
+    assert client.post(f"/api/demo/simulate-system-copy?source_id={sid}&target_id={tid}", headers=H("tina.tester")).status_code == 403
+    cp = client.post(f"/api/demo/simulate-system-copy?source_id={sid}&target_id={tid}", headers=H("alice.basis")).json()
+    assert cp["assessment"]["active_production_references"] > 20 and cp["simulated"]
+    assert client.post(f"/api/demo/simulate-system-copy?source_id={tid}&target_id={sid}", headers=H("alice.basis")).status_code == 403
+    run = client.post("/api/postcopy/runs", json={"target_id": tid, "source_id": sid, "profile_id": pid}, headers=H("alice.basis")).json()
+    rid = run["id"]
+    assert run["status"] == "AWAITING_APPROVAL" and set(run["required_approvals"]) == {"basis_lead", "integration_owner", "security_officer"}
+    assert client.post(f"/api/postcopy/runs/{rid}/execute", headers=H("alice.basis")).status_code == 409
+    who = {"basis_lead": "bastian.lead", "integration_owner": "ingrid.integration", "security_officer": "sven.security"}
+    assert client.post(f"/api/postcopy/runs/{rid}/approvals", json={"label": "security_officer"}, headers=H("ingrid.integration")).status_code == 403
+    assert client.post(f"/api/postcopy/runs/{rid}/approvals", json={"label": "basis_lead"}, headers=H("refresh.copilot")).status_code == 403
+    for lab, user in who.items():
+        r = client.post(f"/api/postcopy/runs/{rid}/approvals", json={"label": lab}, headers=H(user))
+        assert r.status_code == 200, r.text
+    assert client.post(f"/api/postcopy/runs/{rid}/execute", headers=H("tina.tester")).status_code == 403
+    done = client.post(f"/api/postcopy/runs/{rid}/execute", headers=H("alice.basis")).json()
+    assert done["status"] == "COMPLETED" and done["gate"]["ok"] and done["simulated"]
+    assert client.get(f"/api/postcopy/systems/{tid}/assessment?profile_id={pid}", headers=H("tina.tester")).json()["active_production_references"] == 0
+    assert client.get(f"/api/postcopy/systems/{tid}/gate?profile_id={pid}", headers=H("tina.tester")).json()["ok"]
+    ev = client.get(f"/api/postcopy/runs/{rid}/evidence", headers=H("sven.security"))
+    assert ev.status_code == 200 and zipfile.ZipFile(io.BytesIO(ev.content)).testzip() is None
+    assert client.get(f"/api/postcopy/runs/{rid}/evidence", headers=H("tina.tester")).status_code == 403
+    assert client.post(f"/api/postcopy/runs/{rid}/rollback", headers=H("refresh.copilot")).status_code == 403
+    assert client.post(f"/api/postcopy/runs/{rid}/rollback", headers=H("bastian.lead")).json()["status"] == "ROLLED_BACK"
+    plan = client.get(f"/api/full-refresh/plan?source_id={sid}&target_id={tid}", headers=H("tina.tester")).json()
+    assert {p["no"] for p in plan["phases"] if p["status"].startswith("executable")} == {5, 8, 9, 12}
+    assert client.get("/api/audit/verify", headers=H("erin.auditor")).json()["valid"]
