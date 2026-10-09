@@ -42,6 +42,22 @@
        ],
        "title": "X-Demo-User"
       }
+     },
+     {
+      "name": "authorization",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Authorization"
+      }
      }
     ],
     "responses": {
@@ -60,6 +76,22 @@
         "schema": {
          "$ref": "#/components/schemas/HTTPValidationError"
         }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/api/auth/config": {
+   "get": {
+    "summary": "Auth Config",
+    "operationId": "auth_config_api_auth_config_get",
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {}
        }
       }
      }
@@ -101,6 +133,22 @@
         }
        ],
        "title": "X-Demo-User"
+      }
+     },
+     {
+      "name": "authorization",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Authorization"
       }
      }
     ],
@@ -146,6 +194,22 @@
        ],
        "title": "X-Demo-User"
       }
+     },
+     {
+      "name": "authorization",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Authorization"
+      }
      }
     ],
     "responses": {
@@ -189,6 +253,22 @@
         }
        ],
        "title": "X-Demo-User"
+      }
+     },
+     {
+      "name": "authorization",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Authorization"
       }
      }
     ],
@@ -243,6 +323,22 @@
        ],
        "title": "X-Demo-User"
       }
+     },
+     {
+      "name": "authorization",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Authorization"
+      }
      }
     ],
     "responses": {
@@ -296,6 +392,22 @@
        ],
        "title": "X-Demo-User"
       }
+     },
+     {
+      "name": "authorization",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Authorization"
+      }
      }
     ],
     "responses": {
@@ -339,6 +451,22 @@
         }
        ],
        "title": "X-Demo-User"
+      }
+     },
+     {
+      "name": "authorization",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Authorization"
       }
      }
     ],
@@ -394,6 +522,22 @@
        ],
        "title": "X-Demo-User"
       }
+     },
+     {
+      "name": "authorization",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Authorization"
+      }
      }
     ],
     "responses": {
@@ -447,6 +591,22 @@
        ],
        "title": "X-Demo-User"
       }
+     },
+     {
+      "name": "authorization",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Authorization"
+      }
      }
     ],
     "responses": {
@@ -491,6 +651,22 @@
        ],
        "title": "X-Demo-User"
       }
+     },
+     {
+      "name": "authorization",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Authorization"
+      }
      }
     ],
     "responses": {
@@ -532,6 +708,22 @@
         }
        ],
        "title": "X-Demo-User"
+      }
+     },
+     {
+      "name": "authorization",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Authorization"
       }
      }
     ],
@@ -596,6 +788,22 @@
        ],
        "title": "X-Demo-User"
       }
+     },
+     {
+      "name": "authorization",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Authorization"
+      }
      }
     ],
     "responses": {
@@ -648,6 +856,22 @@
         }
        ],
        "title": "X-Demo-User"
+      }
+     },
+     {
+      "name": "authorization",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Authorization"
       }
      }
     ],
@@ -712,6 +936,22 @@
        ],
        "title": "X-Demo-User"
       }
+     },
+     {
+      "name": "authorization",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Authorization"
+      }
      }
     ],
     "responses": {
@@ -762,6 +1002,22 @@
         }
        ],
        "title": "X-Demo-User"
+      }
+     },
+     {
+      "name": "authorization",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Authorization"
       }
      }
     ],
@@ -869,6 +1125,22 @@
        ],
        "title": "X-Demo-User"
       }
+     },
+     {
+      "name": "authorization",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Authorization"
+      }
      }
     ],
     "responses": {
@@ -912,6 +1184,22 @@
         }
        ],
        "title": "X-Demo-User"
+      }
+     },
+     {
+      "name": "authorization",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Authorization"
       }
      }
     ],
@@ -966,6 +1254,22 @@
        ],
        "title": "X-Demo-User"
       }
+     },
+     {
+      "name": "authorization",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Authorization"
+      }
      }
     ],
     "responses": {
@@ -1018,6 +1322,22 @@
         }
        ],
        "title": "X-Demo-User"
+      }
+     },
+     {
+      "name": "authorization",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Authorization"
       }
      }
     ],
@@ -1082,6 +1402,22 @@
        ],
        "title": "X-Demo-User"
       }
+     },
+     {
+      "name": "authorization",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Authorization"
+      }
      }
     ],
     "responses": {
@@ -1135,6 +1471,22 @@
        ],
        "title": "X-Demo-User"
       }
+     },
+     {
+      "name": "authorization",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Authorization"
+      }
      }
     ],
     "responses": {
@@ -1187,6 +1539,22 @@
         }
        ],
        "title": "X-Demo-User"
+      }
+     },
+     {
+      "name": "authorization",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Authorization"
       }
      }
     ],
@@ -1251,6 +1619,22 @@
        ],
        "title": "X-Demo-User"
       }
+     },
+     {
+      "name": "authorization",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Authorization"
+      }
      }
     ],
     "requestBody": {
@@ -1314,6 +1698,22 @@
        ],
        "title": "X-Demo-User"
       }
+     },
+     {
+      "name": "authorization",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Authorization"
+      }
      }
     ],
     "responses": {
@@ -1366,6 +1766,22 @@
         }
        ],
        "title": "X-Demo-User"
+      }
+     },
+     {
+      "name": "authorization",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Authorization"
       }
      }
     ],
@@ -1430,6 +1846,22 @@
        ],
        "title": "X-Demo-User"
       }
+     },
+     {
+      "name": "authorization",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Authorization"
+      }
      }
     ],
     "requestBody": {
@@ -1493,6 +1925,22 @@
        ],
        "title": "X-Demo-User"
       }
+     },
+     {
+      "name": "authorization",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Authorization"
+      }
      }
     ],
     "responses": {
@@ -1545,6 +1993,22 @@
         }
        ],
        "title": "X-Demo-User"
+      }
+     },
+     {
+      "name": "authorization",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Authorization"
       }
      }
     ],
@@ -1599,6 +2063,22 @@
        ],
        "title": "X-Demo-User"
       }
+     },
+     {
+      "name": "authorization",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Authorization"
+      }
      }
     ],
     "responses": {
@@ -1651,6 +2131,22 @@
         }
        ],
        "title": "X-Demo-User"
+      }
+     },
+     {
+      "name": "authorization",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Authorization"
       }
      }
     ],
@@ -1705,6 +2201,22 @@
        ],
        "title": "X-Demo-User"
       }
+     },
+     {
+      "name": "authorization",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Authorization"
+      }
      }
     ],
     "responses": {
@@ -1757,6 +2269,22 @@
         }
        ],
        "title": "X-Demo-User"
+      }
+     },
+     {
+      "name": "authorization",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Authorization"
       }
      }
     ],
@@ -1812,6 +2340,22 @@
         }
        ],
        "title": "X-Demo-User"
+      }
+     },
+     {
+      "name": "authorization",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Authorization"
       }
      }
     ],
@@ -1883,6 +2427,22 @@
        ],
        "title": "X-Demo-User"
       }
+     },
+     {
+      "name": "authorization",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Authorization"
+      }
      }
     ],
     "responses": {
@@ -1910,7 +2470,133 @@
   "/api/audit/verify": {
    "get": {
     "summary": "Audit Verify",
+    "description": "Verify the chain and signatures; pass an escrowed head (from /api/audit/head) to also detect truncation.",
     "operationId": "audit_verify_api_audit_verify_get",
+    "parameters": [
+     {
+      "name": "expected_seq",
+      "in": "query",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "integer"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Expected Seq"
+      }
+     },
+     {
+      "name": "expected_head",
+      "in": "query",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Expected Head"
+      }
+     },
+     {
+      "name": "expected_ts",
+      "in": "query",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Expected Ts"
+      }
+     },
+     {
+      "name": "expected_signature",
+      "in": "query",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Expected Signature"
+      }
+     },
+     {
+      "name": "x-demo-user",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Demo-User"
+      }
+     },
+     {
+      "name": "authorization",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Authorization"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      }
+     },
+     "422": {
+      "description": "Validation Error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/api/audit/head": {
+   "get": {
+    "summary": "Audit Head",
+    "description": "A signed (seq, hash) of the log's end. Keep a copy outside the platform: it is what makes truncation detectable.",
+    "operationId": "audit_head_api_audit_head_get",
     "parameters": [
      {
       "name": "x-demo-user",
@@ -1926,6 +2612,22 @@
         }
        ],
        "title": "X-Demo-User"
+      }
+     },
+     {
+      "name": "authorization",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Authorization"
       }
      }
     ],
@@ -1971,6 +2673,83 @@
        ],
        "title": "X-Demo-User"
       }
+     },
+     {
+      "name": "authorization",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Authorization"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {}
+       }
+      }
+     },
+     "422": {
+      "description": "Validation Error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/api/persistence/rotate-data-key": {
+   "post": {
+    "summary": "Persistence Rotate",
+    "description": "Re-encrypt every stored object under a fresh data key (online). Rotating the key-encryption key is an offline operator task.",
+    "operationId": "persistence_rotate_api_persistence_rotate_data_key_post",
+    "parameters": [
+     {
+      "name": "x-demo-user",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "X-Demo-User"
+      }
+     },
+     {
+      "name": "authorization",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Authorization"
+      }
      }
     ],
     "responses": {
@@ -2014,6 +2793,22 @@
         }
        ],
        "title": "X-Demo-User"
+      }
+     },
+     {
+      "name": "authorization",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Authorization"
       }
      }
     ],
@@ -2059,6 +2854,22 @@
        ],
        "title": "X-Demo-User"
       }
+     },
+     {
+      "name": "authorization",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Authorization"
+      }
      }
     ],
     "responses": {
@@ -2102,6 +2913,22 @@
         }
        ],
        "title": "X-Demo-User"
+      }
+     },
+     {
+      "name": "authorization",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Authorization"
       }
      }
     ],
@@ -2173,6 +3000,22 @@
        ],
        "title": "X-Demo-User"
       }
+     },
+     {
+      "name": "authorization",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Authorization"
+      }
      }
     ],
     "responses": {
@@ -2225,6 +3068,22 @@
         }
        ],
        "title": "X-Demo-User"
+      }
+     },
+     {
+      "name": "authorization",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Authorization"
       }
      }
     ],
@@ -2302,6 +3161,22 @@
        ],
        "title": "X-Demo-User"
       }
+     },
+     {
+      "name": "authorization",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Authorization"
+      }
      }
     ],
     "responses": {
@@ -2354,6 +3229,22 @@
         }
        ],
        "title": "X-Demo-User"
+      }
+     },
+     {
+      "name": "authorization",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Authorization"
       }
      }
     ],
@@ -2418,6 +3309,22 @@
        ],
        "title": "X-Demo-User"
       }
+     },
+     {
+      "name": "authorization",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Authorization"
+      }
      }
     ],
     "requestBody": {
@@ -2481,6 +3388,22 @@
        ],
        "title": "X-Demo-User"
       }
+     },
+     {
+      "name": "authorization",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Authorization"
+      }
      }
     ],
     "responses": {
@@ -2533,6 +3456,22 @@
         }
        ],
        "title": "X-Demo-User"
+      }
+     },
+     {
+      "name": "authorization",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Authorization"
       }
      }
     ],
@@ -2597,6 +3536,22 @@
        ],
        "title": "X-Demo-User"
       }
+     },
+     {
+      "name": "authorization",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Authorization"
+      }
      }
     ],
     "requestBody": {
@@ -2660,6 +3615,22 @@
        ],
        "title": "X-Demo-User"
       }
+     },
+     {
+      "name": "authorization",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Authorization"
+      }
      }
     ],
     "responses": {
@@ -2712,6 +3683,22 @@
         }
        ],
        "title": "X-Demo-User"
+      }
+     },
+     {
+      "name": "authorization",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Authorization"
       }
      }
     ],
@@ -2775,6 +3762,22 @@
        ],
        "title": "X-Demo-User"
       }
+     },
+     {
+      "name": "authorization",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Authorization"
+      }
      }
     ],
     "responses": {
@@ -2818,6 +3821,22 @@
         }
        ],
        "title": "X-Demo-User"
+      }
+     },
+     {
+      "name": "authorization",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Authorization"
       }
      }
     ],
@@ -2870,6 +3889,22 @@
         }
        ],
        "title": "X-Demo-User"
+      }
+     },
+     {
+      "name": "authorization",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Authorization"
       }
      }
     ],
@@ -2924,6 +3959,22 @@
        ],
        "title": "X-Demo-User"
       }
+     },
+     {
+      "name": "authorization",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Authorization"
+      }
      }
     ],
     "responses": {
@@ -2976,6 +4027,22 @@
         }
        ],
        "title": "X-Demo-User"
+      }
+     },
+     {
+      "name": "authorization",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Authorization"
       }
      }
     ],
@@ -3040,6 +4107,22 @@
        ],
        "title": "X-Demo-User"
       }
+     },
+     {
+      "name": "authorization",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Authorization"
+      }
      }
     ],
     "responses": {
@@ -3092,6 +4175,22 @@
         }
        ],
        "title": "X-Demo-User"
+      }
+     },
+     {
+      "name": "authorization",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Authorization"
       }
      }
     ],
@@ -3146,6 +4245,22 @@
        ],
        "title": "X-Demo-User"
       }
+     },
+     {
+      "name": "authorization",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Authorization"
+      }
      }
     ],
     "responses": {
@@ -3198,6 +4313,22 @@
         }
        ],
        "title": "X-Demo-User"
+      }
+     },
+     {
+      "name": "authorization",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Authorization"
       }
      }
     ],
@@ -3252,6 +4383,22 @@
        ],
        "title": "X-Demo-User"
       }
+     },
+     {
+      "name": "authorization",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Authorization"
+      }
      }
     ],
     "responses": {
@@ -3296,6 +4443,22 @@
        ],
        "title": "X-Demo-User"
       }
+     },
+     {
+      "name": "authorization",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Authorization"
+      }
      }
     ],
     "responses": {
@@ -3339,6 +4502,22 @@
         }
        ],
        "title": "X-Demo-User"
+      }
+     },
+     {
+      "name": "authorization",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Authorization"
       }
      }
     ],
@@ -3408,6 +4587,22 @@
        ],
        "title": "X-Demo-User"
       }
+     },
+     {
+      "name": "authorization",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Authorization"
+      }
      }
     ],
     "responses": {
@@ -3460,6 +4655,22 @@
         }
        ],
        "title": "X-Demo-User"
+      }
+     },
+     {
+      "name": "authorization",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Authorization"
       }
      }
     ],
@@ -3514,6 +4725,22 @@
        ],
        "title": "X-Demo-User"
       }
+     },
+     {
+      "name": "authorization",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Authorization"
+      }
      }
     ],
     "responses": {
@@ -3566,6 +4793,22 @@
         }
        ],
        "title": "X-Demo-User"
+      }
+     },
+     {
+      "name": "authorization",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Authorization"
       }
      }
     ],
@@ -3621,6 +4864,22 @@
        ],
        "title": "X-Demo-User"
       }
+     },
+     {
+      "name": "authorization",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Authorization"
+      }
      }
     ],
     "requestBody": {
@@ -3673,6 +4932,22 @@
        ],
        "title": "X-Demo-User"
       }
+     },
+     {
+      "name": "authorization",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Authorization"
+      }
      }
     ],
     "responses": {
@@ -3716,6 +4991,22 @@
         }
        ],
        "title": "X-Demo-User"
+      }
+     },
+     {
+      "name": "authorization",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Authorization"
       }
      }
     ],
@@ -3768,6 +5059,22 @@
         }
        ],
        "title": "X-Demo-User"
+      }
+     },
+     {
+      "name": "authorization",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Authorization"
       }
      }
     ],
@@ -3822,6 +5129,22 @@
        ],
        "title": "X-Demo-User"
       }
+     },
+     {
+      "name": "authorization",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Authorization"
+      }
      }
     ],
     "responses": {
@@ -3874,6 +5197,22 @@
         }
        ],
        "title": "X-Demo-User"
+      }
+     },
+     {
+      "name": "authorization",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Authorization"
       }
      }
     ],
@@ -3928,6 +5267,22 @@
        ],
        "title": "X-Demo-User"
       }
+     },
+     {
+      "name": "authorization",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Authorization"
+      }
      }
     ],
     "responses": {
@@ -3981,6 +5336,22 @@
        ],
        "title": "X-Demo-User"
       }
+     },
+     {
+      "name": "authorization",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Authorization"
+      }
      }
     ],
     "responses": {
@@ -4031,6 +5402,22 @@
         }
        ],
        "title": "X-Demo-User"
+      }
+     },
+     {
+      "name": "authorization",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Authorization"
       }
      }
     ],
@@ -4086,6 +5473,22 @@
        ],
        "title": "X-Demo-User"
       }
+     },
+     {
+      "name": "authorization",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Authorization"
+      }
      }
     ],
     "responses": {
@@ -4129,6 +5532,22 @@
         }
        ],
        "title": "X-Demo-User"
+      }
+     },
+     {
+      "name": "authorization",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Authorization"
       }
      }
     ],
@@ -4194,6 +5613,22 @@
        ],
        "title": "X-Demo-User"
       }
+     },
+     {
+      "name": "authorization",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Authorization"
+      }
      }
     ],
     "responses": {
@@ -4237,6 +5672,22 @@
         }
        ],
        "title": "X-Demo-User"
+      }
+     },
+     {
+      "name": "authorization",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Authorization"
       }
      }
     ],
@@ -4282,6 +5733,22 @@
        ],
        "title": "X-Demo-User"
       }
+     },
+     {
+      "name": "authorization",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Authorization"
+      }
      }
     ],
     "responses": {
@@ -4323,6 +5790,22 @@
         }
        ],
        "title": "X-Demo-User"
+      }
+     },
+     {
+      "name": "authorization",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Authorization"
       }
      }
     ],
@@ -4387,6 +5870,22 @@
        ],
        "title": "X-Demo-User"
       }
+     },
+     {
+      "name": "authorization",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Authorization"
+      }
      }
     ],
     "responses": {
@@ -4431,6 +5930,22 @@
        ],
        "title": "X-Demo-User"
       }
+     },
+     {
+      "name": "authorization",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Authorization"
+      }
      }
     ],
     "responses": {
@@ -4474,6 +5989,22 @@
         }
        ],
        "title": "X-Demo-User"
+      }
+     },
+     {
+      "name": "authorization",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Authorization"
       }
      }
     ],
@@ -4526,6 +6057,22 @@
         }
        ],
        "title": "X-Demo-User"
+      }
+     },
+     {
+      "name": "authorization",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Authorization"
       }
      }
     ],
@@ -4589,6 +6136,22 @@
        ],
        "title": "X-Demo-User"
       }
+     },
+     {
+      "name": "authorization",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Authorization"
+      }
      }
     ],
     "responses": {
@@ -4642,6 +6205,22 @@
        ],
        "title": "X-Demo-User"
       }
+     },
+     {
+      "name": "authorization",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Authorization"
+      }
      }
     ],
     "responses": {
@@ -4692,6 +6271,22 @@
         }
        ],
        "title": "X-Demo-User"
+      }
+     },
+     {
+      "name": "authorization",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Authorization"
       }
      }
     ],
@@ -4756,6 +6351,22 @@
        ],
        "title": "X-Demo-User"
       }
+     },
+     {
+      "name": "authorization",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Authorization"
+      }
      }
     ],
     "responses": {
@@ -4808,6 +6419,22 @@
         }
        ],
        "title": "X-Demo-User"
+      }
+     },
+     {
+      "name": "authorization",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Authorization"
       }
      }
     ],
@@ -4872,6 +6499,22 @@
        ],
        "title": "X-Demo-User"
       }
+     },
+     {
+      "name": "authorization",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Authorization"
+      }
      }
     ],
     "responses": {
@@ -4924,6 +6567,22 @@
         }
        ],
        "title": "X-Demo-User"
+      }
+     },
+     {
+      "name": "authorization",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Authorization"
       }
      }
     ],
@@ -4978,6 +6637,22 @@
        ],
        "title": "X-Demo-User"
       }
+     },
+     {
+      "name": "authorization",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Authorization"
+      }
      }
     ],
     "responses": {
@@ -5030,6 +6705,22 @@
         }
        ],
        "title": "X-Demo-User"
+      }
+     },
+     {
+      "name": "authorization",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Authorization"
       }
      }
     ],
@@ -5094,6 +6785,22 @@
        ],
        "title": "X-Demo-User"
       }
+     },
+     {
+      "name": "authorization",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Authorization"
+      }
      }
     ],
     "requestBody": {
@@ -5157,6 +6864,22 @@
        ],
        "title": "X-Demo-User"
       }
+     },
+     {
+      "name": "authorization",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Authorization"
+      }
      }
     ],
     "responses": {
@@ -5209,6 +6932,22 @@
         }
        ],
        "title": "X-Demo-User"
+      }
+     },
+     {
+      "name": "authorization",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Authorization"
       }
      }
     ],
@@ -5263,6 +7002,22 @@
        ],
        "title": "X-Demo-User"
       }
+     },
+     {
+      "name": "authorization",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Authorization"
+      }
      }
     ],
     "requestBody": {
@@ -5316,6 +7071,22 @@
         }
        ],
        "title": "X-Demo-User"
+      }
+     },
+     {
+      "name": "authorization",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Authorization"
       }
      }
     ],
@@ -5380,6 +7151,22 @@
        ],
        "title": "X-Demo-User"
       }
+     },
+     {
+      "name": "authorization",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Authorization"
+      }
      }
     ],
     "responses": {
@@ -5423,6 +7210,22 @@
         }
        ],
        "title": "X-Demo-User"
+      }
+     },
+     {
+      "name": "authorization",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Authorization"
       }
      }
     ],
@@ -5522,6 +7325,22 @@
        ],
        "title": "X-Demo-User"
       }
+     },
+     {
+      "name": "authorization",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Authorization"
+      }
      }
     ],
     "responses": {
@@ -5565,6 +7384,22 @@
         }
        ],
        "title": "X-Demo-User"
+      }
+     },
+     {
+      "name": "authorization",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Authorization"
       }
      }
     ],
@@ -5617,6 +7452,22 @@
         }
        ],
        "title": "X-Demo-User"
+      }
+     },
+     {
+      "name": "authorization",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Authorization"
       }
      }
     ],
@@ -5671,6 +7522,22 @@
        ],
        "title": "X-Demo-User"
       }
+     },
+     {
+      "name": "authorization",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Authorization"
+      }
      }
     ],
     "responses": {
@@ -5723,6 +7590,22 @@
         }
        ],
        "title": "X-Demo-User"
+      }
+     },
+     {
+      "name": "authorization",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Authorization"
       }
      }
     ],
@@ -5777,6 +7660,22 @@
        ],
        "title": "X-Demo-User"
       }
+     },
+     {
+      "name": "authorization",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Authorization"
+      }
      }
     ],
     "responses": {
@@ -5820,6 +7719,22 @@
         }
        ],
        "title": "X-Demo-User"
+      }
+     },
+     {
+      "name": "authorization",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Authorization"
       }
      }
     ],
@@ -5872,6 +7787,22 @@
         }
        ],
        "title": "X-Demo-User"
+      }
+     },
+     {
+      "name": "authorization",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Authorization"
       }
      }
     ],
@@ -5926,6 +7857,22 @@
        ],
        "title": "X-Demo-User"
       }
+     },
+     {
+      "name": "authorization",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Authorization"
+      }
      }
     ],
     "responses": {
@@ -5979,6 +7926,22 @@
        ],
        "title": "X-Demo-User"
       }
+     },
+     {
+      "name": "authorization",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Authorization"
+      }
      }
     ],
     "responses": {
@@ -6031,6 +7994,22 @@
         }
        ],
        "title": "X-Demo-User"
+      }
+     },
+     {
+      "name": "authorization",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Authorization"
       }
      }
     ],
@@ -6224,6 +8203,22 @@
        ],
        "title": "X-Demo-User"
       }
+     },
+     {
+      "name": "authorization",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Authorization"
+      }
      }
     ],
     "responses": {
@@ -6276,6 +8271,22 @@
         }
        ],
        "title": "X-Demo-User"
+      }
+     },
+     {
+      "name": "authorization",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Authorization"
       }
      }
     ],
@@ -6330,6 +8341,22 @@
        ],
        "title": "X-Demo-User"
       }
+     },
+     {
+      "name": "authorization",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Authorization"
+      }
      }
     ],
     "responses": {
@@ -6383,6 +8410,22 @@
        ],
        "title": "X-Demo-User"
       }
+     },
+     {
+      "name": "authorization",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Authorization"
+      }
      }
     ],
     "responses": {
@@ -6435,6 +8478,22 @@
         }
        ],
        "title": "X-Demo-User"
+      }
+     },
+     {
+      "name": "authorization",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Authorization"
       }
      }
     ],
@@ -6499,6 +8558,22 @@
        ],
        "title": "X-Demo-User"
       }
+     },
+     {
+      "name": "authorization",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Authorization"
+      }
      }
     ],
     "requestBody": {
@@ -6562,6 +8637,22 @@
        ],
        "title": "X-Demo-User"
       }
+     },
+     {
+      "name": "authorization",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Authorization"
+      }
      }
     ],
     "requestBody": {
@@ -6624,6 +8715,22 @@
         }
        ],
        "title": "X-Demo-User"
+      }
+     },
+     {
+      "name": "authorization",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Authorization"
       }
      }
     ],
@@ -6690,6 +8797,22 @@
        ],
        "title": "X-Demo-User"
       }
+     },
+     {
+      "name": "authorization",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Authorization"
+      }
      }
     ],
     "responses": {
@@ -6742,6 +8865,22 @@
         }
        ],
        "title": "X-Demo-User"
+      }
+     },
+     {
+      "name": "authorization",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Authorization"
       }
      }
     ],
@@ -6796,6 +8935,22 @@
        ],
        "title": "X-Demo-User"
       }
+     },
+     {
+      "name": "authorization",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Authorization"
+      }
      }
     ],
     "responses": {
@@ -6848,6 +9003,22 @@
         }
        ],
        "title": "X-Demo-User"
+      }
+     },
+     {
+      "name": "authorization",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Authorization"
       }
      }
     ],
@@ -6922,6 +9093,22 @@
        ],
        "title": "X-Demo-User"
       }
+     },
+     {
+      "name": "authorization",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Authorization"
+      }
      }
     ],
     "responses": {
@@ -6966,6 +9153,22 @@
        ],
        "title": "X-Demo-User"
       }
+     },
+     {
+      "name": "authorization",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Authorization"
+      }
      }
     ],
     "responses": {
@@ -7009,6 +9212,22 @@
         }
        ],
        "title": "X-Demo-User"
+      }
+     },
+     {
+      "name": "authorization",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Authorization"
       }
      }
     ],
@@ -7073,6 +9292,22 @@
        ],
        "title": "X-Demo-User"
       }
+     },
+     {
+      "name": "authorization",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Authorization"
+      }
      }
     ],
     "responses": {
@@ -7116,6 +9351,22 @@
         }
        ],
        "title": "X-Demo-User"
+      }
+     },
+     {
+      "name": "authorization",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Authorization"
       }
      }
     ],
@@ -7168,6 +9419,22 @@
         }
        ],
        "title": "X-Demo-User"
+      }
+     },
+     {
+      "name": "authorization",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Authorization"
       }
      }
     ],
@@ -7222,6 +9489,22 @@
        ],
        "title": "X-Demo-User"
       }
+     },
+     {
+      "name": "authorization",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Authorization"
+      }
      }
     ],
     "responses": {
@@ -7275,6 +9558,22 @@
        ],
        "title": "X-Demo-User"
       }
+     },
+     {
+      "name": "authorization",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Authorization"
+      }
      }
     ],
     "responses": {
@@ -7327,6 +9626,22 @@
         }
        ],
        "title": "X-Demo-User"
+      }
+     },
+     {
+      "name": "authorization",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Authorization"
       }
      }
     ],
@@ -7382,6 +9697,22 @@
        ],
        "title": "X-Demo-User"
       }
+     },
+     {
+      "name": "authorization",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Authorization"
+      }
      }
     ],
     "requestBody": {
@@ -7433,6 +9764,22 @@
         }
        ],
        "title": "X-Demo-User"
+      }
+     },
+     {
+      "name": "authorization",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Authorization"
       }
      }
     ],
@@ -7487,6 +9834,22 @@
        ],
        "title": "X-Demo-User"
       }
+     },
+     {
+      "name": "authorization",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Authorization"
+      }
      }
     ],
     "responses": {
@@ -7530,6 +9893,22 @@
         }
        ],
        "title": "X-Demo-User"
+      }
+     },
+     {
+      "name": "authorization",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Authorization"
       }
      }
     ],
@@ -7583,6 +9962,22 @@
         }
        ],
        "title": "X-Demo-User"
+      }
+     },
+     {
+      "name": "authorization",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Authorization"
       }
      }
     ],
@@ -7647,6 +10042,22 @@
        ],
        "title": "X-Demo-User"
       }
+     },
+     {
+      "name": "authorization",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Authorization"
+      }
      }
     ],
     "responses": {
@@ -7691,6 +10102,22 @@
        ],
        "title": "X-Demo-User"
       }
+     },
+     {
+      "name": "authorization",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Authorization"
+      }
      }
     ],
     "responses": {
@@ -7734,6 +10161,22 @@
         }
        ],
        "title": "X-Demo-User"
+      }
+     },
+     {
+      "name": "authorization",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Authorization"
       }
      }
     ],
@@ -7787,6 +10230,22 @@
         }
        ],
        "title": "X-Demo-User"
+      }
+     },
+     {
+      "name": "authorization",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Authorization"
       }
      }
     ],
@@ -7857,6 +10316,22 @@
        ],
        "title": "X-Demo-User"
       }
+     },
+     {
+      "name": "authorization",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Authorization"
+      }
      }
     ],
     "responses": {
@@ -7926,6 +10401,22 @@
        ],
        "title": "X-Demo-User"
       }
+     },
+     {
+      "name": "authorization",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Authorization"
+      }
      }
     ],
     "responses": {
@@ -7969,6 +10460,22 @@
         }
        ],
        "title": "X-Demo-User"
+      }
+     },
+     {
+      "name": "authorization",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Authorization"
       }
      }
     ],
@@ -8021,6 +10528,22 @@
         }
        ],
        "title": "X-Demo-User"
+      }
+     },
+     {
+      "name": "authorization",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Authorization"
       }
      }
     ],
@@ -8075,6 +10598,22 @@
        ],
        "title": "X-Demo-User"
       }
+     },
+     {
+      "name": "authorization",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Authorization"
+      }
      }
     ],
     "responses": {
@@ -8128,6 +10667,22 @@
        ],
        "title": "X-Demo-User"
       }
+     },
+     {
+      "name": "authorization",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Authorization"
+      }
      }
     ],
     "responses": {
@@ -8171,6 +10726,22 @@
         }
        ],
        "title": "X-Demo-User"
+      }
+     },
+     {
+      "name": "authorization",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Authorization"
       }
      }
     ],
@@ -8223,6 +10794,22 @@
         }
        ],
        "title": "X-Demo-User"
+      }
+     },
+     {
+      "name": "authorization",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Authorization"
       }
      }
     ],
@@ -8277,6 +10864,22 @@
        ],
        "title": "X-Demo-User"
       }
+     },
+     {
+      "name": "authorization",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Authorization"
+      }
      }
     ],
     "responses": {
@@ -8329,6 +10932,22 @@
         }
        ],
        "title": "X-Demo-User"
+      }
+     },
+     {
+      "name": "authorization",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Authorization"
       }
      }
     ],
@@ -8393,6 +11012,22 @@
        ],
        "title": "X-Demo-User"
       }
+     },
+     {
+      "name": "authorization",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Authorization"
+      }
      }
     ],
     "responses": {
@@ -8445,6 +11080,22 @@
         }
        ],
        "title": "X-Demo-User"
+      }
+     },
+     {
+      "name": "authorization",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Authorization"
       }
      }
     ],
@@ -8499,6 +11150,22 @@
        ],
        "title": "X-Demo-User"
       }
+     },
+     {
+      "name": "authorization",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Authorization"
+      }
      }
     ],
     "responses": {
@@ -8551,6 +11218,22 @@
         }
        ],
        "title": "X-Demo-User"
+      }
+     },
+     {
+      "name": "authorization",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Authorization"
       }
      }
     ],
@@ -8613,6 +11296,22 @@
         }
        ],
        "title": "X-Demo-User"
+      }
+     },
+     {
+      "name": "authorization",
+      "in": "header",
+      "required": false,
+      "schema": {
+       "anyOf": [
+        {
+         "type": "string"
+        },
+        {
+         "type": "null"
+        }
+       ],
+       "title": "Authorization"
       }
      }
     ],

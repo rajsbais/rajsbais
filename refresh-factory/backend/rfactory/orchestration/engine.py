@@ -336,6 +336,8 @@ class OrchestrationService:
             raise Conflict(f"missing or unknown parameter {e}")
         if kind == "agent_run" and params.get("agent_id") not in self.svc.agents.specs:
             raise Conflict("unknown agent_id")
+        from ..security import authz
+        authz.require_systems(self.svc, actor, target)
         if target and self.svc.system(target).is_production:
             raise Forbidden("production systems are never refresh targets")
         j = Job(f"job-{uuid.uuid4().hex[:8]}", kind, dict(params), priority, actor.id, now, target, list(after), **kw)

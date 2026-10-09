@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { api, getUser, setUser, store, J } from "./api";
+import { api, getToken, getUser, setToken, setUser, store, J } from "./api";
 import { AppCtx } from "./ctx";
 import { ErrorNote, SimBanner } from "./components";
 import ControlTower from "./views/ControlTower";
@@ -46,6 +46,10 @@ export default function App() {
   const [runId, setRunId] = useState<string | null>(store.get("rf.run"));
   const [error, setError] = useState<string | null>(null);
   const [nav, setNav] = useState(false);
+  const [authCfg, setAuthCfg] = useState<J>(null);
+  const [tokenIn, setTokenIn] = useState("");
+  useEffect(() => { fetch("/api/auth/config").then((r) => r.json()).then(setAuthCfg).catch(() => setAuthCfg({ mode: "demo" })); }, []);
+  const oidc = authCfg?.mode === "oidc";
 
   setUser(userId);
   const reload = useCallback(async () => {
@@ -85,11 +89,28 @@ export default function App() {
               </div>))}
           </nav>
           <div className="who">
-            <label htmlFor="user">Signed in as (demo auth)</label>
-            <select id="user" value={getUser()} onChange={(e) => setUserId(e.target.value)}>
-              {users.map((u) => <option key={u.id} value={u.id}>{u.name}{u.kind === "agent" ? " [AI agent]" : ""}</option>)}
-            </select>
-            <div className="muted small">{me?.roles?.join(", ")}</div>
+            {oidc ? (
+              me && getToken() ? (
+                <>
+                  <div>Signed in as <strong>{me.name}</strong></div>
+                  <div className="muted small">{me.roles?.join(", ") || "no roles"}{me.kind !== "human" ? ` · ${me.kind}` : ""}</div>
+                  <button onClick={() => { setToken(null); setMe(null); setTokenIn(""); void reload(); }}>Sign out</button>
+                </>) : (
+                <>
+                  <label htmlFor="token">Bearer token (OIDC)</label>
+                  <input id="token" type="password" autoComplete="off" value={tokenIn} onChange={(e) => setTokenIn(e.target.value)} />
+                  <button disabled={!tokenIn} onClick={() => { setToken(tokenIn.trim()); setTokenIn(""); void reload(); }}>Sign in</button>
+                  <div className="muted small">No browser login flow yet: paste a short-lived token from your identity provider.</div>
+                </>)
+            ) : (
+              <>
+                <label htmlFor="user">Signed in as (demo auth)</label>
+                <select id="user" value={getUser()} onChange={(e) => setUserId(e.target.value)}>
+                  {users.map((u) => <option key={u.id} value={u.id}>{u.name}{u.kind === "agent" ? " [AI agent]" : ""}</option>)}
+                </select>
+                <div className="muted small">{me?.roles?.join(", ")}</div>
+              </>)}
+            {me?.scope && <div className="muted small" data-testid="scope">Scope: {me.scope.company_codes ? `company ${me.scope.company_codes.join(", ")}` : "all companies"} · {me.scope.systems ? me.scope.systems.join(", ") : "all systems"}</div>}
           </div>
         </aside>
         <main id="main" tabIndex={-1}>

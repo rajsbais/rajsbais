@@ -3,7 +3,7 @@
 1. **Persistence** (SQLite state store exists, see M16): PostgreSQL repositories behind `RefreshService` (schema in `db/schema.sql`), migrations, KMS-held keys, backup/restore, multi-writer concurrency, object-store staging.
 2. **Real SAP connectivity** (also unlocks real client creation/copy for the lean client builder: SCC4/SCCL/SCC9 integration, user and authorization handling): RFC/OData adapter implementing `SourceAdapter`/`TargetAdapter` with metadata from DD02L/DD03L; read-only role on PRD; contract tests against a sandbox ECC and S/4HANA.
 3. **ABAP agent** (extraction + non-prod loader) and number-range handling with SNRO APIs.
-4. **SSO/ABAC/tenancy/KMS**, WORM audit sink.
+4. **Security hardening** (OIDC bearer auth, system/company ABAC, envelope encryption and signed audit exist, see M15): Authorization Code + PKCE login, token revocation, KMS/HSM providers, plant/org/row-level ABAC, tenancy, WORM/object-lock audit sink and SIEM export, real-IdP tests.
 5. **Durable orchestration** (orchestrator exists, simulated): replace the in-memory queue with Temporal/Argo, parallel workers with throttling, a clock-driven daemon, real notification channels, leases enforced inside every module.
 6. **Delta refresh hardening** (engine exists, simulated): real change-document readers per object class, durable scheduler daemon, parallel packages, mechanism profiles from metadata.
 7. **More objects**: PP/QM/PM/PS/WM-EWM, S/4 MATDOC, HR/payroll masking, key remapping (REMAP).

@@ -16,7 +16,9 @@ from ..capabilities import CAPABILITIES
 from ..fullrefresh import runbook
 from ..masking.engine import TEMPLATES, template
 from ..sap.adapter import ProductionWriteBlocked
+from ..security import authz
 from ..security.auth import DEMO_USERS, Forbidden, Principal
+from ..security.oidc import AuthConfig, AuthError, OidcVerifier
 from ..selective.manifest import Scope
 from ..service import Conflict, NotFound, Project, RefreshService
 
@@ -273,7 +275,7 @@ def project_dict(svc: RefreshService, p: Project) -> dict:
             "runs": p.runs, "created": p.created, "simulated": True}
 
 
-def create_app(data_dir: Path | None = None, persist: bool | None = None) -> FastAPI:
+def create_app(data_dir: Path | None = None, persist: bool | None = None, auth: AuthConfig | None = None, jwks: dict | None = None) -> FastAPI:
     """`RFACTORY_DATA_DIR` makes the platform durable (state survives restarts); without it, or with persist=False, state is in memory."""
     env_dir = os.environ.get("RFACTORY_DATA_DIR")
     if data_dir is None and env_dir:
@@ -281,9 +283,13 @@ def create_app(data_dir: Path | None = None, persist: bool | None = None) -> Fas
     if persist is None:
         persist = bool(env_dir)
     svc = RefreshService(data_dir, persist=persist)
+    auth = auth or AuthConfig.from_env()
+    verifier = OidcVerifier(auth, jwks) if auth.mode == "oidc" else None
+    failures: list[float] = []
     app = FastAPI(title="SAP Intelligent Refresh Factory", version="0.1.0",
                   description="MVP control plane. All SAP interaction is SIMULATED; see /api/capabilities.")
     app.state.svc = svc
+    app.state.verifier = verifier
 
     write_lock = asyncio.Lock()
 
@@ -316,10 +322,29 @@ def create_app(data_dir: Path | None = None, persist: bool | None = None) -> Fas
     async def _cf(_: Request, e: Conflict):
         return JSONResponse({"detail": str(e)}, 409)
 
-    def me(x_demo_user: str | None = Header(None)) -> Principal:
-        if not x_demo_user or x_demo_user not in DEMO_USERS:
-            raise HTTPException(401, "missing or unknown X-Demo-User (demo authentication only)")
-        return DEMO_USERS[x_demo_user]
+    def _auth_failed(request: Request, reason: str, detail: str) -> HTTPException:
+        import time
+        now = time.time()
+        failures[:] = [t for t in failures if now - t < 60]
+        if len(failures) < 20:  # cap audit growth under a credential-guessing flood
+            failures.append(now)
+            svc.audit.append("anonymous", "auth.failed", request.url.path, {"reason": reason, "client": request.client.host if request.client else None})
+        return HTTPException(401, detail, headers={"WWW-Authenticate": f'Bearer error="invalid_token", error_description="{reason}"'} if verifier else None)
+
+    def me(request: Request, x_demo_user: str | None = Header(None), authorization: str | None = Header(None)) -> Principal:
+        if verifier is not None:  # production-style mode: the demo header is ignored entirely
+            if not authorization or not authorization.lower().startswith("bearer "):
+                raise _auth_failed(request, "missing", "a bearer token is required")
+            try:
+                p = verifier.verify(authorization[7:].strip())
+            except AuthError as e:
+                raise _auth_failed(request, e.reason, f"invalid token ({e.reason})")
+        else:
+            if not x_demo_user or x_demo_user not in DEMO_USERS:
+                raise HTTPException(401, "missing or unknown X-Demo-User (demo authentication only)")
+            p = DEMO_USERS[x_demo_user]
+        authz.check_path(svc, p, request.url.path, request.query_params)
+        return p
 
     def need(perm: str):
         def dep(p: Principal = Depends(me)) -> Principal:
@@ -335,11 +360,18 @@ def create_app(data_dir: Path | None = None, persist: bool | None = None) -> Fas
 
     @app.get("/api/me")
     def whoami(p: Principal = Depends(me)):
-        return {"id": p.id, "name": p.name, "roles": p.roles, "kind": p.kind, "permissions": sorted(p.permissions())}
+        return {"id": p.id, "name": p.name, "roles": p.roles, "kind": p.kind, "permissions": sorted(p.permissions()), "scope": p.attrs or None,
+                "auth": auth.mode}
+
+    @app.get("/api/auth/config")
+    def auth_config():
+        return auth.public()
 
     @app.get("/api/users")
     def users():
-        return [{"id": u.id, "name": u.name, "roles": u.roles, "kind": u.kind} for u in DEMO_USERS.values()]
+        if verifier is not None:
+            return []  # no demo directory in oidc mode
+        return [{"id": u.id, "name": u.name, "roles": u.roles, "kind": u.kind, "scope": u.attrs or None} for u in DEMO_USERS.values()]
 
     @app.get("/api/capabilities")
     def capabilities(_: Principal = Depends(need("view"))):
@@ -352,9 +384,9 @@ def create_app(data_dir: Path | None = None, persist: bool | None = None) -> Fas
         return svc.bootstrap_demo(p)
 
     @app.get("/api/systems")
-    def systems(_: Principal = Depends(need("view"))):
+    def systems(p: Principal = Depends(need("view"))):
         return [{**s.model_dump(mode="json"), "family": s.family, "label": s.label, "writable_target": s.can_be_write_target, "simulated": True}
-                for s in svc.systems.values()]
+                for s in svc.systems.values() if authz.system_ok(p, s)]
 
     @app.get("/api/systems/{sid}/discovery")
     def discovery(sid: str, _: Principal = Depends(need("view"))):
@@ -365,8 +397,8 @@ def create_app(data_dir: Path | None = None, persist: bool | None = None) -> Fas
         return svc.readiness(sid)
 
     @app.get("/api/landscape/combinations")
-    def combos(_: Principal = Depends(need("view"))):
-        return svc.refresh_combinations()
+    def combos(a: Principal = Depends(need("view"))):
+        return [c for c in svc.refresh_combinations() if authz.visible(svc, a, c["source"], c["target"])]
 
     @app.get("/api/objects/registry")
     def registry(family: str = "ECC", _: Principal = Depends(need("view"))):
@@ -381,8 +413,8 @@ def create_app(data_dir: Path | None = None, persist: bool | None = None) -> Fas
 
     # ---------------- projects ----------------
     @app.get("/api/projects")
-    def projects(_: Principal = Depends(need("view"))):
-        return [project_dict(svc, p) for p in svc.projects.values()]
+    def projects(a: Principal = Depends(need("view"))):
+        return [project_dict(svc, p) for p in svc.projects.values() if authz.visible(svc, a, p.source_id, p.target_id)]
 
     @app.post("/api/projects", status_code=201)
     def create_project(b: ProjectIn, p: Principal = Depends(need("project:write"))):
@@ -502,14 +534,34 @@ def create_app(data_dir: Path | None = None, persist: bool | None = None) -> Fas
         return svc.audit.entries(resource, limit)
 
     @app.get("/api/audit/verify")
-    def audit_verify(_: Principal = Depends(need("audit:read"))):
+    def audit_verify(expected_seq: int | None = None, expected_head: str | None = None, expected_ts: str | None = None,
+                     expected_signature: str | None = None, _: Principal = Depends(need("audit:read"))):
+        """Verify the chain and signatures; pass an escrowed head (from /api/audit/head) to also detect truncation."""
+        if expected_seq is not None and expected_head:
+            return svc.audit.verify({"seq": expected_seq, "head": expected_head, "ts": expected_ts, "signature": expected_signature})
         return svc.audit.verify()
+
+    @app.get("/api/audit/head")
+    def audit_head(_: Principal = Depends(need("audit:read"))):
+        """A signed (seq, hash) of the log's end. Keep a copy outside the platform: it is what makes truncation detectable."""
+        return svc.audit.head()
 
     @app.get("/api/persistence/status")
     def persistence_status(_: Principal = Depends(need("view"))):
         if svc.store is None:
             return {"durable": False, "note": "state is in memory and is lost on restart; set RFACTORY_DATA_DIR to make it durable"}
         return svc.store.status()
+
+    @app.post("/api/persistence/rotate-data-key")
+    def persistence_rotate(p: Principal = Depends(me)):
+        """Re-encrypt every stored object under a fresh data key (online). Rotating the key-encryption key is an offline operator task."""
+        if p.kind != "human" or not p.can("system:write"):
+            raise HTTPException(403, "a human with system:write is required")
+        if svc.store is None:
+            raise HTTPException(409, "the platform is not durable (no RFACTORY_DATA_DIR)")
+        n = svc.store.rotate_dek()
+        svc.audit.append(p.id, "persistence.data_key_rotated", "store", {"blobs": n})
+        return {"blobs_reencrypted": n, **svc.store.status()}
 
     @app.post("/api/persistence/checkpoint")
     def persistence_checkpoint(_: Principal = Depends(need("system:write"))):
@@ -591,8 +643,8 @@ def create_app(data_dir: Path | None = None, persist: bool | None = None) -> Fas
         return svc.full.create(p, b.model_dump()).public()
 
     @app.get("/api/full-refresh/programs")
-    def fr_list(_: Principal = Depends(need("view"))):
-        return [x.public() for x in reversed(list(svc.full.programs.values()))]
+    def fr_list(a: Principal = Depends(need("view"))):
+        return [x.public() for x in reversed(list(svc.full.programs.values())) if authz.visible(svc, a, x.source_id, x.target_id)]
 
     @app.get("/api/full-refresh/programs/{pid}")
     def fr_get(pid: str, _: Principal = Depends(need("view"))):
@@ -638,8 +690,8 @@ def create_app(data_dir: Path | None = None, persist: bool | None = None) -> Fas
         return _orch(svc.orch.submit, p, b.kind, b.params, b.priority, b.after, None, b.idempotency_key, b.max_attempts).public()
 
     @app.get("/api/orchestration/jobs")
-    def or_jobs(status: str | None = None, _: Principal = Depends(need("view"))):
-        return [j.public() for j in reversed(list(svc.orch.jobs.values())) if not status or j.status == status]
+    def or_jobs(status: str | None = None, a: Principal = Depends(need("view"))):
+        return [j.public() for j in reversed(list(svc.orch.jobs.values())) if (not status or j.status == status) and authz.visible(svc, a, j.target_id)]
 
     @app.get("/api/orchestration/jobs/{jid}")
     def or_job(jid: str, _: Principal = Depends(need("view"))):
@@ -658,8 +710,9 @@ def create_app(data_dir: Path | None = None, persist: bool | None = None) -> Fas
         return _orch(svc.orch.submit_pipeline, p, b.model_dump())
 
     @app.get("/api/orchestration/pipelines")
-    def or_pipelines(_: Principal = Depends(need("view"))):
-        return [svc.orch.pipeline(k) for k in reversed(list(svc.orch.pipelines))]
+    def or_pipelines(a: Principal = Depends(need("view"))):
+        return [pl for pl in (svc.orch.pipeline(k) for k in reversed(list(svc.orch.pipelines)))
+                if all(authz.visible(svc, a, j["target_id"]) for j in pl["jobs_detail"])]
 
     @app.post("/api/orchestration/schedules", status_code=201)
     def or_sched(b: ScheduleIn, p: Principal = Depends(me)):
@@ -743,8 +796,8 @@ def create_app(data_dir: Path | None = None, persist: bool | None = None) -> Fas
         return svc.delta.create(p, demo_spec(source_id, target_id)).public()
 
     @app.get("/api/delta/scenarios")
-    def d_list(_: Principal = Depends(need("view"))):
-        return [s.public() for s in svc.delta.scenarios.values()]
+    def d_list(a: Principal = Depends(need("view"))):
+        return [s.public() for s in svc.delta.scenarios.values() if authz.visible(svc, a, s.source_id, s.target_id)]
 
     @app.get("/api/delta/scenarios/{sid}")
     def d_get(sid: str, _: Principal = Depends(need("view"))):
@@ -814,7 +867,10 @@ def create_app(data_dir: Path | None = None, persist: bool | None = None) -> Fas
 
     @app.get("/api/tdm/templates/{tid}/candidates")
     def t_candidates(tid: str, source_id: str, company_code: str = "1000", days: int | None = None, limit: int = 20,
-                     _: Principal = Depends(need("view"))):
+                     a: Principal = Depends(need("view"))):
+        authz.require_systems(svc, a, source_id)
+        if authz.restricted(a):
+            authz.require_companies(a, [company_code], "company_code")
         return svc.tdm.candidates(source_id, tid, {"company_code": company_code, "days": days})[:limit]
 
     @app.post("/api/tdm/policies", status_code=201)
@@ -822,8 +878,8 @@ def create_app(data_dir: Path | None = None, persist: bool | None = None) -> Fas
         return svc.tdm.create_policy(p, b.model_dump()).public()
 
     @app.get("/api/tdm/policies")
-    def t_policies(_: Principal = Depends(need("view"))):
-        return [x.public() for x in svc.tdm.policies.values()]
+    def t_policies(a: Principal = Depends(need("view"))):
+        return [x.public() for x in svc.tdm.policies.values() if authz.visible(svc, a, x.target_id)]
 
     @app.post("/api/tdm/policies/{pid}/submit")
     def t_policy_submit(pid: str, p: Principal = Depends(need("plan:submit"))):
@@ -842,8 +898,8 @@ def create_app(data_dir: Path | None = None, persist: bool | None = None) -> Fas
         return svc.tdm.request(p, b.model_dump())
 
     @app.get("/api/tdm/requests")
-    def t_requests(_: Principal = Depends(need("view"))):
-        return list(reversed(list(svc.tdm.requests.values())))
+    def t_requests(a: Principal = Depends(need("view"))):
+        return [r for r in reversed(list(svc.tdm.requests.values())) if authz.visible(svc, a, r["spec"]["target_id"])]
 
     @app.get("/api/tdm/requests/{rid}")
     def t_request_get(rid: str, _: Principal = Depends(need("view"))):
@@ -861,10 +917,10 @@ def create_app(data_dir: Path | None = None, persist: bool | None = None) -> Fas
     def t_catalog(target_id: str | None = None, template_id: str | None = None, state: str | None = None,
                   company_code: str | None = None, provenance: str | None = None, test_case: str | None = None,
                   reserved_by: str | None = None, q: str | None = None, include_inactive: bool = False,
-                  _: Principal = Depends(need("view"))):
-        return svc.tdm.catalog(target_id=target_id, template_id=template_id, state=state, company_code=company_code,
-                               provenance=provenance, test_case=test_case, reserved_by=reserved_by, q=q,
-                               include_inactive=include_inactive)
+                  a: Principal = Depends(need("view"))):
+        return [d for d in svc.tdm.catalog(target_id=target_id, template_id=template_id, state=state, company_code=company_code,
+                                           provenance=provenance, test_case=test_case, reserved_by=reserved_by, q=q,
+                                           include_inactive=include_inactive) if authz.visible(svc, a, d.get("target_id"))]
 
     @app.get("/api/tdm/datasets/{did}")
     def t_dataset(did: str, _: Principal = Depends(need("view"))):
@@ -957,16 +1013,16 @@ def create_app(data_dir: Path | None = None, persist: bool | None = None) -> Fas
         return svc.lean.build(p, b.model_dump()).public()
 
     @app.get("/api/lean/builds")
-    def l_builds(_: Principal = Depends(need("view"))):
-        return [x.public() for x in reversed(list(svc.lean.builds.values()))]
+    def l_builds(a: Principal = Depends(need("view"))):
+        return [x.public() for x in reversed(list(svc.lean.builds.values())) if authz.visible(svc, a, x.host_id, x.source_id)]
 
     @app.get("/api/lean/builds/{bid}")
     def l_build_get(bid: str, _: Principal = Depends(need("view"))):
         return svc.lean.get_build(bid).public()
 
     @app.get("/api/lean/clients")
-    def l_clients(_: Principal = Depends(need("view"))):
-        return svc.lean.clients()
+    def l_clients(a: Principal = Depends(need("view"))):
+        return [c for c in svc.lean.clients() if authz.visible(svc, a, c["system_id"])]
 
     @app.post("/api/lean/clients/{system_id}/protection")
     def l_protect(system_id: str, b: ProtectIn, p: Principal = Depends(need("client:build"))):
@@ -1003,8 +1059,8 @@ def create_app(data_dir: Path | None = None, persist: bool | None = None) -> Fas
         return svc.postcopy.capture_profile(p, b.system_id, b.name).public()
 
     @app.get("/api/postcopy/profiles")
-    def pc_profiles(_: Principal = Depends(need("view"))):
-        return [x.public() for x in svc.postcopy.profiles.values()]
+    def pc_profiles(a: Principal = Depends(need("view"))):
+        return [x.public() for x in svc.postcopy.profiles.values() if authz.visible(svc, a, x.system_id)]
 
     @app.post("/api/postcopy/profiles/{pid}/submit")
     def pc_profile_submit(pid: str, p: Principal = Depends(need("plan:submit"))):
@@ -1019,8 +1075,8 @@ def create_app(data_dir: Path | None = None, persist: bool | None = None) -> Fas
         return svc.postcopy.create_run(p, b.model_dump()).public()
 
     @app.get("/api/postcopy/runs")
-    def pc_runs(_: Principal = Depends(need("view"))):
-        return [r.public() for r in reversed(list(svc.postcopy.runs.values()))]
+    def pc_runs(a: Principal = Depends(need("view"))):
+        return [r.public() for r in reversed(list(svc.postcopy.runs.values())) if authz.visible(svc, a, r.target_id, r.source_id)]
 
     @app.get("/api/postcopy/runs/{rid}")
     def pc_run(rid: str, _: Principal = Depends(need("view"))):

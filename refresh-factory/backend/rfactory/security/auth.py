@@ -5,7 +5,7 @@ MVP authentication is a *demo header* (`X-Demo-User`) against a static user dire
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 PERMISSIONS: dict[str, set[str]] = {
     "admin": {"system:write", "project:write", "plan:write", "masking:write", "audit:read", "view"},
@@ -31,7 +31,8 @@ class Principal:
     id: str
     name: str
     roles: tuple[str, ...]
-    kind: str = "human"  # human | agent
+    kind: str = "human"  # human | agent | service
+    attrs: dict = field(default_factory=dict)  # ABAC: {"systems": [...], "company_codes": [...]}; absent key = unrestricted (see authz.py)
 
     def permissions(self) -> set[str]:
         p: set[str] = set()
@@ -63,6 +64,8 @@ DEMO_USERS = {
     "tina.tester": Principal("tina.tester", "Tina (Tester)", ("tester",)),
     "tom.tester": Principal("tom.tester", "Tom (Tester)", ("tester",)),
     "svc.ci": Principal("svc.ci", "CI/CD pipeline (service)", ("tester",), kind="service"),
+    "cora.regional": Principal("cora.regional", "Cora (Regional steward: company 2000, EP1/EQ1 only)", ("data_steward",),
+                               attrs={"company_codes": ["2000"], "systems": ["EP1", "EQ1"]}),
     "refresh.copilot": Principal("refresh.copilot", "AI Refresh Copilot", ("admin", "approver", "basis"), kind="agent"),
 }
 

@@ -5,6 +5,12 @@ let currentUser = "alice.basis";
 export const setUser = (u: string) => { currentUser = u; };
 export const getUser = () => currentUser;
 
+// Bearer token for oidc mode. sessionStorage, not localStorage: it dies with the tab and is never written to disk by us.
+let token: string | null = null;
+try { token = sessionStorage.getItem("rf.token"); } catch { /* storage unavailable */ }
+export const setToken = (t: string | null) => { token = t; try { if (t) sessionStorage.setItem("rf.token", t); else sessionStorage.removeItem("rf.token"); } catch { /* ignore */ } };
+export const getToken = () => token;
+
 export class ApiError extends Error {
   constructor(public status: number, message: string) { super(message); }
 }
@@ -12,7 +18,7 @@ export class ApiError extends Error {
 async function raw(path: string, init: RequestInit = {}): Promise<Response> {
   const r = await fetch(path, {
     ...init,
-    headers: { "Content-Type": "application/json", "X-Demo-User": currentUser, ...(init.headers || {}) },
+    headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : { "X-Demo-User": currentUser }), ...(init.headers || {}) },
   });
   if (!r.ok) {
     let msg = r.statusText;

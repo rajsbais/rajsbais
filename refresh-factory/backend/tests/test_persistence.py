@@ -230,11 +230,13 @@ def read_all_bytes(path):
 
 def test_state_is_encrypted_at_rest(dsvc):
     p = prepare(dsvc)
-    dsvc.full.run(ALICE, p.id)  # the target now holds unmasked production names and a pre-refresh backup is stored
-    name = dsvc.adapters[p.source_id].data["KNA1"][0]["NAME1"]
+    dsvc.full.run(ALICE, p.id)  # the target now holds unmasked production data and a pre-refresh backup is stored
+    marker = "owner-marker-8d41c0e6b7a95f12e3"  # long enough that a chance match in random ciphertext is impossible
+    dsvc.system(p.target_id).owner = marker
     dsvc.checkpoint()
+    assert marker.encode() in st._dumps(st.collect(dsvc)[("system", p.target_id)])  # the marker IS in the plaintext state ...
     raw = read_all_bytes(dsvc.store.path)
-    assert name.encode() not in raw and b"KNA1" not in raw and b"rfactory" not in raw
+    assert marker.encode() not in raw and b"KNA1" * 3 not in raw and b"rfactory.sap" not in raw  # ... and nowhere on disk
     kf = dsvc.store.path.with_suffix(".key")
     assert stat.S_IMODE(kf.stat().st_mode) == 0o600
 
@@ -298,7 +300,7 @@ def test_unpickler_allow_list_blocks_code_execution_even_with_the_key(dsvc):
     class Evil:
         def __reduce__(self):
             return (os.system, ("echo pwned > /tmp/rfactory-pwned",))
-    f = Fernet(dsvc.store.path.with_suffix(".key").read_bytes())
+    f = dsvc.store._fernet  # an attacker who holds the data key
     plain = pickle.dumps(Evil())
     import hashlib
     db = sqlite3.connect(dsvc.store.path)
@@ -363,3 +365,111 @@ def test_environment_variable_turns_durability_on(tmp_path, monkeypatch):
     c.post("/api/demo/bootstrap", headers={"X-Demo-User": "root.admin"})
     assert (tmp_path / "data" / "state.db").exists()
     assert len(TestClient(create_app()).get("/api/systems", headers={"X-Demo-User": "alice.basis"}).json()) == 4
+
+
+# ---- envelope encryption and key rotation
+def test_data_key_is_wrapped_and_the_kek_alone_opens_the_database(dsvc):
+    ready_project(dsvc)
+    dsvc.checkpoint()
+    db = sqlite3.connect(dsvc.store.path)
+    wrapped = db.execute("SELECT value FROM meta WHERE key='wrapped_dek'").fetchone()[0]
+    db.close()
+    kek = dsvc.store.path.with_suffix(".key").read_bytes()
+    dek = Fernet(kek).decrypt(wrapped)
+    assert dek != kek and dek != dsvc.store.path.with_suffix(".key").read_bytes()  # two different keys: envelope, not direct
+    with pytest.raises(Exception):
+        Fernet(kek).decrypt(sqlite3.connect(dsvc.store.path).execute("SELECT blob FROM aggregates LIMIT 1").fetchone()[0])  # the KEK cannot read data
+    assert dsvc.store.status()["envelope_encryption"] and dsvc.store.status()["key_provider"] == "local-fernet-kek"
+
+
+def test_data_key_rotation_reencrypts_everything_and_keeps_working(dsvc):
+    p = ready_project(dsvc)
+    dsvc.checkpoint()
+    db = sqlite3.connect(dsvc.store.path)
+    before = {r[0]: r[1] for r in db.execute("SELECT id, blob FROM aggregates")}
+    n = dsvc.store.rotate_dek()
+    after = {r[0]: r[1] for r in db.execute("SELECT id, blob FROM aggregates")}
+    db.close()
+    assert n == len(before) and all(before[k] != after[k] for k in before)
+    q = restart(dsvc)  # restores with the same KEK (the wrapped DEK was replaced)
+    assert q.projects[p.id].status == dsvc.projects[p.id].status
+    old_dek_fernet = Fernet(Fernet.generate_key())
+    with pytest.raises(Exception):
+        old_dek_fernet.decrypt(next(iter(after.values())))
+
+
+def test_a_data_key_rotation_that_fails_midway_changes_nothing(dsvc, monkeypatch):
+    ready_project(dsvc)
+    dsvc.checkpoint()
+    calls = {"n": 0}
+    real = dsvc.store._fernet
+
+    class Flaky:
+        def __init__(self, f): self.f = f
+        def decrypt(self, b):
+            calls["n"] += 1
+            if calls["n"] == 3:
+                raise RuntimeError("disk error")
+            return self.f.decrypt(b)
+    monkeypatch.setattr(dsvc.store, "_fernet", Flaky(real))
+    with pytest.raises(RuntimeError):
+        dsvc.store.rotate_dek()
+    monkeypatch.setattr(dsvc.store, "_fernet", real)
+    assert len(restart(dsvc).projects) == 1  # still opens with the original data key
+
+
+def test_kek_rotation_rewraps_without_touching_blobs_and_the_old_kek_stops_working(dsvc, monkeypatch):
+    ready_project(dsvc)
+    dsvc.checkpoint()
+    db = sqlite3.connect(dsvc.store.path)
+    blobs = db.execute("SELECT id, blob FROM aggregates ORDER BY id").fetchall()
+    old = dsvc.store.path.with_suffix(".key").read_bytes()
+    new = Fernet.generate_key()
+    from rfactory.persistence.rotate import rotate
+    out = rotate(dsvc.data_dir, new_kek=new, write_key_file=True)
+    assert out == {"kek_rotated": True}
+    assert db.execute("SELECT id, blob FROM aggregates ORDER BY id").fetchall() == blobs  # nothing re-encrypted
+    db.close()
+    assert dsvc.store.path.with_suffix(".key").read_bytes() == new
+    assert stat.S_IMODE(dsvc.store.path.with_suffix(".key").stat().st_mode) == 0o600
+    assert len(RefreshService(dsvc.data_dir, persist=True).projects) == 1  # opens with the new KEK
+    dsvc.store.path.with_suffix(".key").write_bytes(old)
+    with pytest.raises(st.StoreError, match="key does not match"):
+        RefreshService(dsvc.data_dir, persist=True)  # the retired KEK no longer opens it
+
+
+def test_rotation_tool_with_environment_keys_and_error_cases(tmp_path, monkeypatch, capsys):
+    from rfactory.persistence import rotate as rot
+    k1, k2 = Fernet.generate_key().decode(), Fernet.generate_key().decode()
+    monkeypatch.setenv("RFACTORY_STATE_KEY", k1)
+    s = RefreshService(tmp_path, persist=True)
+    s.bootstrap_demo(ADMIN)
+    s.checkpoint()
+    assert rot.main(["--data-dir", str(tmp_path), "--rotate-data-key"]) == 0
+    monkeypatch.setenv("NEW_KEK", k2)
+    assert rot.main(["--data-dir", str(tmp_path), "--new-key-env", "NEW_KEK"]) == 0
+    with pytest.raises(st.StoreError):
+        RefreshService(tmp_path, persist=True)  # RFACTORY_STATE_KEY still holds the retired key
+    monkeypatch.setenv("RFACTORY_STATE_KEY", k2)
+    assert len(RefreshService(tmp_path, persist=True).systems) == 4
+    assert rot.main(["--data-dir", str(tmp_path)]) == 1 and "nothing to do" in capsys.readouterr().err
+    monkeypatch.setenv("NEW_KEK", "not-a-fernet-key")
+    with pytest.raises(Exception):
+        rot.rotate(tmp_path, new_kek=b"not-a-fernet-key")
+    monkeypatch.setenv("RFACTORY_STATE_KEY", Fernet.generate_key().decode())
+    assert rot.main(["--data-dir", str(tmp_path), "--rotate-data-key"]) == 1  # wrong current key
+
+
+def test_rotate_data_key_over_http_is_human_only_and_audited(tmp_path):
+    from fastapi.testclient import TestClient
+    from rfactory.api.main import create_app
+    H = lambda u: {"X-Demo-User": u}
+    app = create_app(tmp_path, persist=True)
+    c = TestClient(app)
+    c.post("/api/demo/bootstrap", headers=H("root.admin"))
+    assert c.post("/api/persistence/rotate-data-key", headers=H("tina.tester")).status_code == 403
+    assert c.post("/api/persistence/rotate-data-key", headers=H("refresh.copilot")).status_code == 403
+    r = c.post("/api/persistence/rotate-data-key", headers=H("alice.basis"))
+    assert r.status_code == 200 and r.json()["blobs_reencrypted"] >= 5
+    assert any(e["action"] == "persistence.data_key_rotated" and e["actor"] == "alice.basis" for e in app.state.svc.audit.entries())
+    assert len(TestClient(create_app(tmp_path, persist=True)).get("/api/systems", headers=H("alice.basis")).json()) == 4

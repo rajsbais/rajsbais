@@ -135,6 +135,8 @@ class FullRefreshService:
         self._human(actor, "plan:write")
         svc = self.svc
         src, tgt = svc.system(spec["source_id"]), svc.system(spec["target_id"])
+        from ..security import authz
+        authz.require_systems(svc, actor, src.id, tgt.id)
         v = runbook.validate_pair(src, tgt)
         if not v["ok"]:
             raise Conflict("; ".join(v["blockers"]))

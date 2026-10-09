@@ -234,8 +234,17 @@ class DeltaService:
             raise Conflict("at least one scope is required")
         return pol
 
+    def _authorise(self, actor: Principal, source_id: str, target_id: str, scopes: list) -> None:
+        from ..security import authz
+        authz.require_systems(self.svc, actor, source_id, target_id)
+        if authz.restricted(actor):
+            for s in scopes:
+                sc = s["scope"] if isinstance(s["scope"], Scope) else Scope(**s["scope"])
+                authz.require_companies(actor, sc.company_codes, "every delta scope")
+
     def create(self, actor: Principal, spec: dict) -> Scenario:
         src, tgt = self.svc.system(spec["source_id"]), self.svc.system(spec["target_id"])
+        self._authorise(actor, src.id, tgt.id, spec.get("scopes", []))
         pol = self._validate(spec, src, tgt)
         sc = Scenario(f"dlt-{uuid.uuid4().hex[:8]}", spec["name"], src.id, tgt.id,
                       [{"scope": s["scope"] if isinstance(s["scope"], Scope) else Scope(**s["scope"]),
@@ -252,6 +261,7 @@ class DeltaService:
         if sc.status == "RUNNING" or sc.pending:
             raise Conflict("scenario has a run in progress or an unresolved failed run")
         src, tgt = self.svc.system(sc.source_id), self.svc.system(sc.target_id)
+        self._authorise(actor, src.id, tgt.id, spec.get("scopes", []))
         merged = {"name": sc.name, "scopes": sc.scopes, "include_downstream": sc.include_downstream,
                   "conflict_policy": sc.conflict_policy, "masking_policy_id": sc.masking_policy.id,
                   "schedule": sc.schedule, "source_id": sc.source_id, "target_id": sc.target_id, **spec}

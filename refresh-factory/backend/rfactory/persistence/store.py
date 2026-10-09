@@ -9,7 +9,10 @@ Design
     left no state behind: the audit log records what was tried, the store records what is true.
   * Every blob is encrypted and authenticated with Fernet before it touches disk (state includes masking keys, token vault entries and the
     pre-refresh target backups). Blobs are unpickled only after authentication and through an allow-listed unpickler.
-  * Key custody is the weak point: the key comes from RFACTORY_STATE_KEY, otherwise a 0600 key file next to the database (development only).
+  * Envelope encryption: blobs are encrypted with a random data key (DEK); the DEK is stored wrapped by a key-encryption key (KEK) from a
+    `KeyProvider`. Rotating the KEK re-wraps one small value; rotating the DEK re-encrypts every blob in one transaction. A KMS/HSM provider
+    only has to implement wrap/unwrap (no such provider is built; `LocalKek` is the only one).
+  * Key custody is the weak point: the KEK comes from RFACTORY_STATE_KEY, otherwise a 0600 key file next to the database (development only).
 
 NOT provided: PostgreSQL (the schema in db/schema.sql is still a design), multi-process writers, schema migrations (a version mismatch is
 refused), online backup, retention of old versions.
@@ -27,12 +30,40 @@ from pathlib import Path
 
 from cryptography.fernet import Fernet, InvalidToken
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 KEY_CHECK = b"rfactory-state-key-check"
 
 
 class StoreError(RuntimeError):
     pass
+
+
+class KeyProvider:
+    """Wraps and unwraps the data key. A KMS adapter (AWS KMS, Azure Key Vault, an HSM) would implement exactly these two methods."""
+    name = "abstract"
+
+    def wrap(self, dek: bytes) -> bytes:
+        raise NotImplementedError
+
+    def unwrap(self, wrapped: bytes) -> bytes:
+        raise NotImplementedError
+
+
+class LocalKek(KeyProvider):
+    """A Fernet key held by this process (from the environment or a key file). Development-grade custody."""
+    name = "local-fernet-kek"
+
+    def __init__(self, kek: bytes):
+        self._f = Fernet(kek)
+
+    def wrap(self, dek: bytes) -> bytes:
+        return self._f.encrypt(dek)
+
+    def unwrap(self, wrapped: bytes) -> bytes:
+        try:
+            return self._f.decrypt(wrapped)
+        except InvalidToken:
+            raise StoreError("the state key does not match this database: set RFACTORY_STATE_KEY to the key it was created with")
 
 
 _SAFE_BUILTINS = {"set", "frozenset", "dict", "list", "tuple", "str", "int", "float", "bool", "bytes", "bytearray", "complex", "slice", "range", "object"}
@@ -104,11 +135,12 @@ def apply(svc, objs: dict[tuple[str, str], object]) -> None:
 
 
 class StateStore:
-    def __init__(self, svc, path: Path, key: bytes | None = None):
+    def __init__(self, svc, path: Path, key: bytes | None = None, provider: KeyProvider | None = None):
         self.svc, self.path = svc, Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self.key_source = "environment (RFACTORY_STATE_KEY)" if (key or os.environ.get("RFACTORY_STATE_KEY")) else "key file next to the database (development only)"
-        self._fernet = Fernet(self._resolve_key(key))
+        self.provider = provider or LocalKek(self._resolve_key(key))
+        self._fernet: Fernet | None = None  # the data key, known once the database is opened (load) or created
         self._lock = threading.Lock()
         self._db = sqlite3.connect(self.path, check_same_thread=False)
         self._db.execute("PRAGMA journal_mode=WAL")
@@ -144,6 +176,30 @@ class StateStore:
         r = self._db.execute("SELECT value FROM meta WHERE key=?", (k,)).fetchone()
         return r[0] if r else None
 
+    def _init_meta(self) -> None:
+        dek = Fernet.generate_key()
+        with self._db:
+            self._db.execute("INSERT OR REPLACE INTO meta VALUES ('schema', ?)", (str(SCHEMA_VERSION).encode(),))
+            self._db.execute("INSERT OR REPLACE INTO meta VALUES ('wrapped_dek', ?)", (self.provider.wrap(dek),))
+            self._db.execute("INSERT OR REPLACE INTO meta VALUES ('key_check', ?)", (Fernet(dek).encrypt(KEY_CHECK),))
+        self._fernet = Fernet(dek)
+
+    def _open_existing(self) -> None:
+        ver = self._meta("schema")
+        if int(ver) != SCHEMA_VERSION:
+            raise StoreError(f"state schema version {int(ver)} is not supported by this build (expects {SCHEMA_VERSION}); no migration exists")
+        wrapped = self._meta("wrapped_dek")
+        if wrapped is None:
+            raise StoreError("the database has no wrapped data key: refusing to load")
+        dek = self.provider.unwrap(wrapped)  # StoreError when the KEK is wrong
+        f = Fernet(dek)
+        try:
+            if f.decrypt(self._meta("key_check")) != KEY_CHECK:
+                raise InvalidToken
+        except InvalidToken:
+            raise StoreError("the data key does not open this database: it was modified or corrupted")
+        self._fernet = f
+
     def load(self) -> int:
         """Restore the platform from disk. Refuses (never silently starts empty) on a wrong key, tampering, or a schema mismatch."""
         with self._lock:
@@ -151,17 +207,9 @@ class StateStore:
             if ver is None:
                 if self._db.execute("SELECT COUNT(*) FROM aggregates").fetchone()[0]:
                     raise StoreError("state database has data but no schema marker: refusing to load")
-                with self._db:
-                    self._db.execute("INSERT OR REPLACE INTO meta VALUES ('schema', ?)", (str(SCHEMA_VERSION).encode(),))
-                    self._db.execute("INSERT OR REPLACE INTO meta VALUES ('key_check', ?)", (self._fernet.encrypt(KEY_CHECK),))
+                self._init_meta()
                 return 0
-            if int(ver) != SCHEMA_VERSION:
-                raise StoreError(f"state schema version {int(ver)} is not supported by this build (expects {SCHEMA_VERSION}); no migration exists")
-            try:
-                if self._fernet.decrypt(self._meta("key_check")) != KEY_CHECK:
-                    raise InvalidToken
-            except InvalidToken:
-                raise StoreError("the state key does not match this database: set RFACTORY_STATE_KEY to the key it was created with")
+            self._open_existing()
             objs: dict[tuple[str, str], object] = {}
             for kind, k, h, blob in self._db.execute("SELECT kind, id, hash, blob FROM aggregates"):
                 try:
@@ -194,6 +242,8 @@ class StateStore:
     def save(self) -> dict:
         """Write every aggregate that changed since the last save, in one transaction."""
         with self._lock:
+            if self._fernet is None:
+                raise StoreError("the store has not been opened: call load() first")
             now = datetime.now(timezone.utc).isoformat()
             cur = collect(self.svc)
             changed: list[tuple[tuple[str, str], str, bytes]] = []
@@ -204,9 +254,6 @@ class StateStore:
                     changed.append((key, h, plain))
             gone = [k for k in self._hashes if k not in cur]
             with self._db:  # one transaction: all or nothing
-                if self._meta("schema") is None:
-                    self._db.execute("INSERT OR REPLACE INTO meta VALUES ('schema', ?)", (str(SCHEMA_VERSION).encode(),))
-                    self._db.execute("INSERT OR REPLACE INTO meta VALUES ('key_check', ?)", (self._fernet.encrypt(KEY_CHECK),))
                 for (kind, k), h, plain in changed:
                     self._db.execute("INSERT OR REPLACE INTO aggregates VALUES (?,?,?,?,?)", (kind, k, h, self._fernet.encrypt(plain), now))
                 for kind, k in gone:
@@ -219,12 +266,44 @@ class StateStore:
             self.last_save_stats = {"written": len(changed), "deleted": len(gone), "aggregates": len(cur)}
             return self.last_save_stats
 
+    # ---------------------------------------------------------------- key rotation
+    @classmethod
+    def open_for_maintenance(cls, path: Path, kek: bytes) -> "StateStore":
+        """Open a database without a running platform (offline key rotation)."""
+        st = cls(None, path, key=kek)
+        if st._meta("schema") is None:
+            raise StoreError("no database to maintain")
+        st._open_existing()
+        return st
+
+    def rotate_kek(self, new_provider: KeyProvider) -> None:
+        """Re-wrap the data key under a new key-encryption key. Cheap: no blob is touched."""
+        with self._lock:
+            dek = self.provider.unwrap(self._meta("wrapped_dek"))
+            with self._db:
+                self._db.execute("INSERT OR REPLACE INTO meta VALUES ('wrapped_dek', ?)", (new_provider.wrap(dek),))
+            self.provider = new_provider
+
+    def rotate_dek(self) -> int:
+        """Replace the data key and re-encrypt every stored blob in ONE transaction (all or nothing)."""
+        with self._lock:
+            old, new_key = self._fernet, Fernet.generate_key()
+            new = Fernet(new_key)
+            rows = self._db.execute("SELECT kind, id, blob FROM aggregates").fetchall()
+            with self._db:
+                for kind, k, blob in rows:
+                    self._db.execute("UPDATE aggregates SET blob=? WHERE kind=? AND id=?", (new.encrypt(old.decrypt(blob)), kind, k))
+                self._db.execute("INSERT OR REPLACE INTO meta VALUES ('wrapped_dek', ?)", (self.provider.wrap(new_key),))
+                self._db.execute("INSERT OR REPLACE INTO meta VALUES ('key_check', ?)", (new.encrypt(KEY_CHECK),))
+            self._fernet = new
+            return len(rows)
+
     def status(self) -> dict:
         kinds: dict[str, int] = {}
         for kind, _ in self._hashes:
             kinds[kind] = kinds.get(kind, 0) + 1
         size = self.path.stat().st_size if self.path.exists() else 0
         return {"durable": True, "database": self.path.name, "bytes": size, "aggregates": len(self._hashes), "by_kind": kinds, "schema_version": SCHEMA_VERSION,
-                "interrupted_work": self.interrupted, "encrypted_at_rest": True, "key_source": self.key_source, "last_saved": self.last_saved, "last_save": self.last_save_stats,
+                "interrupted_work": self.interrupted, "encrypted_at_rest": True, "key_source": self.key_source, "key_provider": self.provider.name, "envelope_encryption": True, "last_saved": self.last_saved, "last_save": self.last_save_stats,
                 "limits": ["single writer: mutating API requests are serialised", "SQLite, not PostgreSQL", "no schema migrations", "no online backup or version history",
                            "the audit log (audit.jsonl) is append-only on disk and is not encrypted"]}

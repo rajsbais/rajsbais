@@ -189,6 +189,8 @@ class PostCopyService:
     def capture_profile(self, actor: Principal, system_id: str, name: str) -> Profile:
         if not actor.can("plan:write"):
             raise Forbidden("plan:write required")
+        from ..security import authz
+        authz.require_systems(self.svc, actor, system_id)
         self._guard_target(system_id)
         t, ph = self.tech(system_id), self.prod_hosts()
         refs = [f"{c}:{i.get(LISTS[c])}" for c in LISTS for i in list_items(t.s, c) if is_prod_ref(i, ph)]
@@ -233,6 +235,8 @@ class PostCopyService:
         if not actor.can("plan:write"):
             raise Forbidden("plan:write required")
         svc = self.svc
+        from ..security import authz
+        authz.require_systems(svc, actor, spec["target_id"], spec.get("source_id"))
         s = self._guard_target(spec["target_id"])
         p = self.get_profile(spec["profile_id"])
         if p.system_id != s.id:

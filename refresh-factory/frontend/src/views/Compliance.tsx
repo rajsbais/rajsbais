@@ -12,9 +12,9 @@ export default function Compliance() {
   return (
     <>
       <ErrorNote error={act.error} />
-      <Card title="Audit trail integrity" actions={<button onClick={load}>Re-verify</button>}>
-        {ver && <p>{ver.valid ? <Badge kind="ok">hash chain valid</Badge> : <Badge kind="bad">chain broken at #{ver.broken_at}</Badge>} · {ver.entries} entries
-          <span className="muted small"> Tamper-evident only; production needs an immutable (WORM) sink.</span></p>}
+      <Card title="Audit trail integrity" actions={<div className="row"><button onClick={load}>Re-verify</button><button onClick={() => act.run(() => api.download("/api/audit/head", "audit-head.json"))}>Download signed head</button></div>}>
+        {ver && <p>{ver.valid ? <Badge kind="ok">{ver.signed ? "chain and signatures valid" : "hash chain valid"}</Badge> : <Badge kind="bad">broken at #{ver.broken_at}: {ver.reason}</Badge>} · {ver.entries} entries
+          <span className="muted small"> Entries are hash-chained and signed. Keep a copy of the signed head outside the platform to detect truncation. This is not WORM storage.</span></p>}
         <DataTable rows={audit} cols={[
           { key: "seq", title: "#" }, { key: "ts", title: "Time" }, { key: "actor", title: "Actor" }, { key: "action", title: "Action" },
           { key: "resource", title: "Resource" }, { key: "details", title: "Details", render: (e) => <code className="small">{JSON.stringify(e.details).slice(0, 90)}</code> }]} pageSize={10} />

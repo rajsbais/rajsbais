@@ -85,6 +85,15 @@ class AgentService:
         if spec is None:
             raise AgentError(f"unknown agent {agent_id}")
         params = dict(params or {})
+        from ..security import authz
+        if authz.restricted(actor):  # an agent report must not become a way to read what the person may not open
+            pid = params.get("project_id")
+            if pid in self.svc.projects:
+                authz.require_systems(self.svc, actor, self.svc.projects[pid].source_id, self.svc.projects[pid].target_id)
+            authz.require_systems(self.svc, actor, params.get("system_id"))
+            if spec.id in ("landscape-discovery", "compliance-verification", "refresh-scheduling", "performance-optimization", "reconciliation-analysis", "refresh-documentation") \
+                    or not (params.get("project_id") or params.get("system_id")):
+                raise Forbidden(f"the {spec.name} agent reads the whole platform: it is not available inside a scoped role")
         rep = AgentReport(spec.id, spec.name, actor.id, params)
         spec.fn(self.svc, params, rep)  # ValueError for bad input propagates
         for r in rep.recommendations:

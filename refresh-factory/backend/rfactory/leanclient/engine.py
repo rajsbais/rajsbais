@@ -359,6 +359,8 @@ class LeanClientService:
         if not actor.can("client:build"):
             raise Forbidden("client:build required")
         svc, now = self.svc, now or _now()
+        from ..security import authz
+        authz.require_systems(svc, actor, spec.get("host_id"), spec.get("source_id"))
         t = self.get_template(spec["template_id"])
         if t.status != "APPROVED" or not t.approval or t.approval["hash"] != t.hash():
             raise Conflict(f"template is {t.status}; it must be approved for its current definition")

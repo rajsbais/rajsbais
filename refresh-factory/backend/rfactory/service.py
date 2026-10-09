@@ -20,7 +20,8 @@ from .masking.engine import MaskingEngine, MaskingPolicy, Rule, MaskMode, STRATE
 from .reconcile.validator import reconcile
 from .sap.adapter import ProductionWriteBlocked, ReadOnlyView, SapSystem, SystemRole
 from .sap.synthetic import SimulatedSap, make_demo_pair
-from .security.audit import AuditLog
+from .security.audit import AuditLog, load_audit_key
+from .security import authz
 from .security.auth import Forbidden, Principal, check_separation_of_duties
 from .selective.conflicts import Action, ConflictReport, analyze
 from .selective.executor import Executor, Run
@@ -66,7 +67,7 @@ class RefreshService:
     def __init__(self, data_dir: Path | None = None, persist: bool = False):
         self.data_dir = data_dir or Path(tempfile.mkdtemp(prefix="rfactory-"))
         self.data_dir.mkdir(parents=True, exist_ok=True)
-        self.audit = AuditLog(self.data_dir / "audit.jsonl")
+        self.audit = AuditLog(self.data_dir / "audit.jsonl", load_audit_key(self.data_dir))
         self.registries = {"ECC": Registry("ECC"), "S4": Registry("S4")}
         self.registry = self.registries["ECC"]  # default / ECC
         self.systems: dict[str, SapSystem] = {}
@@ -183,6 +184,7 @@ class RefreshService:
 
     def create_project(self, actor: Principal, name: str, source_id: str, target_id: str) -> Project:
         s, t = self.system(source_id), self.system(target_id)
+        authz.require_systems(self, actor, source_id, target_id)
         if t.is_production:
             raise Forbidden("production systems cannot be selected as refresh targets")
         if not t.can_be_write_target:
@@ -208,6 +210,9 @@ class RefreshService:
         if p.status in ("RUNNING",):
             raise Conflict("project is running")
         prev = p.manifest
+        authz.require_systems(self, actor, p.source_id, p.target_id)
+        if authz.restricted(actor):
+            authz.require_companies(actor, scope.company_codes, "the manifest scope")
         m = Manifest(name=p.name, version=(prev.version + 1) if prev else 1, source_system_id=p.source_id,
                      target_system_id=p.target_id, scope=scope, include_downstream=include_downstream,
                      masking_policy_id=masking_policy_id, conflict_policy=conflict_policy,
@@ -227,6 +232,7 @@ class RefreshService:
         if not p.manifest:
             raise Conflict("no manifest")
         plan = Planner(self.source_view(p.source_id), self.reg(p)).build(p.manifest)
+        authz.require_plan(actor, plan, {r["WERKS"]: r["BUKRS"] for r in self.source_view(p.source_id).select("T001W")})
         p.plan, p.report, p.approval = plan, None, None
         p.status = "PLANNED"
         rows = {t: [r for i in plan.instances.values() for r in i.rows.get(t, [])] for t in

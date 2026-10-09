@@ -174,6 +174,8 @@ class TdmService:
     def create_policy(self, actor: Principal, spec: dict) -> Policy:
         svc = self.svc
         src, tgt = svc.system(spec["source_id"]), svc.system(spec["target_id"])
+        from ..security import authz
+        authz.require_systems(svc, actor, src.id, tgt.id)
         if tgt.is_production or not tgt.can_be_write_target:
             raise Forbidden(f"{tgt.label} cannot host self-service test data")
         if src.id == tgt.id or src.family != tgt.family:
@@ -248,6 +250,10 @@ class TdmService:
     def request(self, actor: Principal, spec: dict, now: datetime | None = None) -> dict:
         if not actor.can("tdm:request"):
             raise Forbidden("tdm:request required")
+        from ..security import authz
+        authz.require_systems(self.svc, actor, spec.get("target_id"))
+        if authz.restricted(actor):
+            authz.require_companies(actor, [str((spec.get("params") or {}).get("company_code", ""))] if (spec.get("params") or {}).get("company_code") else [], "the request's company_code")
         now = now or _now()
         req = {"id": f"req-{uuid.uuid4().hex[:8]}", "requester": actor.id, "created": _iso(now), "status": "SUBMITTED",
                "spec": {k: spec.get(k) for k in ("target_id", "template_id", "mode", "count", "params", "purpose", "test_cases", "ttl_days", "reserve")},
@@ -466,6 +472,8 @@ class TdmService:
         if not actor.can("tdm:curate"):
             raise Forbidden("tdm:curate required")
         svc, now = self.svc, now or _now()
+        from ..security import authz
+        authz.require_systems(svc, actor, target_id)
         tgt = svc.adapters[svc.system(target_id).id]
         reg = svc.registries[svc.system(target_id).family]
         view = ReadOnlyView(tgt)

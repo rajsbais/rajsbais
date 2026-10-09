@@ -4,8 +4,9 @@ import { Badge, Card, ErrorNote, StatusBadge, useAction } from "../components";
 import { useApp } from "../ctx";
 
 function Durability() {
-  const { me } = useApp();
+  const { me, can } = useApp();
   const [d, setD] = useState<J>(null);
+  const act = useAction();
   useEffect(() => { api.get("/api/persistence/status").then(setD).catch(() => undefined); }, [me?.id]);
   if (!d) return null;
   return (
@@ -14,7 +15,9 @@ function Durability() {
         <>
           <p><Badge kind="ok">durable</Badge> <span className="muted">State survives restarts: {d.aggregates} stored objects, encrypted at rest, last saved {d.last_saved?.slice(0, 19).replace("T", " ") ?? "—"} UTC.</span></p>
           {d.interrupted_work.length > 0 && <p><Badge kind="warn">interrupted work found at start-up</Badge> {d.interrupted_work.join(", ")}</p>}
-          <p className="muted small">Key: {d.key_source}. {d.limits.join(" · ")}.</p>
+          <p className="muted small">Key: {d.key_source} · provider {d.key_provider} (envelope encryption). {d.limits.join(" · ")}.</p>
+          <button disabled={!can("system:write") || act.busy} onClick={() => act.run(async () => setD(await api.post("/api/persistence/rotate-data-key")))}>Rotate data key</button>
+          <ErrorNote error={act.error} />
         </>) : (
         <p><Badge kind="warn">in memory</Badge> <span className="muted">{d.note}</span></p>)}
     </Card>
