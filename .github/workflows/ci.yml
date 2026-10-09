@@ -1,0 +1,32 @@
+name: ci
+on:
+  push: { branches: ["**"] }
+  pull_request:
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - run: pip install -e "backend[dev]"
+      - run: ruff check backend/sdtf
+      - run: cd backend && pytest -q -p no:warnings
+      - name: Vertical slice smoke (CLI)
+        run: cd backend && SDTF_DATABASE_URL=sqlite:///./ci.db python -m sdtf.cli demo --json | tee slice.json && python -c "import json;d=json.load(open('slice.json'));assert d['status']=='COMPLETED' and d['reconciliation']['overall']=='PASS'"
+      - name: Alembic migration applies cleanly
+        run: cd backend && SDTF_DATABASE_URL=sqlite:///./mig.db alembic upgrade head
+  frontend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: "22" }
+      - run: cd frontend && npm install --no-audit --no-fund && npm run build
+  containers:
+    runs-on: ubuntu-latest
+    needs: [backend, frontend]
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker build -f deploy/Dockerfile.backend -t sdtf-backend:ci .
+      - run: docker build -f deploy/Dockerfile.frontend -t sdtf-frontend:ci .

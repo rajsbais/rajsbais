@@ -1,0 +1,18 @@
+apiVersion: v1
+kind: ConfigMap
+metadata: { name: sdtf-config, namespace: sdtf }
+data:
+  SDTF_ENV: "kubernetes"
+  SDTF_EVIDENCE_DIR: "/app/data/evidence"
+  SDTF_EXTRACTION_WORKERS: "8"
+  SDTF_DEV_USERS: "0"
+  SDTF_CORS_ORIGINS: "https://sdtf.example.internal"
+---
+apiVersion: v1
+kind: Secret
+metadata: { name: sdtf-secrets, namespace: sdtf }
+type: Opaque
+stringData:
+  # Replace via your secrets manager (External Secrets / Vault CSI). Never commit real values.
+  SDTF_DATABASE_URL: "postgresql+psycopg://sdtf:CHANGE_ME@postgres.sdtf.svc:5432/sdtf"
+  SDTF_AUTH_SECRET: "CHANGE_ME"

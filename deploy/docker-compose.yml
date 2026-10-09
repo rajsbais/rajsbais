@@ -1,0 +1,28 @@
+# Local / evaluation deployment: PostgreSQL + API + UI. Synthetic data only; no SAP connectivity.
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: sdtf
+      POSTGRES_PASSWORD: sdtf
+      POSTGRES_DB: sdtf
+    volumes: ["pgdata:/var/lib/postgresql/data"]
+    healthcheck: { test: ["CMD-SHELL", "pg_isready -U sdtf"], interval: 5s, retries: 10 }
+  backend:
+    build: { context: .., dockerfile: deploy/Dockerfile.backend }
+    environment:
+      SDTF_DATABASE_URL: postgresql+psycopg://sdtf:sdtf@postgres:5432/sdtf
+      SDTF_AUTH_SECRET: ${SDTF_AUTH_SECRET:-change-me-in-production}
+      SDTF_EVIDENCE_DIR: /app/data/evidence
+      SDTF_CORS_ORIGINS: http://localhost:8080
+      SDTF_ENV: compose
+    volumes: ["evidence:/app/data"]
+    depends_on: { postgres: { condition: service_healthy } }
+    ports: ["8000:8000"]
+  frontend:
+    build: { context: .., dockerfile: deploy/Dockerfile.frontend }
+    depends_on: [backend]
+    ports: ["8080:80"]
+volumes:
+  pgdata: {}
+  evidence: {}
