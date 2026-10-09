@@ -72,5 +72,9 @@ it names a catalog table (`table_by = structure`), and fields that live on a sib
   system. The splitter check covers the structural contract SAP's own tooling applies, not the app's field-level
   validation (value ranges, configuration existence), which the migration cockpit itself performs.
 * **Migration object IDs and field semantics.** The `migration_object` text comes from the template's Introduction
-  sheet; the BAPI-style alias catalogue is a heuristic that the mapping report labels as `alias` so that each one
-  can be checked against the Field List description.
+  sheet. The alias catalogue (`catalog/fields.py`, 500+ BAPI-style names from the public interface structures) is
+  a heuristic: the mapping report labels each use as `alias`, a global alias whose DDIC description disagrees with
+  the template's Field List description is proposed for confirmation, and names the catalogue does not know are
+  proposed from the Field List by DDIC description match (`described` / `project_alias` once confirmed). A real
+  Field List therefore extends the catalogue per project without a code change; the global catalogue grows from
+  confirmed aliases that prove general.

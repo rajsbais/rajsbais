@@ -73,6 +73,16 @@ Alembic (`backend/alembic.ini`, `backend/sdtf/migrations`). `alembic upgrade hea
   in row 7, hidden SAP Field column) and names every assumption otherwise; the Runs page shows the verdict per
   template. Filled files are line oriented and go through SAP's own XML file splitter (see
   docs/cockpit-template-validation.md).
+* **Template field names (aliases)**: a template field resolves by its own DDIC name, then by a *project alias*,
+  then by the global catalogue of BAPI-style names (`catalog/fields.py`, from the public BAPI structures:
+  `COMP_CODE`, `PSTNG_DATE`, `AMT_DOCCUR`, `MOVE_TYPE`, ...), then by its Field List description matching the
+  DDIC description of a field of the sheet's table. Names nothing resolves are *proposed* from the Field List
+  when a template is registered (`sdtf cockpit-template aliases --project <id>`, `GET
+  /projects/{id}/cockpit-aliases`, the aliases table on the Runs page); global aliases whose DDIC description
+  disagrees with the Field List are proposed for confirmation too. Confirm or reject each (`--confirm all`,
+  `POST .../cockpit-aliases/{id}/decide`), or add one by hand (`POST .../cockpit-aliases`). Confirmed aliases
+  apply to every template of the project; the mapping report labels each field `direct`, `project_alias`,
+  `alias`, `described`, `parent`, `related`, `override`, `constant` or `unmapped`, so every heuristic is visible.
 * **Delta synchronisation** (ADR-0014): after a completed baseline run on an RFC source, run cycles from the Delta
   Synchronization Monitor or `POST /runs/{baseline}/delta/cycles`; each cycle is a run with CAPTURE/TRANSFORM/APPLY/
   RECONCILE stages and an event ledger (`GET .../delta/events`: FILTERED reasons, REJECTED change sets, CONFLICT

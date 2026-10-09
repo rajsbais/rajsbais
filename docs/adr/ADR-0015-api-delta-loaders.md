@@ -80,6 +80,10 @@ by the target, derived prices and statuses.
   4–6, key span in row 7, descriptions in row 8, hidden SAP Structure/SAP Field columns) and the filled files are
   processed by SAP's own XML file splitter in the test suite (docs/cockpit-template-validation.md); `cockpit-template
   check` reports what a download deviates in, and the migration object IDs remain a step to confirm on the target.
+  Template field names resolve through the DDIC name, the project's confirmed aliases, the global catalogue of
+  BAPI-style names (`catalog/fields.py`) and the Field List description against the DDIC descriptions; unknown
+  names and disagreeing global aliases are proposed per project and confirmed or rejected by an architect, so the
+  catalogue grows from real Field Lists without silent guesses.
 * Pricing, statuses and open items are *modelled*, not SAP's: a real target prices from condition records and
   derives statuses from subsequent documents. The simulator's business activity is restricted to changes the
   released APIs can convey (quantities, master attributes, new documents, item deletions).

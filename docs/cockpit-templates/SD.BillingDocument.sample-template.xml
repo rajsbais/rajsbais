@@ -189,7 +189,7 @@
 <Cell><Data ss:Type="String">13</Data></Cell>
 <Cell><Data ss:Type="String">2</Data></Cell>
 <Cell><Data ss:Type="String">VBRP</Data></Cell>
-<Cell><Data ss:Type="String">FKIMG</Data></Cell>
+<Cell><Data ss:Type="String">INVOICED_QTY</Data></Cell>
 </Row>
 <Row>
 <Cell><Data ss:Type="String">Items</Data></Cell>
@@ -285,7 +285,7 @@
 <Cell><Data ss:Type="String">POSNR</Data></Cell>
 <Cell><Data ss:Type="String">MATNR</Data></Cell>
 <Cell><Data ss:Type="String">WERKS</Data></Cell>
-<Cell><Data ss:Type="String">FKIMG</Data></Cell>
+<Cell><Data ss:Type="String">INVOICED_QTY</Data></Cell>
 <Cell><Data ss:Type="String">NETWR</Data></Cell>
 <Cell><Data ss:Type="String">KUNRG</Data></Cell>
 </Row>

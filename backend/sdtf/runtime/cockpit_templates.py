@@ -46,6 +46,7 @@ from xml.etree import ElementTree as ET
 from xml.sax.saxutils import escape
 
 from ..catalog.business_objects import BUSINESS_OBJECTS
+from ..catalog.fields import FIELD_DESCRIPTIONS, TEMPLATE_ALIASES
 from ..catalog.tables import TABLES
 
 SS = "urn:schemas-microsoft-com:office:spreadsheet"
@@ -54,18 +55,10 @@ _KNOWN_NS = {"ss": SS, "o": "urn:schemas-microsoft-com:office:office", "x": "urn
 for _p, _u in _KNOWN_NS.items():
     ET.register_namespace(_p, _u)
 
-# BAPI-style field names migration object templates commonly use for DDIC fields (heuristic aliases; the mapping
-# report labels them so they can be checked against the template's Field List descriptions).
-ALIASES: dict[str, str] = {
-    "COMP_CODE": "BUKRS", "COMPANYCODE": "BUKRS", "GL_ACCOUNT": "SAKNR", "GLACCOUNT": "SAKNR", "CHRT_ACCTS": "KTOPL", "CHARTOFACCOUNTS": "KTOPL",
-    "CUSTOMER": "KUNNR", "SUPPLIER": "LIFNR", "VENDOR": "LIFNR", "MATERIAL": "MATNR", "PLANT": "WERKS", "SALESORG": "VKORG", "SALES_ORG": "VKORG",
-    "DISTR_CHAN": "VTWEG", "DIVISION": "SPART", "DOC_DATE": "BLDAT", "PSTNG_DATE": "BUDAT", "FISC_YEAR": "GJAHR", "FISCALYEAR": "GJAHR", "CURRENCY": "WAERS",
-    "DOC_TYPE": "BLART", "DOC_NO": "BELNR", "REF_DOC_NO": "XBLNR", "COSTCENTER": "KOSTL", "PROFIT_CTR": "PRCTR", "ASSET": "ANLN1", "SUBNUMBER": "ANLN2",
-    "ASSETCLASS": "ANLKL", "CAP_DATE": "AKTIV", "DESCRIPT": "TXT50", "DESCRIPTION": "TXT50", "TEXT": "TXT50", "BILL_DOC": "VBELN", "BILLINGDOCUMENT": "VBELN",
-    "ITM_NUMBER": "POSNR", "ITEM": "POSNR", "QUANTITY": "FKIMG", "NET_VALUE": "NETWR", "NETVALUE": "NETWR", "BILL_TYPE": "FKART", "BILL_DATE": "FKDAT",
-    "PAYER": "KUNRG", "PURCH_ORD": "EBELN", "PO_ITEM": "EBELP", "SALES_DOC": "VBELN", "DELIV_NUMB": "VBELN", "MAT_DOC": "MBLNR", "DOC_YEAR": "MJAHR",
-    "BAL_SHEET": "XBILK", "PL_STATEMENT": "GVTYP", "RECON_ACCT": "MITKZ", "OPEN_ITEM": "XOPVW", "OPEN_ITEM_MGT": "XOPVW",
-}
+ALIASES = TEMPLATE_ALIASES  # global alias catalogue (catalog/fields.py); project aliases learned from Field Lists come first
+_DESC_INDEX: dict[str, set[str]] = {}
+for _f, _d in FIELD_DESCRIPTIONS.items():
+    _DESC_INDEX.setdefault(re.sub(r"[^a-z0-9]", "", _d.lower()), set()).add(_f)
 DATE_TYPES = {"DATS", "DATE", "DATETIME", "D"}
 NUMBER_TYPES = {"CURR", "QUAN", "DEC", "FLTP", "INT1", "INT2", "INT4", "INT8", "NUMBER", "AMOUNT", "QUANTITY", "DECIMAL", "P", "F", "I"}
 _TRUE = {"X", "YES", "Y", "TRUE", "*", "1", "MANDATORY", "REQUIRED", "M"}
@@ -320,7 +313,7 @@ class FieldMapping:
     field: str
     column: int
     source: str | None  # "TABLE.FIELD", "=constant" or None
-    kind: str  # direct | alias | parent | related | override | constant | unmapped | blank
+    kind: str  # direct | project_alias | alias | described | parent | related | override | constant | unmapped | blank
     mandatory: bool = False
     type: str = ""
     length: int = 0
@@ -339,9 +332,32 @@ class SheetMapping:
         return {"sheet": self.sheet, "table": self.table, "table_by": self.table_by, "fields": [{"field": f.field, "source": f.source, "kind": f.kind, "mandatory": f.mandatory, "type": f.type} for f in self.fields], "coverage": round(len(mapped) / len(self.fields), 3) if self.fields else 0.0, "mapped": len(mapped), "total": len(self.fields), "mandatory_missing": [f.field for f in self.fields if f.mandatory and f.source is None], "unmapped_columns": self.unmapped_columns, "by_kind": {k: sum(1 for f in self.fields if f.kind == k) for k in sorted({f.kind for f in self.fields})}}
 
 
-def auto_map(template: Template, object_type: str, overrides: dict | None = None) -> list[SheetMapping]:
+def _resolve(fname: str, description: str, table: str, aliases: dict | None) -> tuple[str, str] | None:
+    """(DDIC field of `table`, kind) for a template field: its own name, a project alias, the global catalogue, or
+    a field of the table whose DDIC description equals the template's field description."""
+    td = TABLES.get(table)
+    if td is None:
+        return None
+    u = fname.upper()
+    if u in td.fields:
+        return u, "direct"
+    pa = (aliases or {}).get(u)
+    if pa and pa[0] in td.fields and (not pa[1] or pa[1] == table):
+        return pa[0], "project_alias"
+    a = ALIASES.get(u)
+    if a and a in td.fields:
+        return a, "alias"
+    if description:
+        cands = [f for f in _DESC_INDEX.get(_norm(description), ()) if f in td.fields]
+        if len(cands) == 1:
+            return cands[0], "described"
+    return None
+
+
+def auto_map(template: Template, object_type: str, overrides: dict | None = None, aliases: dict | None = None) -> list[SheetMapping]:
     """Overrides: `{"<sheet>": {"table": "VBRP", "fields": {"FIELD": "VBRP.NETWR" | "=const" | ""}}}` (an empty
-    string leaves the column blank on purpose)."""
+    string leaves the column blank on purpose). `aliases`: the project's confirmed aliases `{ALIAS: (field, table)}`
+    (see `project_aliases`), consulted before the global catalogue."""
     overrides = overrides or {}
     bo = BUSINESS_OBJECTS.get(object_type)
     tables = ([bo.header_table, *bo.item_tables] if bo else []) or sorted(TABLES)
@@ -351,21 +367,14 @@ def auto_map(template: Template, object_type: str, overrides: dict | None = None
         ov = overrides.get(sh.name) or next((v for k, v in overrides.items() if _norm(k) == _norm(sh.name)), {}) or {}
         ov_fields = {k.upper(): v for k, v in (ov.get("fields") or {}).items()}
 
-        def resolve(fname: str, table: str) -> str | None:
-            td = TABLES.get(table)
-            if td is None:
-                return None
-            u = fname.upper()
-            if u in td.fields:
-                return u
-            a = ALIASES.get(u)
-            return a if a and a in td.fields else None
+        def resolve(f: TemplateField, table: str) -> tuple[str, str] | None:
+            return _resolve(f.name, f.description, table, aliases)
 
         table, table_by = ov.get("table"), "override"
         if not table and sh.structure and sh.structure.upper() in tables:
             table, table_by = sh.structure.upper(), "structure"
         if not table:
-            scored = sorted(((sum(1 for f in sh.fields if resolve(f.name, t)), -i, t) for i, t in enumerate(tables)), reverse=True)
+            scored = sorted(((sum(1 for f in sh.fields if resolve(f, t)), -i, t) for i, t in enumerate(tables)), reverse=True)
             table, table_by = (scored[0][2], "score") if scored and scored[0][0] > 0 else (None, "none")
         fields: list[FieldMapping] = []
         for f in sh.fields:
@@ -379,11 +388,11 @@ def auto_map(template: Template, object_type: str, overrides: dict | None = None
                 else:
                     fields.append(FieldMapping(f.name, f.column, str(v) if "." in str(v) else f"{table}.{v}", "override", f.mandatory, f.type, f.length))
                 continue
-            src = resolve(f.name, table) if table else None
-            if src is not None:
-                fields.append(FieldMapping(f.name, f.column, f"{table}.{src}", "direct" if src == u else "alias", f.mandatory, f.type, f.length))
+            res = resolve(f, table) if table else None
+            if res is not None:
+                fields.append(FieldMapping(f.name, f.column, f"{table}.{res[0]}", res[1], f.mandatory, f.type, f.length))
                 continue
-            other = next(((t, src) for t in ([header] if header and header != table else []) + [t for t in tables if t not in (table, header)] for src in [resolve(f.name, t)] if src is not None), None)
+            other = next(((t, r[0]) for t in ([header] if header and header != table else []) + [t for t in tables if t not in (table, header)] for r in [resolve(f, t)] if r is not None), None)
             if other is not None:  # the field lives on another table of the same object instance (header keys on item sheets, chart segment next to company code segment)
                 fields.append(FieldMapping(f.name, f.column, f"{other[0]}.{other[1]}", "parent" if other[0] == header else "related", f.mandatory, f.type, f.length))
                 continue
@@ -391,6 +400,54 @@ def auto_map(template: Template, object_type: str, overrides: dict | None = None
         used = {m.source.split(".", 1)[1] for m in fields if m.source and m.source.startswith(f"{table}.")} if table else set()
         unmapped_cols = [c for c in (TABLES[table].fields if table and table in TABLES else []) if c not in used]
         out.append(SheetMapping(sh.name, table, fields, unmapped_cols, table_by))
+    return out
+
+
+def _agree(a: str, b: str) -> bool:
+    """Two descriptions agree when one contains the other once normalised ('G/L Account Number' ~ 'G/L Account')."""
+    x, y = _norm(a), _norm(b)
+    return bool(x and y) and (x in y or y in x)
+
+
+def propose_aliases(template: Template, object_type: str, aliases: dict | None = None) -> list[dict]:
+    """Aliases a template's Field List suggests for this project: for every field the names alone do not resolve,
+    the field of the sheet's table (or of another table of the object) whose DDIC description equals the Field
+    List description, and every field the global catalogue resolved only through an alias whose description
+    disagrees with the DDIC description (to be checked). Each proposal says what the evidence is."""
+    out: list[dict] = []
+    seen: set[tuple[str, str]] = set()
+    for m in auto_map(template, object_type, None, aliases):
+        sh = template.sheet(m.sheet)
+        if sh is None or m.table is None:
+            continue
+        by_name = {f.name: f for f in sh.fields}
+        for fm in m.fields:
+            f = by_name.get(fm.field)
+            if f is None:
+                continue
+            u = f.name.upper()
+            if fm.kind == "described":
+                t, fld = fm.source.split(".", 1)
+                evidence = f"Field List description '{f.description}' equals the DDIC description of {t}.{fld}"
+            elif fm.kind == "alias" and f.description and not _agree(f.description, FIELD_DESCRIPTIONS.get(fm.source.split(".", 1)[1], "")):
+                t, fld = fm.source.split(".", 1)
+                evidence = f"global alias {u} -> {fld}, but the Field List says '{f.description}' and the DDIC description of {fld} is '{FIELD_DESCRIPTIONS.get(fld, '')}': confirm or reject"
+            elif fm.kind == "unmapped" and f.description:
+                cands = {(t, fld) for t in [m.table] for fld in _DESC_INDEX.get(_norm(f.description), ()) if fld in TABLES[t].fields}
+                if not cands:
+                    continue
+                if len(cands) > 1:
+                    evidence = "several fields of the table share this description: " + ", ".join(f"{t}.{fld}" for t, fld in sorted(cands))
+                    t, fld = sorted(cands)[0]
+                else:
+                    (t, fld) = next(iter(cands))
+                    evidence = f"Field List description '{f.description}' equals the DDIC description of {t}.{fld}"
+            else:
+                continue
+            if (u, t) in seen:
+                continue
+            seen.add((u, t))
+            out.append({"alias": u, "field": fld, "table": t, "description": f.description, "sheet": m.sheet, "evidence": evidence, "mandatory": f.mandatory})
     return out
 
 
@@ -515,7 +572,7 @@ _SAMPLES: dict[str, tuple[str, int, list[tuple[str, str, str, list[tuple[str, st
     ]),
     "SD.BillingDocument": ("Historical billing document (custom, illustrative)", 1, [
         ("Header", "VBRK", "General Data", [("VBELN", "Billing Document", "CHAR", 10, True), ("FKART", "Billing Type", "CHAR", 4, True), ("VKORG", "Sales Organization", "CHAR", 4, True), ("KUNRG", "Payer", "CHAR", 10, True), ("BUKRS", "Company Code", "CHAR", 4, True), ("FKDAT", "Billing Date", "DATS", 8, True), ("WAERK", "Document Currency", "CUKY", 5, True), ("NETWR", "Net Value", "CURR", 15, False), ("GJAHR", "Fiscal Year", "NUMC", 4, False)]),
-        ("Items", "VBRP", "Item Data", [("VBELN", "Billing Document", "CHAR", 10, True), ("POSNR", "Item", "NUMC", 6, True), ("MATNR", "Material", "CHAR", 40, True), ("WERKS", "Plant", "CHAR", 4, False), ("FKIMG", "Billed Quantity", "QUAN", 13, False), ("NETWR", "Net Value", "CURR", 15, False), ("KUNRG", "Payer (from header)", "CHAR", 10, False)]),
+        ("Items", "VBRP", "Item Data", [("VBELN", "Billing Document", "CHAR", 10, True), ("POSNR", "Item", "NUMC", 6, True), ("MATNR", "Material", "CHAR", 40, True), ("WERKS", "Plant", "CHAR", 4, False), ("INVOICED_QTY", "Billed Quantity", "QUAN", 13, False), ("NETWR", "Net Value", "CURR", 15, False), ("KUNRG", "Payer (from header)", "CHAR", 10, False)]),
     ]),
 }
 SAMPLE_OBJECTS = tuple(sorted(_SAMPLES))
@@ -588,8 +645,62 @@ def templates_for(session, project_id: str) -> dict:
     return {t.object_type: t for t in session.execute(select(CockpitTemplate).where(CockpitTemplate.project_id == project_id)).scalars().all()}
 
 
-def template_summary(row) -> dict:
+def project_aliases(session, project_id: str) -> dict[str, tuple[str, str]]:
+    """Confirmed aliases of a project: `{ALIAS: (field, table or "")}`."""
+    from sqlalchemy import select
+
+    from ..models import CockpitAlias
+
+    return {a.alias.upper(): (a.field, a.table_name) for a in session.execute(select(CockpitAlias).where(CockpitAlias.project_id == project_id, CockpitAlias.status == "CONFIRMED")).scalars().all()}
+
+
+def store_proposals(session, project_id: str, row, actor: str) -> list:
+    """Record the aliases a registered template's Field List proposes (status PROPOSED; existing decisions are
+    kept). Returns the proposal rows (new and already known)."""
+    from sqlalchemy import select
+
+    from ..models import CockpitAlias
+
     tpl = parse_template(row.content)
-    rep = mapping_report(auto_map(tpl, row.object_type, row.mapping or {}))
+    known = {(a.alias.upper(), a.table_name): a for a in session.execute(select(CockpitAlias).where(CockpitAlias.project_id == project_id)).scalars().all()}
+    out = []
+    for prop in propose_aliases(tpl, row.object_type, project_aliases(session, project_id)):
+        a = known.get((prop["alias"], prop["table"]))
+        if a is None:
+            a = CockpitAlias(project_id=project_id, alias=prop["alias"], field=prop["field"], table_name=prop["table"], description=prop["description"][:200], evidence=prop["evidence"][:200], object_type=row.object_type, status="PROPOSED", created_by=actor)
+            session.add(a)
+            known[(prop["alias"], prop["table"])] = a
+        out.append(a)
+    session.flush()
+    return out
+
+
+def decide_alias(session, alias_row, status: str, actor: str, field: str | None = None) -> None:
+    """Confirm or reject a proposal; a confirmation may correct the target field."""
+    from ..audit.service import record_event
+
+    if status not in ("CONFIRMED", "REJECTED"):
+        raise ValueError("status must be CONFIRMED or REJECTED")
+    if field:
+        td = TABLES.get(alias_row.table_name) if alias_row.table_name else None
+        if td is not None and field.upper() not in td.fields:
+            raise ValueError(f"{field} is not a field of {alias_row.table_name}")
+        if td is None and field.upper() not in FIELD_DESCRIPTIONS:
+            raise ValueError(f"{field} is not a field of the table catalog")
+        alias_row.field = field.upper()
+    alias_row.status = status
+    alias_row.decided_by = actor
+    session.flush()
+    record_event(session, actor, f"COCKPIT_ALIAS_{status}", "PROJECT", alias_row.project_id, {"alias": alias_row.alias, "field": alias_row.field, "table": alias_row.table_name})
+
+
+def alias_out(a) -> dict:
+    return {"id": a.id, "project_id": a.project_id, "alias": a.alias, "field": a.field, "table": a.table_name, "description": a.description, "evidence": a.evidence, "object_type": a.object_type, "status": a.status, "created_by": a.created_by, "decided_by": a.decided_by, "created_at": a.created_at, "ddic_description": FIELD_DESCRIPTIONS.get(a.field, "")}
+
+
+def template_summary(row, aliases: dict | None = None, proposals: list | None = None) -> dict:
+    tpl = parse_template(row.content)
+    rep = mapping_report(auto_map(tpl, row.object_type, row.mapping or {}, aliases))
     chk = check_template(row.content)
-    return {"id": row.id, "project_id": row.project_id, "object_type": row.object_type, "migration_object": row.migration_object, "filename": row.filename, "sha256": row.sha256, "uploaded_by": row.uploaded_by, "created_at": row.created_at, "sheets": [{"name": sh.name, "fields": len(sh.fields), "header_rows": sh.header_rows, "key_columns": sh.key_columns, "structure": sh.structure} for sh in tpl.sheets], "mapping": row.mapping or {}, "report": rep, "check": {"documented_layout": chk.get("documented_layout"), "warnings": chk.get("warnings", [])}}
+    props = proposals if proposals is not None else propose_aliases(tpl, row.object_type, aliases)
+    return {"id": row.id, "project_id": row.project_id, "object_type": row.object_type, "migration_object": row.migration_object, "filename": row.filename, "sha256": row.sha256, "uploaded_by": row.uploaded_by, "created_at": row.created_at, "sheets": [{"name": sh.name, "fields": len(sh.fields), "header_rows": sh.header_rows, "key_columns": sh.key_columns, "structure": sh.structure} for sh in tpl.sheets], "mapping": row.mapping or {}, "report": rep, "check": {"documented_layout": chk.get("documented_layout"), "warnings": chk.get("warnings", [])}, "alias_proposals": props}

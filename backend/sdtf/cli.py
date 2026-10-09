@@ -47,6 +47,12 @@ def main(argv=None):
     tr.add_argument("--json", action="store_true")
     tl = tsub.add_parser("list", help="list a project's templates with their mapping reports")
     tl.add_argument("--project", required=True)
+    ta = tsub.add_parser("aliases", help="project aliases learned from template Field Lists: list, propose from the registered templates, confirm/reject")
+    ta.add_argument("--project", required=True)
+    ta.add_argument("--propose", action="store_true", help="re-read the registered templates and record proposals")
+    ta.add_argument("--confirm", default=None, help="comma-separated alias names (or 'all') to confirm")
+    ta.add_argument("--reject", default=None, help="comma-separated alias names to reject")
+    ta.add_argument("--json", action="store_true")
     tc = tsub.add_parser("check", help="check a downloaded template file against the documented layout (no database needed)")
     tc.add_argument("--file", required=True)
     tc.add_argument("--object", default=None, help="business object: also print the automatic mapping report")
@@ -117,6 +123,31 @@ def main(argv=None):
                 print(xml)
             return 0
         with session_scope() as session:
+            if a.tcmd == "aliases":
+                from sqlalchemy import select
+
+                from .models import CockpitAlias
+                from .runtime.cockpit_templates import alias_out, decide_alias, store_proposals
+
+                if a.propose:
+                    for _, row in sorted(templates_for(session, a.project).items()):
+                        store_proposals(session, a.project, row, "cli")
+                rows = session.execute(select(CockpitAlias).where(CockpitAlias.project_id == a.project).order_by(CockpitAlias.status, CockpitAlias.alias)).scalars().all()
+                for which, status in ((a.confirm, "CONFIRMED"), (a.reject, "REJECTED")):
+                    if which:
+                        names = None if which.strip().lower() == "all" else {x.strip().upper() for x in which.split(",")}
+                        for r in rows:
+                            if r.status == "PROPOSED" and (names is None or r.alias in names):
+                                decide_alias(session, r, status, "cli")
+                session.commit()
+                if a.json:
+                    print(json.dumps([alias_out(r) for r in rows], indent=2, default=str))
+                else:
+                    for r in rows:
+                        print(f"{r.status:9} {r.alias} -> {r.table_name + '.' if r.table_name else ''}{r.field} ({r.description}) [{r.evidence}]")
+                    if not rows:
+                        print("no aliases recorded for this project (register a template, or run with --propose)")
+                return 0
             if a.tcmd == "register":
                 with open(a.file, encoding="utf-8") as fh:
                     content = fh.read()
@@ -126,13 +157,16 @@ def main(argv=None):
                 except ValueError as e:
                     print(str(e), file=sys.stderr)
                     return 2
-                summ = template_summary(row)
+                from .runtime.cockpit_templates import project_aliases, store_proposals
+
+                store_proposals(session, a.project, row, "cli")
+                summ = template_summary(row, project_aliases(session, a.project))
                 session.commit()
                 if a.json:
                     print(json.dumps(summ, indent=2, default=str))
                 else:
                     rep = summ["report"]
-                    print(f"template {summ['id']} for {a.object}: {rep['mapped']}/{rep['total']} fields mapped; mandatory unmapped: {rep['mandatory_missing'] or 'none'}")
+                    print(f"template {summ['id']} for {a.object}: {rep['mapped']}/{rep['total']} fields mapped; mandatory unmapped: {rep['mandatory_missing'] or 'none'}; alias proposals: {len(summ['alias_proposals'])} (sdtf cockpit-template aliases --project {a.project})")
                 return 0
             for ot, row in sorted(templates_for(session, a.project).items()):
                 rep = template_summary(row)["report"]

@@ -283,3 +283,132 @@ def test_cockpit_template_cli(slice_result, session, tmp_path, capsys):
     assert cli_main(["cockpit-template", "list", "--project", run.project_id]) == 0
     assert "FI.GLAccount: gl.xml" in capsys.readouterr().out
     assert cli_main(["cockpit-template", "register", "--project", run.project_id, "--object", "XX.Nope", "--file", str(f)]) == 2
+
+
+def test_alias_catalogue_covers_every_catalog_field_and_resolves_in_order():
+    """Every field of the table catalog has a DDIC description; every global alias targets a catalog field; the
+    resolution order is own name, project alias, global catalogue, DDIC description match."""
+    from sdtf.catalog.fields import FIELD_DESCRIPTIONS, TEMPLATE_ALIASES
+    from sdtf.catalog.tables import TABLES
+    from sdtf.runtime.cockpit_templates import _resolve
+
+    fields = {f for t in TABLES.values() for f in t.fields}
+    assert fields <= set(FIELD_DESCRIPTIONS) and set(TEMPLATE_ALIASES.values()) <= fields and len(TEMPLATE_ALIASES) > 400
+    assert TEMPLATE_ALIASES["COMP_CODE"] == "BUKRS" and TEMPLATE_ALIASES["PSTNG_DATE"] == "BUDAT" and TEMPLATE_ALIASES["AMT_DOCCUR"] == "WRBTR" and TEMPLATE_ALIASES["MOVE_TYPE"] == "BWART" and TEMPLATE_ALIASES["ASSETMAINNO"] == "ANLN1"
+    assert _resolve("NETWR", "", "VBRP", None) == ("NETWR", "direct")
+    assert _resolve("BILL_QTY", "", "VBRP", None) == ("FKIMG", "alias")
+    assert _resolve("BILL_QTY", "", "VBRP", {"BILL_QTY": ("NETWR", "VBRP")}) == ("NETWR", "project_alias")  # the project's decision wins
+    assert _resolve("BILL_QTY", "", "VBRP", {"BILL_QTY": ("NETWR", "VBRK")}) == ("FKIMG", "alias")  # a project alias restricted to another table does not apply
+    assert _resolve("INVOICED_QTY", "Billed Quantity", "VBRP", None) == ("FKIMG", "described")
+    assert _resolve("INVOICED_QTY", "Billed Quantity", "VBRK", None) is None and _resolve("INVOICED_QTY", "", "VBRP", None) is None
+    assert _resolve("WHATEVER", "Document Date", "BKPF", None) == ("BLDAT", "described") and _resolve("WHATEVER", "Plant", "VBRP", None) == ("WERKS", "described")
+    assert _resolve("WHATEVER", "Sales Document", "VBRP", None) is None  # VBELN and AUBEL share the description: ambiguous, never guessed
+
+
+def test_proposals_come_from_field_list_descriptions(session, slice_result):
+    from sdtf.runtime.cockpit_templates import (
+        alias_out,
+        decide_alias,
+        project_aliases,
+        propose_aliases,
+        store_proposals,
+    )
+
+    t = parse_template(sample_template("SD.BillingDocument"))
+    props = propose_aliases(t, "SD.BillingDocument")
+    assert [(p["alias"], p["table"], p["field"], p["sheet"]) for p in props] == [("INVOICED_QTY", "VBRP", "FKIMG", "Items")]
+    assert "DDIC description of VBRP.FKIMG" in props[0]["evidence"] and props[0]["description"] == "Billed Quantity"
+    assert propose_aliases(t, "SD.BillingDocument", {"INVOICED_QTY": ("FKIMG", "VBRP")}) == []  # already known to the project
+    g = parse_template(sample_template("FI.GLAccount"))
+    assert propose_aliases(g, "FI.GLAccount") == []  # 'G/L Account Number' agrees with 'G/L Account'; ACCT_GROUP's description matches nothing
+    # a global alias whose Field List description disagrees with the DDIC description is proposed for confirmation
+    xml = sample_template("SD.BillingDocument").replace(">NETWR<", ">NET_VALUE<").replace("Net Value", "Gross Value")
+    d = parse_template(xml)
+    verify = [p for p in propose_aliases(d, "SD.BillingDocument") if p["alias"] == "NET_VALUE"]
+    assert [(v["table"], v["field"]) for v in verify] == [("VBRK", "NETWR"), ("VBRP", "NETWR")] and all("confirm or reject" in v["evidence"] for v in verify)
+    # store, decide, use
+    run = session.get(MigrationRun, slice_result["run_id"])
+    row = register_template(session, run.project_id, "SD.BillingDocument", sample_template("SD.BillingDocument"), "billing.xml", "architect")
+    rows = store_proposals(session, run.project_id, row, "architect")
+    assert [(a.alias, a.field, a.table_name, a.status) for a in rows] == [("INVOICED_QTY", "FKIMG", "VBRP", "PROPOSED")]
+    assert project_aliases(session, run.project_id) == {}
+    rows2 = store_proposals(session, run.project_id, row, "architect")  # idempotent
+    assert [a.id for a in rows2] == [a.id for a in rows]
+    with pytest.raises(ValueError, match="not a field of VBRP"):
+        decide_alias(session, rows[0], "CONFIRMED", "architect", "BUKRS")
+    with pytest.raises(ValueError, match="status"):
+        decide_alias(session, rows[0], "MAYBE", "architect")
+    decide_alias(session, rows[0], "CONFIRMED", "architect")
+    assert project_aliases(session, run.project_id) == {"INVOICED_QTY": ("FKIMG", "VBRP")} and alias_out(rows[0])["ddic_description"] == "Billed Quantity"
+    rep = mapping_report(auto_map(t, "SD.BillingDocument", None, project_aliases(session, run.project_id)))
+    assert rep["sheets"][1]["by_kind"] == {"direct": 5, "parent": 1, "project_alias": 1}
+    ev = session.execute(select(AuditEvent).where(AuditEvent.subject_id == run.project_id, AuditEvent.action == "COCKPIT_ALIAS_CONFIRMED")).scalars().all()
+    assert ev and ev[-1].details["alias"] == "INVOICED_QTY"
+    decide_alias(session, rows[0], "REJECTED", "architect")
+    assert project_aliases(session, run.project_id) == {}
+
+
+def test_cockpit_alias_api_and_export(client, tokens, session, slice_result):
+    from sdtf.models import CockpitAlias
+
+    run = session.get(MigrationRun, slice_result["run_id"])
+    pid = run.project_id
+    for a in session.execute(select(CockpitAlias).where(CockpitAlias.project_id == pid)).scalars().all():
+        session.delete(a)
+    for t in session.execute(select(CockpitTemplate).where(CockpitTemplate.project_id == pid)).scalars().all():
+        session.delete(t)
+    session.commit()
+    r = client.get(f"{API}/cockpit-aliases/catalogue", headers=tokens["viewer"])
+    assert r.status_code == 200 and r.json()["aliases"]["COMP_CODE"] == "BUKRS" and r.json()["descriptions"]["BUKRS"] == "Company Code" and r.json()["count"] > 400
+    content = client.get(f"{API}/cockpit-templates/samples/SD.BillingDocument", headers=tokens["viewer"]).text
+    r = client.post(f"{API}/projects/{pid}/cockpit-templates", json={"object_type": "SD.BillingDocument", "filename": "billing.xml", "content": content}, headers=tokens["architect"])
+    assert r.status_code == 201 and [p["alias"] for p in r.json()["alias_proposals"]] == ["INVOICED_QTY"]
+    assert {f["field"]: f["kind"] for f in r.json()["report"]["sheets"][1]["fields"]}["INVOICED_QTY"] == "described"
+    r = client.get(f"{API}/projects/{pid}/cockpit-aliases", headers=tokens["viewer"])
+    assert r.status_code == 200 and len(r.json()) == 1 and r.json()[0]["status"] == "PROPOSED" and r.json()[0]["field"] == "FKIMG" and r.json()[0]["table"] == "VBRP"
+    aid = r.json()[0]["id"]
+    assert client.post(f"{API}/projects/{pid}/cockpit-aliases/{aid}/decide", json={"status": "CONFIRMED"}, headers=tokens["viewer"]).status_code == 403
+    assert client.post(f"{API}/projects/{pid}/cockpit-aliases/{aid}/decide", json={"status": "CONFIRMED", "field": "BUKRS"}, headers=tokens["architect"]).status_code == 422
+    assert client.post(f"{API}/projects/{pid}/cockpit-aliases/{aid}/decide", json={"status": "LATER"}, headers=tokens["architect"]).status_code == 422
+    r = client.post(f"{API}/projects/{pid}/cockpit-aliases/{aid}/decide", json={"status": "CONFIRMED"}, headers=tokens["architect"])
+    assert r.status_code == 200 and r.json()["status"] == "CONFIRMED" and r.json()["decided_by"] == "architect"
+    # confirmed aliases drive the mapping of every template of the project and the export
+    r = client.get(f"{API}/projects/{pid}/cockpit-templates", headers=tokens["viewer"])
+    assert {f["field"]: f["kind"] for f in r.json()[0]["report"]["sheets"][1]["fields"]}["INVOICED_QTY"] == "project_alias" and r.json()[0]["alias_proposals"] == []
+    r = client.post(f"{API}/runs/{run.id}/cockpit-export", headers=tokens["operator"])
+    assert r.status_code == 201 and r.json()["objects"]["SD.BillingDocument"]["template"]["by_kind"]["project_alias"] == 1
+    # add one by hand, with validation; propose again is idempotent; delete
+    assert client.post(f"{API}/projects/{pid}/cockpit-aliases", json={"alias": "PAYER_NO", "field": "KUNRG", "table": "NOPE"}, headers=tokens["architect"]).status_code == 422
+    assert client.post(f"{API}/projects/{pid}/cockpit-aliases", json={"alias": "PAYER_NO", "field": "BUKRS", "table": "VBRP"}, headers=tokens["architect"]).status_code == 422
+    r = client.post(f"{API}/projects/{pid}/cockpit-aliases", json={"alias": "payer_no", "field": "kunrg", "table": "", "description": "Payer number"}, headers=tokens["architect"])
+    assert r.status_code == 201 and r.json()["alias"] == "PAYER_NO" and r.json()["status"] == "CONFIRMED" and r.json()["evidence"] == "entered by hand"
+    r = client.post(f"{API}/projects/{pid}/cockpit-aliases/propose", headers=tokens["architect"])
+    assert r.status_code == 200 and r.json() == []  # nothing left to propose: INVOICED_QTY is confirmed, PAYER_NO entered by hand
+    r = client.get(f"{API}/projects/{pid}/cockpit-aliases?status=confirmed", headers=tokens["viewer"])
+    assert sorted(a["alias"] for a in r.json()) == ["INVOICED_QTY", "PAYER_NO"]
+    hand = next(a for a in r.json() if a["alias"] == "PAYER_NO")
+    assert client.delete(f"{API}/projects/{pid}/cockpit-aliases/{hand['id']}", headers=tokens["operator"]).status_code == 403
+    assert client.delete(f"{API}/projects/{pid}/cockpit-aliases/{hand['id']}", headers=tokens["architect"]).status_code == 204
+    assert client.delete(f"{API}/projects/{pid}/cockpit-aliases/{hand['id']}", headers=tokens["architect"]).status_code == 404
+    assert [a["alias"] for a in client.get(f"{API}/projects/{pid}/cockpit-aliases", headers=tokens["viewer"]).json()] == ["INVOICED_QTY"]
+
+
+def test_cockpit_alias_cli(slice_result, session, tmp_path, capsys):
+    from sdtf.models import CockpitAlias
+
+    run = session.get(MigrationRun, slice_result["run_id"])
+    for a in session.execute(select(CockpitAlias).where(CockpitAlias.project_id == run.project_id)).scalars().all():
+        session.delete(a)
+    session.commit()
+    f = tmp_path / "billing.xml"
+    f.write_text(sample_template("SD.BillingDocument"), encoding="utf-8")
+    assert cli_main(["cockpit-template", "register", "--project", run.project_id, "--object", "SD.BillingDocument", "--file", str(f)]) == 0
+    assert "alias proposals: 1" in capsys.readouterr().out
+    assert cli_main(["cockpit-template", "aliases", "--project", run.project_id]) == 0
+    out = capsys.readouterr().out
+    assert "PROPOSED  INVOICED_QTY -> VBRP.FKIMG (Billed Quantity)" in out
+    assert cli_main(["cockpit-template", "aliases", "--project", run.project_id, "--propose", "--confirm", "all", "--json"]) == 0
+    rows = json.loads(capsys.readouterr().out)
+    assert [(a["alias"], a["status"], a["decided_by"]) for a in rows] == [("INVOICED_QTY", "CONFIRMED", "cli")]
+    assert cli_main(["cockpit-template", "aliases", "--project", run.project_id, "--reject", "INVOICED_QTY"]) == 0  # only proposals are decided
+    assert "CONFIRMED INVOICED_QTY" in capsys.readouterr().out

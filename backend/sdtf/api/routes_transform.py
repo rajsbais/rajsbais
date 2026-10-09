@@ -478,22 +478,29 @@ def cockpit_template_check(req: CockpitTemplateCheckIn, p: Principal = Depends(r
 def cockpit_template_register(project_id: str, req: CockpitTemplateIn, db: Session = Depends(get_db), p: Principal = Depends(require("project:write"))):
     """Register (or replace) the migration object template of one business object for the project; the response
     carries the parsed structure and the automatic mapping report (coverage, mandatory fields left unmapped)."""
-    from ..runtime.cockpit_templates import register_template, template_summary
+    from ..runtime.cockpit_templates import (
+        project_aliases,
+        register_template,
+        store_proposals,
+        template_summary,
+    )
 
     assert_project_access(db, p, project_id)
     try:
         row = register_template(db, project_id, req.object_type, req.content, req.filename, p.username, req.mapping)
     except ValueError as e:
         raise HTTPException(422, str(e)) from None
-    return template_summary(row)
+    store_proposals(db, project_id, row, p.username)
+    return template_summary(row, project_aliases(db, project_id))
 
 
 @router.get("/projects/{project_id}/cockpit-templates", tags=["runs"])
 def cockpit_template_list(project_id: str, db: Session = Depends(get_db), p: Principal = Depends(require("project:read"))):
-    from ..runtime.cockpit_templates import template_summary, templates_for
+    from ..runtime.cockpit_templates import project_aliases, template_summary, templates_for
 
     assert_project_access(db, p, project_id)
-    return [template_summary(t) for _, t in sorted(templates_for(db, project_id).items())]
+    al = project_aliases(db, project_id)
+    return [template_summary(t, al) for _, t in sorted(templates_for(db, project_id).items())]
 
 
 def _template(db: Session, p: Principal, project_id: str, template_id: str):
@@ -508,10 +515,10 @@ def _template(db: Session, p: Principal, project_id: str, template_id: str):
 
 @router.get("/projects/{project_id}/cockpit-templates/{template_id}", tags=["runs"])
 def cockpit_template_get(project_id: str, template_id: str, content: bool = False, db: Session = Depends(get_db), p: Principal = Depends(require("project:read"))):
-    from ..runtime.cockpit_templates import template_summary
+    from ..runtime.cockpit_templates import project_aliases, template_summary
 
     t = _template(db, p, project_id, template_id)
-    out = {**template_summary(t), "structure": t.structure}
+    out = {**template_summary(t, project_aliases(db, project_id)), "structure": t.structure}
     if content:
         out["content"] = t.content
     return out
@@ -519,13 +526,13 @@ def cockpit_template_get(project_id: str, template_id: str, content: bool = Fals
 
 @router.put("/projects/{project_id}/cockpit-templates/{template_id}/mapping", tags=["runs"])
 def cockpit_template_mapping(project_id: str, template_id: str, req: CockpitMappingIn, db: Session = Depends(get_db), p: Principal = Depends(require("project:write"))):
-    from ..runtime.cockpit_templates import template_summary
+    from ..runtime.cockpit_templates import project_aliases, template_summary
 
     t = _template(db, p, project_id, template_id)
     t.mapping = req.mapping
     db.flush()
     record_event(db, p.username, "COCKPIT_TEMPLATE_MAPPED", "PROJECT", project_id, {"object_type": t.object_type, "sheets": sorted(req.mapping)})
-    return template_summary(t)
+    return template_summary(t, project_aliases(db, project_id))
 
 
 @router.delete("/projects/{project_id}/cockpit-templates/{template_id}", tags=["runs"], status_code=204)
@@ -533,6 +540,103 @@ def cockpit_template_delete(project_id: str, template_id: str, db: Session = Dep
     t = _template(db, p, project_id, template_id)
     record_event(db, p.username, "COCKPIT_TEMPLATE_DELETED", "PROJECT", project_id, {"object_type": t.object_type})
     db.delete(t)
+    db.flush()
+    return Response(status_code=204)
+
+
+class CockpitAliasIn(BaseModel):
+    alias: str
+    field: str
+    table: str = Field("", description="restrict the alias to one table; empty = any table carrying the field")
+    description: str = ""
+
+
+class CockpitAliasDecision(BaseModel):
+    status: str = Field(..., pattern="^(CONFIRMED|REJECTED)$")
+    field: str | None = Field(None, description="correct the target field when confirming")
+
+
+@router.get("/cockpit-aliases/catalogue", tags=["runs"])
+def cockpit_alias_catalogue(p: Principal = Depends(require("project:read"))):
+    """The global alias catalogue (template / BAPI field names -> DDIC fields) and the DDIC field descriptions."""
+    from ..catalog.fields import FIELD_DESCRIPTIONS, TEMPLATE_ALIASES
+
+    return {"aliases": TEMPLATE_ALIASES, "descriptions": FIELD_DESCRIPTIONS, "count": len(TEMPLATE_ALIASES)}
+
+
+@router.get("/projects/{project_id}/cockpit-aliases", tags=["runs"])
+def cockpit_alias_list(project_id: str, status: str | None = None, db: Session = Depends(get_db), p: Principal = Depends(require("project:read"))):
+    from ..models import CockpitAlias
+    from ..runtime.cockpit_templates import alias_out
+
+    assert_project_access(db, p, project_id)
+    stmt = select(CockpitAlias).where(CockpitAlias.project_id == project_id)
+    if status:
+        stmt = stmt.where(CockpitAlias.status == status.upper())
+    return [alias_out(a) for a in db.execute(stmt.order_by(CockpitAlias.status, CockpitAlias.alias)).scalars().all()]
+
+
+@router.post("/projects/{project_id}/cockpit-aliases", tags=["runs"], status_code=201)
+def cockpit_alias_add(project_id: str, req: CockpitAliasIn, db: Session = Depends(get_db), p: Principal = Depends(require("project:write"))):
+    """Add (and confirm) an alias by hand."""
+    from ..catalog.fields import FIELD_DESCRIPTIONS
+    from ..catalog.tables import TABLES
+    from ..models import CockpitAlias
+    from ..runtime.cockpit_templates import alias_out, decide_alias
+
+    assert_project_access(db, p, project_id)
+    fld, tbl = req.field.upper(), req.table.upper()
+    if tbl and tbl not in TABLES:
+        raise HTTPException(422, f"unknown table {tbl}")
+    if (tbl and fld not in TABLES[tbl].fields) or (not tbl and fld not in FIELD_DESCRIPTIONS):
+        raise HTTPException(422, f"{fld} is not a field of {tbl or 'the table catalog'}")
+    a = db.execute(select(CockpitAlias).where(CockpitAlias.project_id == project_id, CockpitAlias.alias == req.alias.upper(), CockpitAlias.table_name == tbl)).scalars().first()
+    if a is None:
+        a = CockpitAlias(project_id=project_id, alias=req.alias.upper(), field=fld, table_name=tbl, description=req.description[:200], evidence="entered by hand", created_by=p.username)
+        db.add(a)
+        db.flush()
+    decide_alias(db, a, "CONFIRMED", p.username, fld)
+    return alias_out(a)
+
+
+@router.post("/projects/{project_id}/cockpit-aliases/{alias_id}/decide", tags=["runs"])
+def cockpit_alias_decide(project_id: str, alias_id: str, req: CockpitAliasDecision, db: Session = Depends(get_db), p: Principal = Depends(require("project:write"))):
+    from ..models import CockpitAlias
+    from ..runtime.cockpit_templates import alias_out, decide_alias
+
+    assert_project_access(db, p, project_id)
+    a = db.get(CockpitAlias, alias_id)
+    if a is None or a.project_id != project_id:
+        raise HTTPException(404, "alias not found")
+    try:
+        decide_alias(db, a, req.status, p.username, req.field)
+    except ValueError as e:
+        raise HTTPException(422, str(e)) from None
+    return alias_out(a)
+
+
+@router.post("/projects/{project_id}/cockpit-aliases/propose", tags=["runs"])
+def cockpit_alias_propose(project_id: str, db: Session = Depends(get_db), p: Principal = Depends(require("project:write"))):
+    """Re-read every registered template's Field List and record the aliases it proposes."""
+    from ..runtime.cockpit_templates import alias_out, store_proposals, templates_for
+
+    assert_project_access(db, p, project_id)
+    out = []
+    for _, t in sorted(templates_for(db, project_id).items()):
+        out += [alias_out(a) for a in store_proposals(db, project_id, t, p.username)]
+    return out
+
+
+@router.delete("/projects/{project_id}/cockpit-aliases/{alias_id}", tags=["runs"], status_code=204)
+def cockpit_alias_delete(project_id: str, alias_id: str, db: Session = Depends(get_db), p: Principal = Depends(require("project:write"))):
+    from ..models import CockpitAlias
+
+    assert_project_access(db, p, project_id)
+    a = db.get(CockpitAlias, alias_id)
+    if a is None or a.project_id != project_id:
+        raise HTTPException(404, "alias not found")
+    record_event(db, p.username, "COCKPIT_ALIAS_DELETED", "PROJECT", project_id, {"alias": a.alias, "field": a.field})
+    db.delete(a)
     db.flush()
     return Response(status_code=204)
 
@@ -606,7 +710,7 @@ CAPABILITIES = [
     {"area": "Observability (OpenTelemetry traces, metrics, trace-correlated JSON logs)", "status": "IMPLEMENTED", "note": "OTLP/HTTP export when OTEL_EXPORTER_OTLP_ENDPOINT is set; no-op otherwise"},
     {"area": "Target load", "status": "SIMULATED", "note": "Initial load and delta cycles go through the released S/4HANA APIs (business partner, product, sales/purchase order, delivery, journal entry with target numbering) and the migration cockpit for histories and cockpit objects, on the simulated gateway or an HTTPS target; verified on the simulated gateway only (ADR-0015). load_mode=direct keeps the simulated direct loader"},
     {"area": "Migration cockpit staging-file export", "status": "IMPLEMENTED", "note": "CSV per staging table and SpreadsheetML workbook per migration object for the rows the initial load routes to the cockpit, with manifest, checksums and zip; generic workbooks are not the target's templates (migration object names are hints to verify)"},
-    {"area": "Template-driven cockpit export", "status": "IMPLEMENTED", "note": "Registered migration object templates (the app's XML workbooks) are parsed (Field List incl. hidden SAP Structure/SAP Field columns, hidden technical rows, merged key cell), mapped automatically (same names, BAPI-style aliases, parent/related keys, recorded overrides) with a coverage report, and filled with typed, line-oriented cells; verified against the layout SAP documents and SAP's own XML file splitter on filled files, not against a template downloaded from a release (check endpoint and CLI report deviations)"},
+    {"area": "Template-driven cockpit export", "status": "IMPLEMENTED", "note": "Registered migration object templates (the app's XML workbooks) are parsed (Field List incl. hidden SAP Structure/SAP Field columns, hidden technical rows, merged key cell), mapped automatically (same names, BAPI-style aliases, parent/related keys, recorded overrides) with a coverage report, and filled with typed, line-oriented cells; verified against the layout SAP documents and SAP's own XML file splitter on filled files, not against a template downloaded from a release (check endpoint and CLI report deviations); alias catalogue of BAPI-style template names extended from the public BAPI structures, project aliases learned from a template's Field List by DDIC description match and confirmed by an architect"},
     {"area": "Reconciliation (technical/functional/financial)", "status": "IMPLEMENTED", "note": "Runs on simulated data"},
     {"area": "Audit trail & evidence packages", "status": "IMPLEMENTED", "note": "Hash-chained events, evidence index"},
     {"area": "AI agents", "status": "IMPLEMENTED", "note": "12 bounded heuristic agents; LLM reasoner planned"},

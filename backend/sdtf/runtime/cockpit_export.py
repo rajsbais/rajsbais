@@ -38,7 +38,14 @@ from ..catalog.business_objects import BUSINESS_OBJECTS
 from ..catalog.tables import TABLES
 from ..models import MigrationRun, SapSystem
 from ..staging import get_backend
-from .cockpit_templates import auto_map, fill_template, mapping_report, parse_template, templates_for
+from .cockpit_templates import (
+    auto_map,
+    fill_template,
+    mapping_report,
+    parse_template,
+    project_aliases,
+    templates_for,
+)
 from .loaders import EventView, object_of, plan_cockpit
 
 # Migration object hints (SAP S/4HANA migration cockpit, "Migrate Your Data" app). Names differ between releases
@@ -184,6 +191,7 @@ def export_cockpit_files(session: Session, run_id: str, out_dir: str | None = No
     files: dict[str, dict] = {}
     objects: dict[str, dict] = {}
     templates = templates_for(session, run.project_id) if use_templates else {}
+    aliases = project_aliases(session, run.project_id) if templates else {}
 
     def put(rel: str, data: bytes) -> None:
         path = os.path.join(base, rel)
@@ -209,11 +217,11 @@ def export_cockpit_files(session: Session, run_id: str, out_dir: str | None = No
         trow = templates.get(ot)
         if trow is not None:
             tpl = parse_template(trow.content)
-            mappings = auto_map(tpl, ot, trow.mapping or {})
+            mappings = auto_map(tpl, ot, trow.mapping or {}, aliases)
             data, stats = fill_template(trow.content, tpl, mappings, instances[ot], header_table=bo.header_table if bo else None)
             put(f"{ot}.template.xml", data)
             rep = mapping_report(mappings)
-            objects[ot]["template"] = {"file": f"{ot}.template.xml", "source": trow.filename, "template_sha256": trow.sha256, "migration_object": trow.migration_object or hint, "coverage": rep["coverage"], "mapped": rep["mapped"], "total": rep["total"], "mandatory_missing": rep["mandatory_missing"], "unmapped_sheets": rep["unmapped_sheets"], "sheets": stats, "rows": sum(v["rows"] for v in stats.values()), "length_violations": sum(v["length_violations"] for v in stats.values())}
+            objects[ot]["template"] = {"file": f"{ot}.template.xml", "source": trow.filename, "template_sha256": trow.sha256, "migration_object": trow.migration_object or hint, "coverage": rep["coverage"], "mapped": rep["mapped"], "total": rep["total"], "mandatory_missing": rep["mandatory_missing"], "unmapped_sheets": rep["unmapped_sheets"], "by_kind": {k: sum(1 for sh in rep["sheets"] for f in sh["fields"] if f["kind"] == k) for k in sorted({f["kind"] for sh in rep["sheets"] for f in sh["fields"]})}, "sheets": stats, "rows": sum(v["rows"] for v in stats.values()), "length_violations": sum(v["length_violations"] for v in stats.values())}
             objects[ot]["migration_object"] = trow.migration_object or hint
     readme = _readme(run, src, tgt, objects)
     put("README.md", readme.encode("utf-8"))

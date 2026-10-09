@@ -389,3 +389,22 @@ class CockpitTemplate(IdMixin, Base):
     mapping: Mapped[dict] = mapped_column(JSON, default=dict)
     uploaded_by: Mapped[str] = mapped_column(String(64), default="")
     __table_args__ = (UniqueConstraint("project_id", "object_type", name="uq_cockpit_template"),)
+
+
+class CockpitAlias(IdMixin, Base):
+    """A template field name learned for a project: `alias` (as the migration object template names the field) ->
+    DDIC `field`, proposed from a template's Field List (description match) and confirmed by an architect. Project
+    aliases are consulted before the global catalogue (`catalog/fields.py`)."""
+
+    __tablename__ = "cockpit_aliases"
+    project_id: Mapped[str] = mapped_column(ForeignKey("projects.id"), nullable=False, index=True)
+    alias: Mapped[str] = mapped_column(String(60), nullable=False)
+    field: Mapped[str] = mapped_column(String(30), nullable=False)
+    table_name: Mapped[str] = mapped_column(String(30), default="")  # restrict to one table ("" = any table carrying the field)
+    description: Mapped[str] = mapped_column(String(200), default="")
+    evidence: Mapped[str] = mapped_column(String(200), default="")  # how it was proposed
+    object_type: Mapped[str] = mapped_column(String(48), default="")
+    status: Mapped[str] = mapped_column(String(12), default="PROPOSED")  # PROPOSED | CONFIRMED | REJECTED
+    created_by: Mapped[str] = mapped_column(String(64), default="")
+    decided_by: Mapped[str] = mapped_column(String(64), default="")
+    __table_args__ = (UniqueConstraint("project_id", "alias", "table_name", name="uq_cockpit_alias"),)
