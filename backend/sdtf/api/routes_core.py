@@ -227,6 +227,24 @@ def _test_api_connector(s: SapSystem, db: Session, p: Principal) -> dict:
             cc = next((r["BUKRS"] for r in transport.rows("T001")), None)
             probe = {"company_code": cc, "sales_orgs": len(transport.rows("TVKO")), "plants": len(transport.rows("T001W"))}
         out = {"ok": True, "connector": "API", "transport": getattr(transport, "name", "?"), "csrf_token": bool(token), "services": services, "numbering": getattr(transport, "numbering", None), "probe": probe, "destination": tapi.mask_api_destination(tapi.resolve_api_destination(s.sid, s.meta)), "duration_ms": round((time.monotonic() - t0) * 1000, 1)}
+        from ..reconciliation.views import target_has_rfc
+
+        if target_has_rfc(s):  # the target also hosts the read-only add-on: the reconciliation reads what the APIs cannot serve through it
+            from ..runtime import rfc as rfcmod
+
+            t1 = time.monotonic()
+            try:
+                rt = rfcmod.make_transport(s.sid, s.meta, store_loader=lambda: RecordStore.load(db, s.id, tables=["T001", "T001K"]))
+                rc = rfcmod.AbapAddonClient(rt, package_size=5)
+                snap = rc.open_snapshot(["T001"])
+                rows, _cursor, eof = rc.read_package("T001", [])
+                try:
+                    agg = {"available": True, "rows": rc.count("T001", [])}
+                except rfcmod.RfcError as e:
+                    agg = {"available": False, "error": e.key}
+                out["rfc_readback"] = {"ok": True, "transport": getattr(rt, "name", "?"), "snapshot": snap, "sample_rows": len(rows), "eof": eof, "checksum_verified": True, "aggregate": agg, "destination": rfcmod.mask_destination(rfcmod.resolve_destination(s.sid, s.meta)), "duration_ms": round((time.monotonic() - t1) * 1000, 1)}
+            except rfcmod.RfcError as e:
+                out["rfc_readback"] = {"ok": False, "error": e.key, "detail": e.message, "destination": rfcmod.mask_destination(rfcmod.resolve_destination(s.sid, s.meta)), "duration_ms": round((time.monotonic() - t1) * 1000, 1)}
     except tapi.ApiError as e:
         out = {"ok": False, "connector": "API", "error": e.code, "detail": e.message, "destination": tapi.mask_api_destination(tapi.resolve_api_destination(s.sid, s.meta)), "duration_ms": round((time.monotonic() - t0) * 1000, 1)}
     record_event(db, p.username, "CONNECTOR_TESTED", "SYSTEM", s.id, {k: v for k, v in out.items() if k in ("ok", "transport", "error")})

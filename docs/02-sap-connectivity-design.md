@@ -80,8 +80,9 @@ through the add-on with the scope's company codes pushed down and `Z_SDTF_AGGREG
 read-integrity evidence (`source_read_integrity`, `source_read_amounts`), the target back through the released
 APIs (entities by key through the bindings, `$filter`ed collections for tables with a company code property,
 `API_JOURNALENTRYITEMBASIC_SRV` for journal entries, `API_FIXEDASSET` for asset values, `A_ProductValuation` for
-material valuation, lazy fetch of referenced masters). Tables with no read path (T001, T001K, anything without a
-binding) are reported as *not verified* and their checks carry WARN.
+material valuation, lazy fetch of referenced masters), and through the read-only add-on over RFC on the target
+(`meta.rfc` on the target system) for the tables no released API serves (T001, T001K, asset values, loaded history
+tables). What still has no read path is reported as *not verified* and its checks carry WARN.
 `SDTF_RECON_MAX_ROWS` (default 5 000 000) bounds a single table read; `SDTF_RECON_MODE=auto|rows|aggregate` and
 `SDTF_RECON_AGGREGATE_ABOVE` (default 1 000 000) select the aggregate-only mode, in which the totals are computed in the
 source and only the retained documents' lines are transferred. See `backend/sdtf/reconciliation/views.py`.

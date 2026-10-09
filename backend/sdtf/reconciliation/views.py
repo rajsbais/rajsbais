@@ -15,9 +15,11 @@
   collections (`$filter=CompanyCode eq ...`, paged), journal entries come from `API_JOURNALENTRYITEMBASIC_SRV`
   (header, line and open-item images derived from the line items), referenced masters missing from the view are
   fetched lazily; asset values come from the fixed-asset read service and material valuation from the product
-  valuation entity (read-only bindings in `catalog/api_bindings.py`). Tables no released read API covers in this
-  build (T001, T001K, anything unbound) are reported as `unreadable`: checks that need them say so (WARN) instead
-  of failing on an empty table.
+  valuation entity (read-only bindings in `catalog/api_bindings.py`). Tables no released read API covers (T001,
+  T001K, asset values when the read service is absent, loaded history tables such as EKBE) are then read through
+  the **read-only add-on over RFC on the target** (`meta.rfc` on the target system: the same `Z_SDTF_*` modules an
+  on-premise S/4HANA can host), with company-code pushdown or the loaded keys pushed down; what still has no read
+  path is reported as `unreadable`: checks that need it say so (WARN) instead of failing on an empty table.
 * Record-store systems (SYNTHETIC, simulated gateway) keep the direct read: the simulated gateway writes the
   record store, so that is what "the API" holds.
 
@@ -356,14 +358,16 @@ class ApiTargetView(ViewStore):
     """The target as the released APIs show it. Built eagerly for the tables the checks scan; `by_key` fetches
     a missing row lazily (a master the load did not create but the target already held)."""
 
-    def __init__(self, session: Session, target: SapSystem, company_codes: Iterable[str], loaded_keys: dict[str, set[str]], valuation_areas: Iterable[str] = (), fiscal_years: tuple[int | None, int | None] = (None, None)):
+    def __init__(self, session: Session, target: SapSystem, company_codes: Iterable[str], loaded_keys: dict[str, set[str]], valuation_areas: Iterable[str] = (), fiscal_years: tuple[int | None, int | None] = (None, None), rfc_client: AbapAddonClient | None = None):
         super().__init__(target.id, "api_readback")
         self.transport = make_target_transport(session, target)
         self.client = TargetApiClient(self.transport)
+        self.rfc = rfc_client
         self.company_codes = sorted(set(company_codes))
         self.loaded_keys = loaded_keys
         self.valuation_areas = sorted(set(valuation_areas))
         self.fiscal_years = fiscal_years
+        self.read_via: dict[str, str] = {}
         self._missing: set[tuple[str, str]] = set()
         self.unreadable = set(UNREADABLE_BY_API) | {t for t in TABLES if t not in _BOUND and t not in ("BKPF", "BSEG", "BSID", "BSIK")}  # no released read service bound
         self.derived_tables = {"BSID", "BSIK"}
@@ -447,7 +451,82 @@ class ApiTargetView(ViewStore):
         except ApiError as e:
             self.unreadable |= {"BKPF", "BSEG", "BSID", "BSIK"}
             self.metrics.setdefault("errors", {})["journal"] = str(e)
-        self.metrics.update({"transport": getattr(self.transport, "name", "?"), "company_codes": self.company_codes, "valuation_areas": self.valuation_areas, "by_table": by_table, "rows": sum(by_table.values()), "unreadable": sorted(self.unreadable), **self.client.stats()})
+        for t in by_table:
+            self.read_via.setdefault(t, "api")
+        if self.rfc is not None:
+            self._rfc_readback(by_table)
+        self.metrics.update({"transport": getattr(self.transport, "name", "?"), "company_codes": self.company_codes, "valuation_areas": self.valuation_areas, "by_table": by_table, "rows": sum(by_table.values()), "unreadable": sorted(self.unreadable), "read_via": dict(self.read_via), **self.client.stats()})
+
+    def _rfc_readback(self, by_table: dict[str, int]) -> None:
+        """Tables the APIs could not serve, read through the add-on on the target: company-code tables with the
+        target company codes pushed down, MBEW by valuation area, loaded history tables by their loaded keys."""
+        from ..runtime import rfc_config
+
+        client = self.rfc
+        rb: dict = {"transport": getattr(client.t, "name", "?"), "by_table": {}, "errors": {}}
+        try:
+            client.open_snapshot(sorted(self.unreadable & set(TABLES)))
+        except RfcError as e:
+            rb["errors"]["snapshot"] = str(e)
+            self.metrics["rfc_readback"] = rb
+            return
+        cc_preds = [predicate("BUKRS", "EQ", cc) for cc in self.company_codes]
+        aggregate_available = True
+
+        def read(table: str, preds: list[dict], count_preds: list[dict] | None = None) -> bool:
+            nonlocal aggregate_available
+            try:
+                rows = list(client.read_all(table, preds))
+            except RfcError as e:
+                rb["errors"][table] = str(e)
+                return False
+            n = self.add_rows(table, rows)
+            rb["by_table"][table] = rb["by_table"].get(table, 0) + n
+            self.unreadable.discard(table)
+            self.read_via[table] = "rfc"
+            td = TABLES.get(table)
+            if td is not None:
+                self._comparable[table] = set(td.fields) | set(td.key_fields)
+            if aggregate_available and count_preds is not None:
+                try:
+                    expected = client.count(table, count_preds)
+                    self._integrity.append(("target_read_integrity", table, expected, n, "row count computed in the target vs rows read through the add-on"))
+                except RfcError as e:
+                    if e.key in ("FU_NOT_FOUND", "NOT_AUTHORIZED"):
+                        aggregate_available = False
+                    else:
+                        rb["errors"][f"{table}:count"] = str(e)
+            return True
+
+        for table in sorted(self.unreadable):
+            td = TABLES.get(table)
+            if td is None:
+                continue
+            if td.org_field and td.org_field.startswith("BUKRS") and table != "MBEW":
+                read(table, cc_preds, cc_preds)
+            elif table == "T001":
+                read("T001", cc_preds, cc_preds)
+        if "MBEW" in self.unreadable and self.valuation_areas:
+            area_preds = [predicate("BWKEY", "EQ", a) for a in self.valuation_areas]
+            self.metrics.setdefault("errors", {}).pop("MBEW", None)
+            read("MBEW", area_preds, area_preds)
+        for table, keys in sorted(self.loaded_keys.items()):
+            if table not in self.unreadable or table not in TABLES or not keys:
+                continue
+            td = TABLES[table]
+            if not td.key_fields:
+                continue
+            first = td.key_fields[0]
+            values = sorted({k.split("|")[0] for k in keys})
+            ok = True
+            for i in range(0, len(values), rfc_config.key_chunk()):
+                ok = read(table, [predicate(first, "EQ", v) for v in values[i : i + rfc_config.key_chunk()]]) and ok
+                if not ok:
+                    break
+        rb.update({"snapshot": client.snapshot, "rfc_calls": client.calls, "packages": client.packages, "rows": sum(rb["by_table"].values()), "aggregate_available": aggregate_available})
+        self.metrics["rfc_readback"] = rb
+        for t in rb["by_table"]:
+            by_table[t] = by_table.get(t, 0) + rb["by_table"][t]
 
     def _fetch(self, table: str, key: str) -> dict | None:
         if table not in _BOUND or (table, key) in self._missing:
@@ -489,7 +568,17 @@ def build_target_view(session: Session, target: SapSystem, manifest, loaded_keys
     areas: set[str] = set()
     if source_view is not None:
         areas = {plant_map.get(str(r["BWKEY"]), str(r["BWKEY"])) for r in source_view.rows("T001K") if r["BUKRS"] in set(defn["company_codes"])}
-    return ApiTargetView(session, target, target_ccs, loaded_keys, areas, (defn.get("fiscal_year_from"), defn.get("fiscal_year_to")))
+    rfc_client = None
+    if target_has_rfc(target):
+        rfc_client = AbapAddonClient(make_transport(target.sid, target.meta, store_loader=lambda: RecordStore.load(session, target.id)))
+    return ApiTargetView(session, target, target_ccs, loaded_keys, areas, (defn.get("fiscal_year_from"), defn.get("fiscal_year_to")), rfc_client=rfc_client)
+
+
+def target_has_rfc(target: SapSystem) -> bool:
+    """An API target that also hosts the read-only add-on (`meta.rfc` with a transport or destination): the
+    reconciliation reads what the APIs cannot serve through it."""
+    rfc = (target.meta or {}).get("rfc") or {}
+    return bool(rfc.get("transport") or rfc.get("dest"))
 
 
 def loaded_keys_of(backend, run_id: str) -> dict[str, set[str]]:
@@ -500,4 +589,4 @@ def loaded_keys_of(backend, run_id: str) -> dict[str, set[str]]:
     return dict(out)
 
 
-__all__ = ["SOURCE_TABLES", "MODES", "normalise", "ViewStore", "AggregateSourceView", "ApiTargetView", "ReconciliationViewError", "build_source_view", "build_target_view", "record_store_view", "loaded_keys_of", "journal_rows", "eval_filter", "odata_filter", "record_key"]
+__all__ = ["SOURCE_TABLES", "MODES", "normalise", "ViewStore", "AggregateSourceView", "ApiTargetView", "ReconciliationViewError", "build_source_view", "build_target_view", "target_has_rfc", "record_store_view", "loaded_keys_of", "journal_rows", "eval_filter", "odata_filter", "record_key"]

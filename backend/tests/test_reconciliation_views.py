@@ -430,3 +430,66 @@ def test_aggregate_mode_explains_retained_filtered_and_rejected_lines(session):
         kr = next(k for k in fin_rows if k[0] == name)
         assert (fin_agg[kr].status, fin_agg[kr].source_value) == (fin_rows[kr].status, fin_rows[kr].source_value), name
     session.expire_all()
+
+
+# ------------------------------------------------------------------------------- RFC read-back on the target
+def test_target_rfc_readback_fills_what_the_apis_cannot_serve(session, slice_result, monkeypatch):
+    """An on-premise target that also hosts the read-only add-on: company codes, valuation areas, asset values
+    (when no read service exists) and loaded history tables are read over RFC with pushdown, with count evidence."""
+    m = session.get(ScopeManifest, slice_result["manifest_id"])
+    run = session.get(MigrationRun, slice_result["run_id"])
+    tgt = session.get(SapSystem, slice_result["target_id"])
+    src = session.get(SapSystem, slice_result["source_id"])
+    backend = get_backend(session=session)
+    keys = views.loaded_keys_of(backend, run.id)
+    direct = RecordStore.load(session, tgt.id)
+    cc_map = m.definition.get("target_ownership", {}).get("company_code_map") or {}
+    tccs = {cc_map.get(c, c) for c in m.definition["company_codes"]}
+    # no fixed-asset read service on this target (the realistic on-premise case)
+    monkeypatch.setitem(views._BOUND, "ANLC", ("API_FIXEDASSET", views._BOUND["ANLC"][1]))
+    monkeypatch.setattr(tapi, "READ_SERVICES", {})
+    rfc_tgt = SapSystem(id=tgt.id, sid=tgt.sid, client=tgt.client, role="TARGET", product="S4HANA", release="2025", connector="API", meta={"api": {"transport": "simulated"}, "rfc": {"transport": "simulated"}})
+    assert views.target_has_rfc(rfc_tgt) and not views.target_has_rfc(tgt)
+    sv = views.record_store_view(session, src.id)
+    v = views.build_target_view(session, rfc_tgt, m, keys, sv, force_api=True)
+    rb = v.metrics["rfc_readback"]
+    assert rb["transport"] == "SIMULATED_ADDON" and rb["aggregate_available"] and rb["snapshot"] and "ANLC" in rb["errors"] or "ANLC" in rb["by_table"]
+    assert {"T001", "T001K", "ANLC"} <= set(rb["by_table"]) and not ({"T001", "T001K", "ANLC"} & v.unreadable)
+    assert {views.record_key("ANLC", x) for x in v.rows("ANLC")} == {views.record_key("ANLC", x) for x in direct.rows("ANLC") if x["BUKRS"] in tccs} and v.read_via["ANLC"] == "rfc"
+    assert {x["BUKRS"] for x in v.rows("T001")} == {x["BUKRS"] for x in direct.rows("T001") if x["BUKRS"] in tccs} and {x["BWKEY"] for x in v.rows("T001K")} == {x["BWKEY"] for x in direct.rows("T001K") if x["BUKRS"] in tccs}
+    # loaded history tables (cockpit path) read by their loaded keys
+    hist = [t for t in keys if t in ("EKBE", "VBFA") and t in rb["by_table"]]
+    assert hist, (sorted(keys), rb)
+    for t in hist:
+        assert {views.record_key(t, x) for x in v.rows(t)} >= keys[t] and v.read_via[t] == "rfc"
+    integ = v.integrity_results("x")
+    assert integ and {r.check_name for r in integ} == {"target_read_integrity"} and all(r.status == "PASS" for r in integ) and {r.subject for r in integ} >= {"T001", "ANLC"}
+    assert v.metrics["by_table"]["ANLC"] == rb["by_table"]["ANLC"] and v.metrics["read_via"]["KNB1"] == "api"
+    # the reconciliation now verifies asset values and the organisational assignment against real target rows
+    session.query(ReconciliationResult).filter(ReconciliationResult.run_id == run.id).delete()
+    summ = reconcile_run(session, run, m, sv, v)
+    rows = {(r.check_name, r.subject): r for r in session.execute(select(ReconciliationResult).where(ReconciliationResult.run_id == run.id)).scalars().all()}
+    assert rows[("asset_balances", "acquisition_values")].status == "PASS" and float(rows[("asset_balances", "acquisition_values")].target_value) > 0
+    assert rows[("organizational_assignment", "company_codes")].status == "PASS" and "T001" not in summ["not_verified"] and "ANLC" not in summ["not_verified"]
+    assert any(k[0] == "target_read_integrity" for k in rows) and summ["views"]["target"]["rfc_readback"]["rows"] > 0
+    if "EKBE" in hist:
+        po = rows[("open_document_validity", "MM.PurchaseOrder")]
+        assert not po.evidence.get("unreadable"), po.explanation  # EKBE and EKPO readable: the status comparison runs
+    assert not [r for r in rows.values() if r.status == "FAIL"], [(r.check_name, r.subject, r.explanation) for r in rows.values() if r.status == "FAIL"]
+    # a target without the add-on still falls back to "not readable"
+    plain = views.build_target_view(session, tgt, m, keys, sv, force_api=True)
+    assert "rfc_readback" not in plain.metrics and "ANLC" in plain.unreadable
+    session.expire_all()
+
+
+def test_api_connector_test_reports_the_rfc_readback(client, tokens, slice_result):
+    pid = slice_result["project_id"]
+    r = client.post(f"{API}/projects/{pid}/systems", json={"sid": "S4B", "client": "100", "role": "TARGET", "product": "S4HANA", "release": "2023", "connector": "API", "meta": {"api": {"transport": "simulated"}, "rfc": {"transport": "simulated"}}}, headers=tokens["architect"])
+    assert r.status_code == 201, r.text
+    sid = r.json()["id"]
+    assert client.post(f"{API}/systems/{sid}/import-synthetic", json={"scale": 1, "seed": 7}, headers=tokens["architect"]).status_code in (200, 201, 409)
+    t = client.post(f"{API}/systems/{sid}/connector/test", headers=tokens["architect"]).json()
+    assert t["ok"] and t["transport"] == "SIMULATED_S4" and t["rfc_readback"]["ok"] and t["rfc_readback"]["transport"] == "SIMULATED_ADDON" and t["rfc_readback"]["checksum_verified"] and t["rfc_readback"]["aggregate"]["available"]
+    r = client.post(f"{API}/projects/{pid}/systems", json={"sid": "S4C", "client": "100", "role": "TARGET", "product": "S4HANA", "release": "2023", "connector": "API", "meta": {"api": {"transport": "simulated"}, "rfc": {"transport": "pyrfc"}}}, headers=tokens["architect"])
+    t = client.post(f"{API}/systems/{r.json()['id']}/connector/test", headers=tokens["architect"]).json()
+    assert t["ok"] and t["rfc_readback"]["ok"] is False and t["rfc_readback"]["error"] in ("RFC_UNAVAILABLE",)

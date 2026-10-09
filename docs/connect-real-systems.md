@@ -134,7 +134,10 @@ export SDTF_S4_API_TRANSPORT=auto        # http when a destination exists; set "
 ```
 
 Register the target with connector `API` (SID `S4P`, role TARGET, product S4HANA, release as installed, e.g.
-`2023`); the release drives the migration object lookup. **Test API connector** on the Landscape page: it fetches
+`2023`); the release drives the migration object lookup. Give the target an RFC destination as well
+(`meta.rfc` with `transport: pyrfc` and `SDTF_RFC_DEST_<SID>`, the same read-only add-on the source hosts): the
+reconciliation then reads company codes, valuation areas, asset values and the loaded history tables over RFC
+where no released API serves them, and the connector test reports that path (`rfc_readback`). **Test API connector** on the Landscape page: it fetches
 a CSRF token from `API_BUSINESS_PARTNER` and probes the configuration (company codes); nothing is written. A
 self-signed certificate must be trusted by the machine's certificate store, or the base URL must be reachable
 through a reverse proxy with a trusted certificate.

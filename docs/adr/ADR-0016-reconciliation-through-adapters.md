@@ -43,8 +43,12 @@ NPL / A4H test, docs/connect-real-systems.md).
   and material valuation through the product valuation entity (`API_PRODUCT_SRV` / `A_ProductValuation`,
   filtered by the valuation areas the source's T001K maps to); both are read-only bindings in
   `catalog/api_bindings.py`, written from the public API reference and unverified against a target's
-  `$metadata`. When a service is not activated or refuses, the table falls back to *not verified* (WARN).
-  T001 and T001K still have no read path.
+  `$metadata`. When a service is not activated or refuses, the table falls back to the **RFC read-back**: an
+  on-premise target that also hosts the read-only add-on (`meta.rfc` on the target system) serves the tables no
+  released API covers (T001, T001K, ANLC, loaded history tables such as EKBE or VBFA) through
+  `Z_SDTF_READ_PACKAGE` with the target company codes or the loaded keys pushed down, and `Z_SDTF_AGGREGATE`
+  counts as `target_read_integrity` evidence. Only a target without the add-on leaves those tables *not
+  verified* (WARN).
 * Reading a whole company code's BSEG for reconciliation is a real transfer on large systems. The
   **aggregate-only mode** (`SDTF_RECON_MODE=aggregate`, or `auto` above `SDTF_RECON_AGGREGATE_ABOVE` line items,
   default 1 000 000; `?mode=` on the re-reconcile endpoint) keeps the line items in the source: GL balances per
