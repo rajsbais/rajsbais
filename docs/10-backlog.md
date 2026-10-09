@@ -56,7 +56,8 @@ Legend: P0 next increment · P1 following · P2 later. Sizes are relative (S/M/L
 | P3 | Run `sdtf cockpit-template check` on templates downloaded from a target release, confirm the aliases their Field Lists propose, import the release's object list, and import a real simulation log so the column recognition is confirmed (needs system access; none available here) | S |
 | ✅ | Reconciliation through the adapters (ADR-0016): source over the RFC add-on with `Z_SDTF_AGGREGATE` read-integrity evidence, target read back over the released APIs, not-verified reporting, re-run on a completed run | M |
 | ✅ | Aggregate-only reconciliation for large scopes: GL, open-item, asset, inventory and intercompany totals computed in the source by `Z_SDTF_AGGREGATE`, only the retained documents' lines transferred, explanation buckets from the staging, automatic above `SDTF_RECON_AGGREGATE_ABOVE`, `mode` on the re-reconcile endpoint / CLI / page | M |
-| P1 | Read services for asset values and material valuation on the target; verify the journal item properties against A4H `$metadata` | S |
+| ✅ | Read services for asset values (fixed-asset read service) and material valuation (product valuation entity) on the target: the asset and inventory checks compare real values instead of WARN | S |
+| P1 | Verify the journal item, fixed-asset valuation and product valuation properties against A4H `$metadata` | S |
 | P0 | Benchmark harness and benchmark report (docs/benchmarks.md) | M |
 | ✅ | Mock cutover management: cutover rehearsal checklist (automatic readiness items, manual items, waivers, task timings fed into the forecast, lessons, approver verdict, report); API, CLI, Cutover page | M |
 | P1 | Live cutover execution tracking (task status fed by the systems), incident escalation, resource assignment | M |

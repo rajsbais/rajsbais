@@ -35,8 +35,9 @@ switch VMs and *Resume from checkpoint*: completed stages and completed extracti
 
 > **Reconciliation reads through the adapters** (ADR-0016): the source side over the add-on (company-code pushdown;
 > `Z_SDTF_AGGREGATE` proves the read complete, so create it with the other modules), the target side back through the
-> released APIs (entities by key, filtered collections, `API_JOURNALENTRYITEMBASIC_SRV` for journal entries). Tables with
-> no read path (T001, T001K, ANLC) are reported as *not verified* (WARN), never as a false FAIL. The journal item property
+> released APIs (entities by key, filtered collections, `API_JOURNALENTRYITEMBASIC_SRV` for journal entries). Asset values
+> come from `API_FIXEDASSET` and material valuation from `A_ProductValuation`; tables with no read path (T001, T001K)
+> are reported as *not verified* (WARN), never as a false FAIL. The journal item property
 > names are unverified against A4H's `$metadata`: send the first `$metadata` of that service if the read fails. After
 > switching VMs, `POST /runs/{id}/reconcile` (or `sdtf reconcile --run`) re-runs the reconciliation without repeating the
 > load. On a large company code use `?mode=aggregate` (`--mode aggregate`): the totals are computed in the source and only
@@ -56,7 +57,7 @@ self-signed certificate must be in the machine's trust store.
 | `pyrfc` + SAP NW RFC SDK | the ECC adapter speaks RFC through `pyrfc` | install the SDK from the SAP Support Portal (S-user), set `SAPNWRFC_HOME`, then `pip install pyrfc`; `python -c "import pyrfc"` must succeed |
 | The `Z_SDTF_*` function modules in ECC | the extraction contract (`sap-abap/README.md`): `Z_SDTF_OPEN_SNAPSHOT`, `Z_SDTF_TABLE_METADATA`, `Z_SDTF_READ_PACKAGE`, `Z_SDTF_CDC_POLL` | create them from `sap-abap/src/*.abap` and the structures in `sap-abap/DDIC.md` in a development client, mark them remote-enabled, transport to the client you read from; they are read-only |
 | An RFC service user in ECC | authorisation for the four function modules and for reading the tables in scope | S_RFC for the function group, S_TABU_DIS/S_TABU_NAM for the tables; no change authorisations |
-| Released OData/SOAP services activated in S/4HANA | the loaders use `API_BUSINESS_PARTNER`, `API_PRODUCT_SRV`, `API_SALES_ORDER_SRV`, `API_PURCHASEORDER_PROCESS_SRV`, `API_OUTBOUND_DELIVERY_SRV`, `API_COSTCENTER_SRV`, `API_PROFITCENTER_SRV`, `API_JOURNALENTRYITEMBASIC_SRV` and the SOAP service `JournalEntryBulkCreateRequestConfirmation_In` | `/IWFND/MAINT_SERVICE` (OData), SOAMANAGER (SOAP); a communication user with the services' authorisations; HTTPS reachable from your machine |
+| Released OData/SOAP services activated in S/4HANA | the loaders use `API_BUSINESS_PARTNER`, `API_PRODUCT_SRV`, `API_SALES_ORDER_SRV`, `API_PURCHASEORDER_PROCESS_SRV`, `API_OUTBOUND_DELIVERY_SRV`, `API_COSTCENTER_SRV`, `API_PROFITCENTER_SRV`, `API_JOURNALENTRYITEMBASIC_SRV`, `API_FIXEDASSET` (read) and the SOAP service `JournalEntryBulkCreateRequestConfirmation_In` | `/IWFND/MAINT_SERVICE` (OData), SOAMANAGER (SOAP); a communication user with the services' authorisations; HTTPS reachable from your machine |
 | A **sandbox client** on S/4HANA for step 5 | the API loaders post real documents | never point step 5 at a productive client |
 
 ## 1. Start the platform locally

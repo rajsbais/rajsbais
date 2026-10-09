@@ -38,8 +38,12 @@ NPL / A4H test, docs/connect-real-systems.md).
   the simulated add-on and gateway and on a mocked HTTPS endpoint, not on a live SAP system.
 * The journal item property names and the open-item derivation come from the public API reference; they must
   be checked against the target's `$metadata` on A4H (unverified, like the other bindings).
-* Asset values and material valuation are not verifiable through the APIs in this build (WARN, by report);
-  adding read services for them is backlog.
+* Asset values are read back through the fixed-asset read service (`API_FIXEDASSET` / `FixedAssetValuation`)
+  and material valuation through the product valuation entity (`API_PRODUCT_SRV` / `A_ProductValuation`,
+  filtered by the valuation areas the source's T001K maps to); both are read-only bindings in
+  `catalog/api_bindings.py`, written from the public API reference and unverified against a target's
+  `$metadata`. When a service is not activated or refuses, the table falls back to *not verified* (WARN).
+  T001 and T001K still have no read path.
 * Reading a whole company code's BSEG for reconciliation is a real transfer on large systems. The
   **aggregate-only mode** (`SDTF_RECON_MODE=aggregate`, or `auto` above `SDTF_RECON_AGGREGATE_ABOVE` line items,
   default 1 000 000; `?mode=` on the re-reconcile endpoint) keeps the line items in the source: GL balances per

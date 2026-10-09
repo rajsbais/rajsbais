@@ -14,8 +14,10 @@
   entity bindings (`GET A_SalesOrder('...')`), tables with a company code property are read as filtered
   collections (`$filter=CompanyCode eq ...`, paged), journal entries come from `API_JOURNALENTRYITEMBASIC_SRV`
   (header, line and open-item images derived from the line items), referenced masters missing from the view are
-  fetched lazily. Tables no released read API covers in this build (T001, T001K, ANLC) are reported as
-  `unreadable`: checks that need them say so (WARN) instead of failing on an empty table.
+  fetched lazily; asset values come from the fixed-asset read service and material valuation from the product
+  valuation entity (read-only bindings in `catalog/api_bindings.py`). Tables no released read API covers in this
+  build (T001, T001K, anything unbound) are reported as `unreadable`: checks that need them say so (WARN) instead
+  of failing on an empty table.
 * Record-store systems (SYNTHETIC, simulated gateway) keep the direct read: the simulated gateway writes the
   record store, so that is what "the API" holds.
 
@@ -31,7 +33,7 @@ from typing import Iterable
 
 from sqlalchemy.orm import Session
 
-from ..catalog.api_bindings import API_BINDINGS, EntityBinding
+from ..catalog.api_bindings import API_BINDINGS, READ_BINDINGS, READ_SERVICE_OF, EntityBinding
 from ..catalog.store import RecordStore
 from ..catalog.tables import TABLES, record_key
 from ..models import ReconciliationResult, SapSystem
@@ -44,7 +46,7 @@ JOURNAL_ENTITY = "A_JournalEntryItemBasic"
 # A_JournalEntryItemBasic property -> table field (public API reference; unverified against a target's $metadata)
 JOURNAL_FIELDS = {"CompanyCode": "BUKRS", "AccountingDocument": "BELNR", "FiscalYear": "GJAHR", "AccountingDocumentItem": "BUZEI", "LedgerGLLineItem": "BUZEI", "FinancialAccountType": "KOART", "DebitCreditCode": "SHKZG", "GLAccount": "HKONT", "AmountInCompanyCodeCurrency": "DMBTR", "AmountInTransactionCurrency": "WRBTR", "Customer": "KUNNR", "Supplier": "LIFNR", "CostCenter": "KOSTL", "ProfitCenter": "PRCTR", "ClearingAccountingDocument": "AUGBL", "ClearingDate": "AUGDT", "PartnerCompany": "VBUND", "Material": "MATNR", "Plant": "WERKS", "SpecialGLCode": "UMSKZ", "AssignmentReference": "ZUONR"}
 JOURNAL_HEADER_FIELDS = {"AccountingDocumentType": "BLART", "DocumentDate": "BLDAT", "PostingDate": "BUDAT", "FiscalPeriod": "MONAT", "TransactionCurrency": "WAERS", "OriginalReferenceDocumentType": "AWTYP", "OriginalReferenceDocument": "AWKEY", "DocumentReferenceID": "XBLNR"}
-UNREADABLE_BY_API = ("T001", "T001K", "ANLC")  # no released read service bound in this build
+UNREADABLE_BY_API = ("T001", "T001K")  # no released read service bound in this build
 PAGE = 1000
 
 
@@ -291,6 +293,8 @@ for _b in API_BINDINGS.values():
         _BOUND[_b.header.table] = (_b.service, _b.header)
         for _it in _b.items.values():
             _BOUND[_it.table] = (_b.service, _it)
+for _t, _eb in READ_BINDINGS.items():  # read-only services: reconciliation reads, never loads
+    _BOUND.setdefault(_t, (READ_SERVICE_OF[_t], _eb))
 _FILTER_RE = re.compile(r"^\s*(?P<prop>[A-Za-z0-9_]+)\s+eq\s+'(?P<val>(?:[^']|'')*)'\s*$")
 
 

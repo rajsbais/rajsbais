@@ -442,7 +442,7 @@ def financial_checks(rid: str, sources: list[dict], target: RecordStore) -> tupl
     s_assets = round(sum(b.assets for b in balances), 2)
     t_assets = round(sum(float(r["KANSW"]) for r in target.rows("ANLC") if r["BUKRS"] in target_ccs), 2)
     if "ANLC" in unreadable:
-        results.append(_r(rid, "FINANCIAL", "asset_balances", "WARN", "acquisition_values", s_assets, "not readable", "", "asset values (ANLC) are not readable through the adapters in this build; verify the asset balances in the target by report", {"unreadable": True}))
+        results.append(_r(rid, "FINANCIAL", "asset_balances", "WARN", "acquisition_values", s_assets, "not readable", "", "asset values are not readable through the adapters (fixed-asset read service unavailable); verify the asset balances in the target by report", {"unreadable": True}))
     else:
         results.append(_r(rid, "FINANCIAL", "asset_balances", "PASS" if abs(s_assets - t_assets) < 0.005 else "FAIL", "acquisition_values", s_assets, t_assets, round(s_assets - t_assets, 2), mode_note.strip(" ()") if aggregate_mode else ""))
     # inventory valuation by valuation area
@@ -451,8 +451,8 @@ def financial_checks(rid: str, sources: list[dict], target: RecordStore) -> tupl
     t_inv = round(sum(float(r["SALK3"]) for r in target.rows("MBEW") if r["BWKEY"] in tgt_val_areas), 2)
     inv_var = round(s_inv - t_inv, 2)
     inv_expl = "" if abs(inv_var) < 0.005 else f"{held} held by materials not transferred (manual disposition / excluded); unexplained {round(inv_var - held, 2)}"
-    if "MBEW" in unreadable or "T001K" in unreadable:
-        results.append(_r(rid, "FINANCIAL", "inventory_valuation", "WARN", "valuation_areas", s_inv, "not readable", "", "material valuation (MBEW / T001K) is not readable through the adapters in this build; verify the inventory values in the target by report", {"unreadable": True}))
+    if "MBEW" in unreadable or (not tgt_val_areas and "T001K" in unreadable):
+        results.append(_r(rid, "FINANCIAL", "inventory_valuation", "WARN", "valuation_areas", s_inv, "not readable", "", "material valuation is not readable through the adapters (product valuation service unavailable, or no valuation areas known for the target); verify the inventory values in the target by report", {"unreadable": True}))
     else:
         results.append(_r(rid, "FINANCIAL", "inventory_valuation", "PASS" if abs(inv_var) < 0.005 else ("WARN" if abs(inv_var - held) < 0.005 else "FAIL"), "valuation_areas", s_inv, t_inv, inv_var, inv_expl + mode_note))
     # intercompany balances (open), aggregated on target company codes

@@ -169,5 +169,15 @@ API_BINDINGS: dict[str, ApiBinding] = {
 }
 
 
+# Read-only bindings: tables the reconciliation reads back from the target through released read services, but
+# never loads (values the target derives from its own postings). Same caveat as above: first mappings from the
+# public API reference, unverified against a target's $metadata.
+READ_BINDINGS: dict[str, EntityBinding] = {
+    "ANLC": _e("ANLC", "FixedAssetValuation", {"BUKRS": "CompanyCode", "ANLN1": "MasterFixedAsset", "ANLN2": "FixedAsset", "GJAHR": "FiscalYear", "AFABE": "AssetDepreciationArea", "KANSW": "AcquisitionValueAmount", "KNAFA": "AccumulatedDepreciationAmount", "NAFAG": "DepreciationAmountInFiscalYear"}, ("CompanyCode", "MasterFixedAsset", "FixedAsset", "FiscalYear", "AssetDepreciationArea")),
+}
+READ_SERVICES: dict[str, dict[str, EntityBinding]] = {"API_FIXEDASSET": {"FixedAssetValuation": READ_BINDINGS["ANLC"]}}
+READ_SERVICE_OF: dict[str, str] = {"ANLC": "API_FIXEDASSET"}
+
+
 def binding_for(object_type: str) -> ApiBinding | None:
     return API_BINDINGS.get(object_type)

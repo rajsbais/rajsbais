@@ -137,6 +137,9 @@ def test_target_view_reads_back_through_the_apis(session, slice_result):
     v = views.build_target_view(session, tgt, m, keys, src_view, force_api=True)
     assert v.origin == "api_readback" and v.metrics["transport"] in ("SIMULATED_S4",) and v.metrics["calls"] > 0
     assert set(views.UNREADABLE_BY_API) <= v.unreadable and "EKBE" in v.unreadable and not (v.unreadable & set(views._BOUND)) and v.derived_tables == {"BSID", "BSIK"}
+    assert "ANLC" not in v.unreadable and "MBEW" not in v.unreadable  # read-only services: fixed-asset values, product valuation
+    assert {views.record_key("ANLC", x) for x in v.rows("ANLC")} == {views.record_key("ANLC", x) for x in direct.rows("ANLC") if x["BUKRS"] in {(m.definition.get("target_ownership", {}).get("company_code_map") or {}).get(c, c) for c in m.definition["company_codes"]}}
+    assert v.metrics["by_table"].get("MBEW", 0) > 0 and {str(x["BWKEY"]) for x in v.rows("MBEW")} <= set(v.valuation_areas) and v.metrics["by_service"].get("API_FIXEDASSET", 0) >= 1
     # company-code collections, keyed reads and the journal read service reproduce the record store
     cc_map = m.definition.get("target_ownership", {}).get("company_code_map") or {}
     tccs = {cc_map.get(c, c) for c in m.definition["company_codes"]}
@@ -161,11 +164,12 @@ def test_target_view_reads_back_through_the_apis(session, slice_result):
     assert v.by_key("KNA1", "nope") is None and v.by_key("KNA1", "nope") is None and v.client.stats()["calls"] == calls + 1
     # the full reconciliation through both views: identical verdict, unreadable tables reported, never a false FAIL
     summ = reconcile_run(session, run, m, src_view, v)
-    assert summ["overall"] in ("PASS", "WARN") and summ["views"]["target"]["origin"] == "api_readback" and set(summ["not_verified"]) >= {"T001", "T001K", "ANLC"}
+    assert summ["overall"] in ("PASS", "WARN") and summ["views"]["target"]["origin"] == "api_readback" and {"T001", "T001K"} <= set(summ["not_verified"]) and "ANLC" not in summ["not_verified"] and "MBEW" not in summ["not_verified"]
     rows = session.execute(select(ReconciliationResult).where(ReconciliationResult.run_id == run.id)).scalars().all()
     assert not [r for r in rows if r.status == "FAIL"], [(r.check_name, r.subject, r.explanation) for r in rows if r.status == "FAIL"]
-    warn = {(r.check_name, r.subject) for r in rows if r.status == "WARN" and r.evidence.get("unreadable")}
-    assert ("asset_balances", "acquisition_values") in warn and ("inventory_valuation", "valuation_areas") in warn
+    by_check = {(r.check_name, r.subject): r for r in rows}
+    assert by_check[("asset_balances", "acquisition_values")].status == "PASS" and float(by_check[("asset_balances", "acquisition_values")].target_value) > 0  # read through the fixed-asset service
+    assert by_check[("inventory_valuation", "valuation_areas")].status == "PASS" and float(by_check[("inventory_valuation", "valuation_areas")].target_value) > 0  # read through the product valuation entity
     gl = [r for r in rows if r.check_name == "gl_balance"]
     assert gl and all(r.status == "PASS" for r in gl) and any(r.check_name == "trial_balance" and r.status == "PASS" for r in rows)
     session.expire_all()
@@ -190,6 +194,8 @@ class FakeS4Read:
         gw = self.gateway
         if service == views.JOURNAL_SERVICE:
             r = gw._journal_items("GET", rest + "?" + request.url.query.decode(), {})
+        elif service in tapi.READ_SERVICES:
+            r = gw._read_service(service, "GET", rest + "?" + request.url.query.decode(), {})
         else:
             entity_set, key = tapi.parse_path(rest)
             b, eb = tapi._SERVICE_ENTITIES[service][entity_set]
@@ -234,7 +240,8 @@ def test_target_view_over_http_with_paging(session, slice_result, monkeypatch):
     by_service = defaultdict(int)
     for r in fake.requests:
         by_service[r.url.path.split("/sap/opu/odata/sap/", 1)[1].split("/")[0]] += 1
-    assert by_service[views.JOURNAL_SERVICE] >= 1 and by_service["API_BUSINESS_PARTNER"] >= 1
+    assert by_service[views.JOURNAL_SERVICE] >= 1 and by_service["API_BUSINESS_PARTNER"] >= 1 and by_service["API_FIXEDASSET"] >= 1 and by_service["API_PRODUCT_SRV"] >= 1
+    assert {views.record_key("ANLC", x) for x in v.rows("ANLC")} == {views.record_key("ANLC", x) for x in direct.rows("ANLC") if x["BUKRS"] in tccs} and v.rows("MBEW")
     assert v.metrics["calls"] == len([r for r in fake.requests if r.headers.get("x-csrf-token") != "fetch"])
     # journal row derivation on its own
     rows = views.journal_rows([{"CompanyCode": "1710", "AccountingDocument": "1", "FiscalYear": "2026", "AccountingDocumentItem": "001", "FinancialAccountType": "D", "GLAccount": "121000", "AmountInCompanyCodeCurrency": "-50.5", "Customer": "C1", "TransactionCurrency": "EUR", "PostingDate": "20260101"}, {"CompanyCode": "1710", "AccountingDocument": "1", "FiscalYear": "2026", "LedgerGLLineItem": "002", "FinancialAccountType": "S", "GLAccount": "400000", "AmountInCompanyCodeCurrency": 50.5, "DebitCreditCode": "S"}])

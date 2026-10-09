@@ -21,7 +21,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Any
 
-from ..catalog.api_bindings import API_BINDINGS, EXT_PREFIX, ApiBinding, EntityBinding
+from ..catalog.api_bindings import API_BINDINGS, EXT_PREFIX, READ_SERVICES, ApiBinding, EntityBinding
 from ..catalog.store import RecordStore, delete_records, upsert_records
 from ..catalog.tables import record_key
 from ..models import SapRecord
@@ -223,6 +223,8 @@ class SimulatedS4Gateway:
             return self._cockpit(method, path, payload or {})
         if service == JOURNAL_READ_SERVICE:
             return self._journal_items(method, path, headers)
+        if service in READ_SERVICES:
+            return self._read_service(service, method, path, headers)
         if service not in _SERVICE_ENTITIES:
             return self._err(404, "SERVICE_NOT_FOUND", f"service {service} is not activated on this target")
         if method == "GET" and headers.get("x-csrf-token") == "fetch":
@@ -278,6 +280,23 @@ class SimulatedS4Gateway:
     def _collection(self, eb: EntityBinding, path: str) -> ApiResponse:
         ents = [eb.to_entity(r) | {p: r.get(f) for f, p in eb.fields.items() if f in eb.derived} for r in self.rows(eb.table)]
         return self._page(ents, path)
+
+    def _read_service(self, service: str, method: str, path: str, headers: dict) -> ApiResponse:
+        """A released read-only service (fixed asset values) over the target's record store."""
+        if method == "GET" and headers.get("x-csrf-token") == "fetch":
+            tok = secrets.token_hex(8)
+            self._tokens.add(tok)
+            return ApiResponse(200, {"d": {"EntitySets": sorted(READ_SERVICES[service])}}, {"x-csrf-token": tok})
+        if method != "GET":
+            return self._err(405, "METHOD_NOT_ALLOWED", f"{service} is read-only")
+        entity_set, key = parse_path(path.split("?", 1)[0])
+        eb = READ_SERVICES[service].get(entity_set)
+        if eb is None:
+            return self._err(404, "ENTITY_NOT_FOUND", f"entity set {entity_set} does not exist in {service}")
+        if key is not None:
+            row = self.row(eb.table, "|".join(self._key_values(eb, key, None)))
+            return self._err(404, "NOT_FOUND", "not found") if row is None else ApiResponse(200, {"d": eb.to_entity(row)}, {"etag": _etag(row)})
+        return self._collection(eb, path)
 
     def _journal_items(self, method: str, path: str, headers: dict) -> ApiResponse:
         """API_JOURNALENTRYITEMBASIC_SRV / A_JournalEntryItemBasic read service over BSEG + BKPF (read-only)."""
