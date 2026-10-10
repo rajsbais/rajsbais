@@ -1,0 +1,46 @@
+name: ci
+on:
+  push: { branches: ["**"] }
+  pull_request:
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - run: pip install -e "backend[dev,columnar,otel]"
+      - run: ruff check backend/sdtf
+      - run: cd backend && pytest -q -p no:warnings
+      - name: Vertical slice smoke (CLI)
+        run: cd backend && SDTF_DATABASE_URL=sqlite:///./ci.db python -m sdtf.cli demo --json | tee slice.json && python -c "import json;d=json.load(open('slice.json'));assert d['status']=='COMPLETED' and d['reconciliation']['overall']=='PASS'"
+      - name: Alembic migration applies cleanly
+        run: cd backend && SDTF_DATABASE_URL=sqlite:///./mig.db alembic upgrade head
+  frontend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: "22" }
+      - run: cd frontend && npm install --no-audit --no-fund && npm run build && npm test
+  containers:
+    runs-on: ubuntu-latest
+    needs: [backend, frontend]
+    steps:
+      - uses: actions/checkout@v4
+      # Docker Hub rate-limits unauthenticated pulls from shared runners (HTTP 429); build from the public mirror of
+      # the official images and retry a transient registry error a few times before failing the job.
+      - name: Build backend image
+        run: |
+          for i in 1 2 3; do
+            docker build --build-arg REGISTRY=public.ecr.aws/docker/library -f deploy/Dockerfile.backend -t sdtf-backend:ci . && exit 0
+            echo "backend image build attempt $i failed; retrying in $((i * 30))s" >&2; sleep $((i * 30))
+          done
+          exit 1
+      - name: Build frontend image
+        run: |
+          for i in 1 2 3; do
+            docker build --build-arg REGISTRY=public.ecr.aws/docker/library -f deploy/Dockerfile.frontend -t sdtf-frontend:ci . && exit 0
+            echo "frontend image build attempt $i failed; retrying in $((i * 30))s" >&2; sleep $((i * 30))
+          done
+          exit 1

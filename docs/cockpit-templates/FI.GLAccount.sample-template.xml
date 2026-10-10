@@ -1,0 +1,260 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?mso-application progid="Excel.Sheet"?>
+<Workbook xmlns="urn:schemas-microsoft-com:office:spreadsheet" xmlns:ss="urn:schemas-microsoft-com:office:spreadsheet">
+<Worksheet ss:Name="Introduction">
+<Table>
+<Row>
+<Cell><Data ss:Type="String">ILLUSTRATIVE TEMPLATE - not an SAP file. Built in the layout SAP documents for the migration cockpit XML templates (Migrate Your Data app) so the template-driven export can be developed and tested.</Data></Cell>
+</Row>
+<Row>
+<Cell><Data ss:Type="String">Migration object: G/L account (illustrative)</Data></Cell>
+</Row>
+<Row>
+<Cell><Data ss:Type="String">Download the real template of your release from the app and register it for the project; this sample only demonstrates the mechanics.</Data></Cell>
+</Row>
+<Row>
+<Cell><Data ss:Type="String">Sheets: Introduction, Field List, then one sheet per structure. Data sheets: rows 1-8 are the header (rows 4-6 hidden: structure, technical field names, type/length; row 7 groups with the key group merged across the key columns; row 8 descriptions, * = mandatory); enter data from row 9.</Data></Cell>
+</Row>
+</Table>
+</Worksheet>
+<Worksheet ss:Name="Field List">
+<Table>
+<Column ss:Index="8" ss:Hidden="1"/>
+<Column ss:Hidden="1"/>
+<Row>
+<Cell><Data ss:Type="String">Field List</Data></Cell>
+</Row>
+<Row>
+</Row>
+<Row>
+<Cell><Data ss:Type="String">Sheet Name</Data></Cell>
+<Cell><Data ss:Type="String">Group Name</Data></Cell>
+<Cell><Data ss:Type="String">Field Name</Data></Cell>
+<Cell><Data ss:Type="String">Importance</Data></Cell>
+<Cell><Data ss:Type="String">Type</Data></Cell>
+<Cell><Data ss:Type="String">Length</Data></Cell>
+<Cell><Data ss:Type="String">Decimal Places</Data></Cell>
+<Cell><Data ss:Type="String">SAP Structure</Data></Cell>
+<Cell><Data ss:Type="String">SAP Field</Data></Cell>
+</Row>
+<Row>
+<Cell><Data ss:Type="String">Chart of Accounts Data</Data></Cell>
+<Cell><Data ss:Type="String">General Data</Data></Cell>
+<Cell><Data ss:Type="String">Chart of Accounts</Data></Cell>
+<Cell><Data ss:Type="String">mandatory</Data></Cell>
+<Cell><Data ss:Type="String">CHAR</Data></Cell>
+<Cell><Data ss:Type="String">4</Data></Cell>
+<Cell><Data ss:Type="String">0</Data></Cell>
+<Cell><Data ss:Type="String">SKA1</Data></Cell>
+<Cell><Data ss:Type="String">CHRT_ACCTS</Data></Cell>
+</Row>
+<Row>
+<Cell><Data ss:Type="String">Chart of Accounts Data</Data></Cell>
+<Cell><Data ss:Type="String">General Data</Data></Cell>
+<Cell><Data ss:Type="String">G/L Account Number</Data></Cell>
+<Cell><Data ss:Type="String">mandatory</Data></Cell>
+<Cell><Data ss:Type="String">CHAR</Data></Cell>
+<Cell><Data ss:Type="String">10</Data></Cell>
+<Cell><Data ss:Type="String">0</Data></Cell>
+<Cell><Data ss:Type="String">SKA1</Data></Cell>
+<Cell><Data ss:Type="String">GL_ACCOUNT</Data></Cell>
+</Row>
+<Row>
+<Cell><Data ss:Type="String">Chart of Accounts Data</Data></Cell>
+<Cell><Data ss:Type="String">General Data</Data></Cell>
+<Cell><Data ss:Type="String">G/L Account Long Text</Data></Cell>
+<Cell><Data ss:Type="String">mandatory</Data></Cell>
+<Cell><Data ss:Type="String">CHAR</Data></Cell>
+<Cell><Data ss:Type="String">50</Data></Cell>
+<Cell><Data ss:Type="String">0</Data></Cell>
+<Cell><Data ss:Type="String">SKA1</Data></Cell>
+<Cell><Data ss:Type="String">TXT50</Data></Cell>
+</Row>
+<Row>
+<Cell><Data ss:Type="String">Chart of Accounts Data</Data></Cell>
+<Cell><Data ss:Type="String">General Data</Data></Cell>
+<Cell><Data ss:Type="String">Balance Sheet Account</Data></Cell>
+<Cell><Data ss:Type="String">optional</Data></Cell>
+<Cell><Data ss:Type="String">CHAR</Data></Cell>
+<Cell><Data ss:Type="String">1</Data></Cell>
+<Cell><Data ss:Type="String">0</Data></Cell>
+<Cell><Data ss:Type="String">SKA1</Data></Cell>
+<Cell><Data ss:Type="String">XBILK</Data></Cell>
+</Row>
+<Row>
+<Cell><Data ss:Type="String">Chart of Accounts Data</Data></Cell>
+<Cell><Data ss:Type="String">General Data</Data></Cell>
+<Cell><Data ss:Type="String">P&amp;L Statement Account Type</Data></Cell>
+<Cell><Data ss:Type="String">optional</Data></Cell>
+<Cell><Data ss:Type="String">CHAR</Data></Cell>
+<Cell><Data ss:Type="String">2</Data></Cell>
+<Cell><Data ss:Type="String">0</Data></Cell>
+<Cell><Data ss:Type="String">SKA1</Data></Cell>
+<Cell><Data ss:Type="String">GVTYP</Data></Cell>
+</Row>
+<Row>
+<Cell><Data ss:Type="String">Chart of Accounts Data</Data></Cell>
+<Cell><Data ss:Type="String">General Data</Data></Cell>
+<Cell><Data ss:Type="String">Account Group</Data></Cell>
+<Cell><Data ss:Type="String">mandatory</Data></Cell>
+<Cell><Data ss:Type="String">CHAR</Data></Cell>
+<Cell><Data ss:Type="String">4</Data></Cell>
+<Cell><Data ss:Type="String">0</Data></Cell>
+<Cell><Data ss:Type="String">SKA1</Data></Cell>
+<Cell><Data ss:Type="String">ACCT_GROUP</Data></Cell>
+</Row>
+<Row>
+<Cell><Data ss:Type="String">Company Code Data</Data></Cell>
+<Cell><Data ss:Type="String">Company Code Data</Data></Cell>
+<Cell><Data ss:Type="String">Chart of Accounts</Data></Cell>
+<Cell><Data ss:Type="String">mandatory</Data></Cell>
+<Cell><Data ss:Type="String">CHAR</Data></Cell>
+<Cell><Data ss:Type="String">4</Data></Cell>
+<Cell><Data ss:Type="String">0</Data></Cell>
+<Cell><Data ss:Type="String">SKB1</Data></Cell>
+<Cell><Data ss:Type="String">CHRT_ACCTS</Data></Cell>
+</Row>
+<Row>
+<Cell><Data ss:Type="String">Company Code Data</Data></Cell>
+<Cell><Data ss:Type="String">Company Code Data</Data></Cell>
+<Cell><Data ss:Type="String">G/L Account Number</Data></Cell>
+<Cell><Data ss:Type="String">mandatory</Data></Cell>
+<Cell><Data ss:Type="String">CHAR</Data></Cell>
+<Cell><Data ss:Type="String">10</Data></Cell>
+<Cell><Data ss:Type="String">0</Data></Cell>
+<Cell><Data ss:Type="String">SKB1</Data></Cell>
+<Cell><Data ss:Type="String">GL_ACCOUNT</Data></Cell>
+</Row>
+<Row>
+<Cell><Data ss:Type="String">Company Code Data</Data></Cell>
+<Cell><Data ss:Type="String">Company Code Data</Data></Cell>
+<Cell><Data ss:Type="String">Company Code</Data></Cell>
+<Cell><Data ss:Type="String">mandatory</Data></Cell>
+<Cell><Data ss:Type="String">CHAR</Data></Cell>
+<Cell><Data ss:Type="String">4</Data></Cell>
+<Cell><Data ss:Type="String">0</Data></Cell>
+<Cell><Data ss:Type="String">SKB1</Data></Cell>
+<Cell><Data ss:Type="String">COMP_CODE</Data></Cell>
+</Row>
+<Row>
+<Cell><Data ss:Type="String">Company Code Data</Data></Cell>
+<Cell><Data ss:Type="String">Company Code Data</Data></Cell>
+<Cell><Data ss:Type="String">Reconciliation Account Type</Data></Cell>
+<Cell><Data ss:Type="String">optional</Data></Cell>
+<Cell><Data ss:Type="String">CHAR</Data></Cell>
+<Cell><Data ss:Type="String">1</Data></Cell>
+<Cell><Data ss:Type="String">0</Data></Cell>
+<Cell><Data ss:Type="String">SKB1</Data></Cell>
+<Cell><Data ss:Type="String">MITKZ</Data></Cell>
+</Row>
+<Row>
+<Cell><Data ss:Type="String">Company Code Data</Data></Cell>
+<Cell><Data ss:Type="String">Company Code Data</Data></Cell>
+<Cell><Data ss:Type="String">Open Item Management</Data></Cell>
+<Cell><Data ss:Type="String">optional</Data></Cell>
+<Cell><Data ss:Type="String">CHAR</Data></Cell>
+<Cell><Data ss:Type="String">1</Data></Cell>
+<Cell><Data ss:Type="String">0</Data></Cell>
+<Cell><Data ss:Type="String">SKB1</Data></Cell>
+<Cell><Data ss:Type="String">XOPVW</Data></Cell>
+</Row>
+<Row>
+<Cell><Data ss:Type="String">Company Code Data</Data></Cell>
+<Cell><Data ss:Type="String">Company Code Data</Data></Cell>
+<Cell><Data ss:Type="String">Account Currency</Data></Cell>
+<Cell><Data ss:Type="String">optional</Data></Cell>
+<Cell><Data ss:Type="String">CUKY</Data></Cell>
+<Cell><Data ss:Type="String">5</Data></Cell>
+<Cell><Data ss:Type="String">0</Data></Cell>
+<Cell><Data ss:Type="String">SKB1</Data></Cell>
+<Cell><Data ss:Type="String">WAERS</Data></Cell>
+</Row>
+</Table>
+</Worksheet>
+<Worksheet ss:Name="Chart of Accounts Data">
+<Table>
+<Row>
+<Cell><Data ss:Type="String">Chart of Accounts Data</Data></Cell>
+</Row>
+<Row>
+<Cell><Data ss:Type="String">G/L account (illustrative): Chart of Accounts Data. Enter data from row 9. Fields marked with * are mandatory.</Data></Cell>
+</Row>
+<Row>
+</Row>
+<Row ss:Hidden="1">
+<Cell><Data ss:Type="String">SKA1</Data></Cell>
+</Row>
+<Row ss:Hidden="1">
+<Cell><Data ss:Type="String">CHRT_ACCTS</Data></Cell>
+<Cell><Data ss:Type="String">GL_ACCOUNT</Data></Cell>
+<Cell><Data ss:Type="String">TXT50</Data></Cell>
+<Cell><Data ss:Type="String">XBILK</Data></Cell>
+<Cell><Data ss:Type="String">GVTYP</Data></Cell>
+<Cell><Data ss:Type="String">ACCT_GROUP</Data></Cell>
+</Row>
+<Row ss:Hidden="1">
+<Cell><Data ss:Type="String">CHAR(4)</Data></Cell>
+<Cell><Data ss:Type="String">CHAR(10)</Data></Cell>
+<Cell><Data ss:Type="String">CHAR(50)</Data></Cell>
+<Cell><Data ss:Type="String">CHAR(1)</Data></Cell>
+<Cell><Data ss:Type="String">CHAR(2)</Data></Cell>
+<Cell><Data ss:Type="String">CHAR(4)</Data></Cell>
+</Row>
+<Row>
+<Cell ss:MergeAcross="1"><Data ss:Type="String">Key</Data></Cell>
+<Cell ss:Index="3" ss:MergeAcross="3"><Data ss:Type="String">General Data</Data></Cell>
+</Row>
+<Row>
+<Cell><Data ss:Type="String">Chart of Accounts*</Data></Cell>
+<Cell><Data ss:Type="String">G/L Account Number*</Data></Cell>
+<Cell><Data ss:Type="String">G/L Account Long Text*</Data></Cell>
+<Cell><Data ss:Type="String">Balance Sheet Account</Data></Cell>
+<Cell><Data ss:Type="String">P&amp;L Statement Account Type</Data></Cell>
+<Cell><Data ss:Type="String">Account Group*</Data></Cell>
+</Row>
+</Table>
+</Worksheet>
+<Worksheet ss:Name="Company Code Data">
+<Table>
+<Row>
+<Cell><Data ss:Type="String">Company Code Data</Data></Cell>
+</Row>
+<Row>
+<Cell><Data ss:Type="String">G/L account (illustrative): Company Code Data. Enter data from row 9. Fields marked with * are mandatory.</Data></Cell>
+</Row>
+<Row>
+</Row>
+<Row ss:Hidden="1">
+<Cell><Data ss:Type="String">SKB1</Data></Cell>
+</Row>
+<Row ss:Hidden="1">
+<Cell><Data ss:Type="String">CHRT_ACCTS</Data></Cell>
+<Cell><Data ss:Type="String">GL_ACCOUNT</Data></Cell>
+<Cell><Data ss:Type="String">COMP_CODE</Data></Cell>
+<Cell><Data ss:Type="String">MITKZ</Data></Cell>
+<Cell><Data ss:Type="String">XOPVW</Data></Cell>
+<Cell><Data ss:Type="String">WAERS</Data></Cell>
+</Row>
+<Row ss:Hidden="1">
+<Cell><Data ss:Type="String">CHAR(4)</Data></Cell>
+<Cell><Data ss:Type="String">CHAR(10)</Data></Cell>
+<Cell><Data ss:Type="String">CHAR(4)</Data></Cell>
+<Cell><Data ss:Type="String">CHAR(1)</Data></Cell>
+<Cell><Data ss:Type="String">CHAR(1)</Data></Cell>
+<Cell><Data ss:Type="String">CUKY(5)</Data></Cell>
+</Row>
+<Row>
+<Cell ss:MergeAcross="1"><Data ss:Type="String">Key</Data></Cell>
+<Cell ss:Index="3" ss:MergeAcross="3"><Data ss:Type="String">Company Code Data</Data></Cell>
+</Row>
+<Row>
+<Cell><Data ss:Type="String">Chart of Accounts*</Data></Cell>
+<Cell><Data ss:Type="String">G/L Account Number*</Data></Cell>
+<Cell><Data ss:Type="String">Company Code*</Data></Cell>
+<Cell><Data ss:Type="String">Reconciliation Account Type</Data></Cell>
+<Cell><Data ss:Type="String">Open Item Management</Data></Cell>
+<Cell><Data ss:Type="String">Account Currency</Data></Cell>
+</Row>
+</Table>
+</Worksheet>
+</Workbook>

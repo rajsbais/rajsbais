@@ -1,0 +1,32 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: sdtf-worker, namespace: sdtf, labels: { app: sdtf-worker } }
+spec:
+  replicas: 4
+  selector: { matchLabels: { app: sdtf-worker } }
+  template:
+    metadata: { labels: { app: sdtf-worker } }
+    spec:
+      securityContext: { runAsNonRoot: true, runAsUser: 10001, fsGroup: 10001 }
+      containers:
+        - name: worker
+          image: ghcr.io/example/sdtf-backend:0.1.0
+          command: ["python", "-m", "sdtf.cli", "worker"]
+          envFrom: [{ configMapRef: { name: sdtf-config } }, { secretRef: { name: sdtf-secrets } }]
+          env: [{ name: OTEL_SERVICE_NAME, value: "sdtf-worker" }]
+          resources: { requests: { cpu: "1", memory: "2Gi" }, limits: { cpu: "4", memory: "8Gi" } }
+          volumeMounts: [{ name: evidence, mountPath: /app/data }]
+      volumes:
+        - name: evidence
+          persistentVolumeClaim: { claimName: sdtf-evidence }   # RWX volume shared with the API: evidence + columnar staging
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata: { name: sdtf-worker, namespace: sdtf }
+spec:
+  scaleTargetRef: { apiVersion: apps/v1, kind: Deployment, name: sdtf-worker }
+  minReplicas: 2
+  maxReplicas: 32
+  metrics:
+    - type: Resource
+      resource: { name: cpu, target: { type: Utilization, averageUtilization: 70 } }

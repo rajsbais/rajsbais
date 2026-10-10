@@ -1,0 +1,232 @@
+{
+  "environment": {
+    "python": "3.13.16",
+    "platform": "Linux-6.18.44-fc-v114-x86_64-with-glibc2.39",
+    "machine": "x86_64",
+    "cpus": 4,
+    "database": "sqlite",
+    "staging": "relational",
+    "measured_at": "2026-10-10T18:58:07.650379+00:00"
+  },
+  "results": [
+    {
+      "scale": 1,
+      "seed": 42,
+      "workers": 4,
+      "connector": "RFC",
+      "load_mode": "api",
+      "simulated": true,
+      "steps": {
+        "generate_and_import_s": 0.318,
+        "discovery_add_on_s": 1.298,
+        "discovery_record_store_s": 0.078,
+        "graph_s": 0.156,
+        "scope_evaluate_s": 0.116,
+        "run_s": 2.256,
+        "end_to_end_s": 4.424
+      },
+      "landscape": {
+        "tables": 65,
+        "rows": 12177,
+        "business_objects": 3312
+      },
+      "discovery_add_on": {
+        "rfc_calls": 325,
+        "rows_read": 7949,
+        "tables_sized": 65,
+        "complete": true
+      },
+      "graph": {
+        "nodes": 3313,
+        "edges": 9858
+      },
+      "scope": {
+        "objects": 764,
+        "approvals_required": 29
+      },
+      "run": {
+        "id": "264366022b9649b49c1d33241d26e3e6",
+        "status": "COMPLETED",
+        "stages": {
+          "PRECHECK": {
+            "ms": 0.0
+          },
+          "EXTRACT": {
+            "ms": 399.4,
+            "records": 2017,
+            "records_per_second": 5863.4
+          },
+          "TRANSFORM": {
+            "ms": 632.7,
+            "records": 2017
+          },
+          "LOAD": {
+            "ms": 723.3,
+            "loaded": 2012
+          },
+          "RECONCILE": {
+            "ms": 446.4,
+            "checks": 363
+          },
+          "REPORT": {
+            "ms": 15.6
+          }
+        }
+      },
+      "extraction": {
+        "records": 2017,
+        "records_per_second": 5863.4
+      },
+      "reconciliation": {
+        "checks": 363,
+        "overall": "PASS"
+      }
+    },
+    {
+      "scale": 2,
+      "seed": 42,
+      "workers": 4,
+      "connector": "RFC",
+      "load_mode": "api",
+      "simulated": true,
+      "steps": {
+        "generate_and_import_s": 0.697,
+        "discovery_add_on_s": 3.768,
+        "discovery_record_store_s": 0.198,
+        "graph_s": 0.415,
+        "scope_evaluate_s": 0.357,
+        "run_s": 4.4,
+        "end_to_end_s": 10.203
+      },
+      "landscape": {
+        "tables": 65,
+        "rows": 23567,
+        "business_objects": 6227
+      },
+      "discovery_add_on": {
+        "rfc_calls": 420,
+        "rows_read": 15259,
+        "tables_sized": 65,
+        "complete": true
+      },
+      "graph": {
+        "nodes": 6228,
+        "edges": 19567
+      },
+      "scope": {
+        "objects": 1247,
+        "approvals_required": 61
+      },
+      "run": {
+        "id": "a898374a8f61476082116910f84e4c0d",
+        "status": "COMPLETED",
+        "stages": {
+          "PRECHECK": {
+            "ms": 0.0
+          },
+          "EXTRACT": {
+            "ms": 1145.1,
+            "records": 3363,
+            "records_per_second": 3592.9
+          },
+          "TRANSFORM": {
+            "ms": 1106.4,
+            "records": 3363
+          },
+          "LOAD": {
+            "ms": 1393.6,
+            "loaded": 3358
+          },
+          "RECONCILE": {
+            "ms": 705.7,
+            "checks": 363
+          },
+          "REPORT": {
+            "ms": 10.6
+          }
+        }
+      },
+      "extraction": {
+        "records": 3363,
+        "records_per_second": 3592.9
+      },
+      "reconciliation": {
+        "checks": 363,
+        "overall": "PASS"
+      }
+    },
+    {
+      "scale": 3,
+      "seed": 42,
+      "workers": 4,
+      "connector": "RFC",
+      "load_mode": "api",
+      "simulated": true,
+      "steps": {
+        "generate_and_import_s": 1.006,
+        "discovery_add_on_s": 7.482,
+        "discovery_record_store_s": 0.257,
+        "graph_s": 0.8,
+        "scope_evaluate_s": 0.758,
+        "run_s": 7.245,
+        "end_to_end_s": 18.114
+      },
+      "landscape": {
+        "tables": 65,
+        "rows": 33596,
+        "business_objects": 8867
+      },
+      "discovery_add_on": {
+        "rfc_calls": 506,
+        "rows_read": 21709,
+        "tables_sized": 65,
+        "complete": true
+      },
+      "graph": {
+        "nodes": 8868,
+        "edges": 28352
+      },
+      "scope": {
+        "objects": 1812,
+        "approvals_required": 74
+      },
+      "run": {
+        "id": "2d7ed51d909345638fed475d789fa099",
+        "status": "COMPLETED",
+        "stages": {
+          "PRECHECK": {
+            "ms": 0.0
+          },
+          "EXTRACT": {
+            "ms": 2374.1,
+            "records": 4990,
+            "records_per_second": 2362.7
+          },
+          "TRANSFORM": {
+            "ms": 1550.7,
+            "records": 4990
+          },
+          "LOAD": {
+            "ms": 2313.7,
+            "loaded": 4985
+          },
+          "RECONCILE": {
+            "ms": 957.3,
+            "checks": 364
+          },
+          "REPORT": {
+            "ms": 8.0
+          }
+        }
+      },
+      "extraction": {
+        "records": 4990,
+        "records_per_second": 2362.7
+      },
+      "reconciliation": {
+        "checks": 364,
+        "overall": "PASS"
+      }
+    }
+  ]
+}

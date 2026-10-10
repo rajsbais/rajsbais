@@ -1,0 +1,34 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: sdtf-frontend, namespace: sdtf, labels: { app: sdtf-frontend } }
+spec:
+  replicas: 2
+  selector: { matchLabels: { app: sdtf-frontend } }
+  template:
+    metadata: { labels: { app: sdtf-frontend } }
+    spec:
+      containers:
+        - name: web
+          image: ghcr.io/example/sdtf-frontend:0.1.0
+          ports: [{ containerPort: 80 }]
+          resources: { requests: { cpu: "50m", memory: "64Mi" }, limits: { cpu: "250m", memory: "128Mi" } }
+---
+apiVersion: v1
+kind: Service
+metadata: { name: sdtf-frontend, namespace: sdtf }
+spec: { selector: { app: sdtf-frontend }, ports: [{ port: 80, targetPort: 80 }] }
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: sdtf
+  namespace: sdtf
+  annotations: { nginx.ingress.kubernetes.io/proxy-read-timeout: "600" }
+spec:
+  tls: [{ hosts: ["sdtf.example.internal"], secretName: sdtf-tls }]
+  rules:
+    - host: sdtf.example.internal
+      http:
+        paths:
+          - { path: /api, pathType: Prefix, backend: { service: { name: sdtf-backend, port: { number: 8000 } } } }
+          - { path: /, pathType: Prefix, backend: { service: { name: sdtf-frontend, port: { number: 80 } } } }

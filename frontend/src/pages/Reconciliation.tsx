@@ -1,0 +1,48 @@
+import { useState } from "react";
+import { api } from "../api";
+import { useApi, useProjectDetails } from "../hooks";
+import { Banner, Card, ErrorBox, KV, Pill, Select, Stat, Table } from "../components/ui";
+
+export default function Reconciliation() {
+  const { projectId } = useProjectDetails();
+  const runs = useApi<any[]>(projectId ? `/projects/${projectId}/runs` : null);
+  const [sel, setSel] = useState(""); const [layer, setLayer] = useState(""); const [status, setStatus] = useState("");
+  const id = sel || runs.data?.[0]?.id;
+  const run = (runs.data || []).find((r) => r.id === id);
+  const rep = useApi<any>(id ? `/runs/${id}/report` : null, undefined, [id]);
+  const rows = useApi<any[]>(id ? `/runs/${id}/reconciliation` : null, { layer, status, limit: 1000 }, [id, layer, status]);
+  const appr = useApi<any[]>(id ? "/audit/approvals" : null, { subject_id: id }, [id]);
+  const [err, setErr] = useState<string | null>(null); const [comment, setComment] = useState("");
+  const [expl, setExpl] = useState<any>(null);
+  const signoff = async (kind: string, decision: string) => { setErr(null); try { await api(`/runs/${id}/signoff`, { body: { kind, decision, comment } }); appr.reload(); } catch (e: any) { setErr(e.message); } };
+  const explain = async () => { setErr(null); try { setExpl(await api(`/projects/${projectId}/agents/reconciliation_explanation/run`, { body: { context: { run_id: id } } })); } catch (e: any) { setErr(e.message); } };
+  const [busy, setBusy] = useState(false); const [mode, setMode] = useState("auto");
+  const reconcileAgain = async () => { setErr(null); setBusy(true); try { await api(`/runs/${id}/reconcile`, { body: {}, params: { mode } }); rep.reload(); rows.reload(); runs.reload(); } catch (e: any) { setErr(e.message); } finally { setBusy(false); } };
+  const stage = (run?.stages || []).find((s: any) => s.name === "RECONCILE");
+  const viewsInfo = stage?.metrics?.views || {};
+  const readPath = (side: string) => { const v = viewsInfo[side]; if (!v) return "record store"; return `${v.origin}${v.transport ? ` via ${v.transport}` : ""}${v.mode ? ` · ${v.mode} mode${v.mode_decision?.reason ? ` (${v.mode_decision.reason})` : ""}` : ""}${v.rows !== undefined ? ` · ${v.rows} rows read` : ""}${v.rows_avoided ? ` · ${v.rows_avoided} line items kept in the source` : ""}${v.unreadable?.length ? ` · not readable: ${v.unreadable.join(", ")}` : ""}`; };
+  if (!projectId) return <Banner>Select a project.</Banner>;
+  if (!runs.data?.length) return <Banner>No runs yet.</Banner>;
+  const by = rep.data?.reconciliation?.by_layer || {};
+  return (
+    <div>
+      <div className="row"><Select value={id} onChange={setSel} options={(runs.data || []).map((r) => ({ value: r.id, label: `${r.id.slice(0, 8)} ${r.status} ${r.started_at?.slice(0, 16)}` }))} /><Select value={layer} onChange={setLayer} options={["TECHNICAL", "FUNCTIONAL", "FINANCIAL"].map((l) => ({ value: l, label: l }))} placeholder="all layers" /><Select value={status} onChange={setStatus} options={["PASS", "WARN", "FAIL"].map((l) => ({ value: l, label: l }))} placeholder="all statuses" /><button className="secondary" onClick={explain}>Explain variances (agent)</button></div>
+      <ErrorBox error={err || rows.error} />
+      <div className="stats"><Stat label="Overall" value={<Pill value={rep.data?.reconciliation?.overall} />} sub={`${rep.data?.reconciliation?.checks ?? 0} checks`} />{["TECHNICAL", "FUNCTIONAL", "FINANCIAL"].map((l) => <Stat key={l} label={l} value={`${by[l]?.PASS || 0} pass`} sub={`${by[l]?.WARN || 0} warn · ${by[l]?.FAIL || 0} fail`} />)}<Stat label="Technical load ≠ financial sign-off" value={run?.status === "COMPLETED" ? "load OK" : run?.status} sub="financial & functional layers are independent" /></div>
+      <Card title="Read path" actions={<div className="row"><Select value={mode} onChange={setMode} options={[{ value: "auto", label: "auto (by scope size)" }, { value: "rows", label: "rows through the add-on" }, { value: "aggregate", label: "aggregate-only (totals in the source)" }]} /><button className="secondary" disabled={busy || run?.status !== "COMPLETED"} onClick={reconcileAgain}>{busy ? "Reconciling…" : "Reconcile again through the adapters"}</button></div>}>
+        <p className="muted">Where the reconciliation read each side: the platform's record store for simulated systems, the RFC add-on for a real source (company-code pushdown; counts and totals computed in the source prove the read complete), the released APIs for a real target (entities by key, filtered collections, journal entry items). Tables without a read path are listed as not verified and their checks carry WARN, never a false FAIL. In <b>aggregate-only</b> mode the GL, open-item, asset, inventory and intercompany totals are computed in the source database (only the retained documents' lines are transferred) and, when the target hosts the read-only add-on, in the target database too (the journal line items are not read back); document-currency totals are then compared per company code.</p>
+        <Table cols={[{ k: "side", h: "Side" }, { k: "path", h: "Read through" }]} rows={[{ side: "source", path: readPath("source") }, { side: "target", path: readPath("target") }]} />
+        {(() => { const t = viewsInfo.target || {}; const ta = t.target_aggregates || {}; const rb = t.rfc_readback || {}; const m: Record<string, string> = {}; if (ta.journal_table) m.target_journal = `${ta.journal_table}${ta.ledger ? ` · ledger ${ta.ledger}` : ""}`; if (ta.assets_measure) m.target_assets = `${ta.assets_measure}${ta.assets_comparable === false ? " (not comparable: WARN)" : ""}`; if (ta.inventory_measure) m.target_inventory = `${ta.inventory_measure}${ta.inventory_comparable === false ? " (not comparable: WARN)" : ""}`; if (rb.inventory?.measure) m.target_inventory_readback = `${rb.inventory.measure}${rb.inventory.comparable === false ? " (not comparable: WARN)" : ""} · by area ${Object.entries(rb.inventory.by_area || {}).map(([k, v]) => `${k}: ${v}`).join(", ")}`; const s = viewsInfo.source || {}; if (s.journal_table) m.source_journal = `${s.journal_table}${s.ledger ? ` · ledger ${s.ledger}` : ""}`; return Object.keys(m).length ? <><h4>Measures on S/4HANA systems</h4><KV obj={m} /><p className="muted">Configured per system on the Landscape page (Read configuration): journal table and ledger, asset chain (FAAV_ANLC, APC line items by movement category, net postings) and inventory chain (MBEW through the Material Ledger proxy view, CKMLCR period totals, inventory accounts).</p></> : null; })()}
+        {stage?.metrics?.not_verified?.length > 0 && <p className="muted">Not verified (no read path): {stage.metrics.not_verified.join(", ")}</p>}
+        {stage?.metrics?.reconciled_again_at && <p className="muted">Last reconciled again by {stage.metrics.reconciled_again_by} at {String(stage.metrics.reconciled_again_at).slice(0, 16)}.</p>}
+      </Card>
+      <Card title="Checks" actions={<><input placeholder="sign-off comment" value={comment} onChange={(e) => setComment(e.target.value)} /><button onClick={() => signoff("TECHNICAL", "APPROVED")}>Technical sign-off</button> <button onClick={() => signoff("BUSINESS", "APPROVED")}>Business sign-off</button> <button className="danger" onClick={() => signoff("BUSINESS", "REJECTED")}>Reject</button></>}>
+        <Table cols={[{ k: "layer", h: "Layer" }, { k: "check", h: "Check" }, { k: "subject", h: "Subject" }, { k: "status", h: "Status", r: (r) => <Pill value={r.status} /> }, { k: "source", h: "Source" }, { k: "target", h: "Target" }, { k: "variance", h: "Variance" }, { k: "explanation", h: "Explanation / evidence" }]} rows={rows.data || []} />
+      </Card>
+      <div className="grid2">
+        <Card title="Sign-offs"><Table cols={[{ k: "kind", h: "Kind" }, { k: "decision", h: "Decision", r: (r) => <Pill value={r.decision} /> }, { k: "decided_by", h: "By" }, { k: "comment", h: "Comment" }, { k: "created_at", h: "At" }]} rows={appr.data || []} empty="No sign-offs recorded" /></Card>
+        <Card title="Variance explanations">{expl ? <Table cols={[{ k: "check", h: "Check" }, { k: "subject", h: "Subject" }, { k: "root_cause_category", h: "Root cause", r: (r) => <Pill value={r.root_cause_category} /> }, { k: "explanation", h: "Explanation" }, { k: "recommended_action", h: "Action" }]} rows={expl.proposal.explanations} empty="All checks passed - nothing to explain" /> : <div className="muted">Run the explanation agent.</div>}</Card>
+      </div>
+    </div>
+  );
+}

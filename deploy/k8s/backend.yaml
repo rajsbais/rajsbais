@@ -1,0 +1,32 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: sdtf-backend, namespace: sdtf, labels: { app: sdtf-backend } }
+spec:
+  replicas: 2
+  selector: { matchLabels: { app: sdtf-backend } }
+  template:
+    metadata: { labels: { app: sdtf-backend } }
+    spec:
+      securityContext: { runAsNonRoot: true, runAsUser: 10001, fsGroup: 10001 }
+      containers:
+        - name: api
+          image: ghcr.io/example/sdtf-backend:0.1.0
+          ports: [{ containerPort: 8000 }]
+          envFrom: [{ configMapRef: { name: sdtf-config } }, { secretRef: { name: sdtf-secrets } }]
+          readinessProbe: { httpGet: { path: /healthz, port: 8000 }, initialDelaySeconds: 5 }
+          livenessProbe: { httpGet: { path: /healthz, port: 8000 }, initialDelaySeconds: 15 }
+          resources: { requests: { cpu: "500m", memory: "1Gi" }, limits: { cpu: "2", memory: "4Gi" } }
+          volumeMounts: [{ name: evidence, mountPath: /app/data }]
+      volumes:
+        - name: evidence
+          persistentVolumeClaim: { claimName: sdtf-evidence }
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata: { name: sdtf-evidence, namespace: sdtf }
+spec: { accessModes: [ReadWriteMany], resources: { requests: { storage: 50Gi } } }
+---
+apiVersion: v1
+kind: Service
+metadata: { name: sdtf-backend, namespace: sdtf }
+spec: { selector: { app: sdtf-backend }, ports: [{ port: 8000, targetPort: 8000 }] }

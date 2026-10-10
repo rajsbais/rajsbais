@@ -1,0 +1,316 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<?mso-application progid="Excel.Sheet"?>
+<Workbook xmlns="urn:schemas-microsoft-com:office:spreadsheet" xmlns:ss="urn:schemas-microsoft-com:office:spreadsheet">
+<Worksheet ss:Name="Introduction">
+<Table>
+<Row>
+<Cell><Data ss:Type="String">ILLUSTRATIVE TEMPLATE - not an SAP file. Built in the layout SAP documents for the migration cockpit XML templates (Migrate Your Data app) so the template-driven export can be developed and tested.</Data></Cell>
+</Row>
+<Row>
+<Cell><Data ss:Type="String">Migration object: Historical billing document (custom, illustrative)</Data></Cell>
+</Row>
+<Row>
+<Cell><Data ss:Type="String">Download the real template of your release from the app and register it for the project; this sample only demonstrates the mechanics.</Data></Cell>
+</Row>
+<Row>
+<Cell><Data ss:Type="String">Sheets: Introduction, Field List, then one sheet per structure. Data sheets: rows 1-8 are the header (rows 4-6 hidden: structure, technical field names, type/length; row 7 groups with the key group merged across the key columns; row 8 descriptions, * = mandatory); enter data from row 9.</Data></Cell>
+</Row>
+</Table>
+</Worksheet>
+<Worksheet ss:Name="Field List">
+<Table>
+<Column ss:Index="8" ss:Hidden="1"/>
+<Column ss:Hidden="1"/>
+<Row>
+<Cell><Data ss:Type="String">Field List</Data></Cell>
+</Row>
+<Row>
+</Row>
+<Row>
+<Cell><Data ss:Type="String">Sheet Name</Data></Cell>
+<Cell><Data ss:Type="String">Group Name</Data></Cell>
+<Cell><Data ss:Type="String">Field Name</Data></Cell>
+<Cell><Data ss:Type="String">Importance</Data></Cell>
+<Cell><Data ss:Type="String">Type</Data></Cell>
+<Cell><Data ss:Type="String">Length</Data></Cell>
+<Cell><Data ss:Type="String">Decimal Places</Data></Cell>
+<Cell><Data ss:Type="String">SAP Structure</Data></Cell>
+<Cell><Data ss:Type="String">SAP Field</Data></Cell>
+</Row>
+<Row>
+<Cell><Data ss:Type="String">Header</Data></Cell>
+<Cell><Data ss:Type="String">General Data</Data></Cell>
+<Cell><Data ss:Type="String">Billing Document</Data></Cell>
+<Cell><Data ss:Type="String">mandatory</Data></Cell>
+<Cell><Data ss:Type="String">CHAR</Data></Cell>
+<Cell><Data ss:Type="String">10</Data></Cell>
+<Cell><Data ss:Type="String">0</Data></Cell>
+<Cell><Data ss:Type="String">VBRK</Data></Cell>
+<Cell><Data ss:Type="String">VBELN</Data></Cell>
+</Row>
+<Row>
+<Cell><Data ss:Type="String">Header</Data></Cell>
+<Cell><Data ss:Type="String">General Data</Data></Cell>
+<Cell><Data ss:Type="String">Billing Type</Data></Cell>
+<Cell><Data ss:Type="String">mandatory</Data></Cell>
+<Cell><Data ss:Type="String">CHAR</Data></Cell>
+<Cell><Data ss:Type="String">4</Data></Cell>
+<Cell><Data ss:Type="String">0</Data></Cell>
+<Cell><Data ss:Type="String">VBRK</Data></Cell>
+<Cell><Data ss:Type="String">FKART</Data></Cell>
+</Row>
+<Row>
+<Cell><Data ss:Type="String">Header</Data></Cell>
+<Cell><Data ss:Type="String">General Data</Data></Cell>
+<Cell><Data ss:Type="String">Sales Organization</Data></Cell>
+<Cell><Data ss:Type="String">mandatory</Data></Cell>
+<Cell><Data ss:Type="String">CHAR</Data></Cell>
+<Cell><Data ss:Type="String">4</Data></Cell>
+<Cell><Data ss:Type="String">0</Data></Cell>
+<Cell><Data ss:Type="String">VBRK</Data></Cell>
+<Cell><Data ss:Type="String">VKORG</Data></Cell>
+</Row>
+<Row>
+<Cell><Data ss:Type="String">Header</Data></Cell>
+<Cell><Data ss:Type="String">General Data</Data></Cell>
+<Cell><Data ss:Type="String">Payer</Data></Cell>
+<Cell><Data ss:Type="String">mandatory</Data></Cell>
+<Cell><Data ss:Type="String">CHAR</Data></Cell>
+<Cell><Data ss:Type="String">10</Data></Cell>
+<Cell><Data ss:Type="String">0</Data></Cell>
+<Cell><Data ss:Type="String">VBRK</Data></Cell>
+<Cell><Data ss:Type="String">KUNRG</Data></Cell>
+</Row>
+<Row>
+<Cell><Data ss:Type="String">Header</Data></Cell>
+<Cell><Data ss:Type="String">General Data</Data></Cell>
+<Cell><Data ss:Type="String">Company Code</Data></Cell>
+<Cell><Data ss:Type="String">mandatory</Data></Cell>
+<Cell><Data ss:Type="String">CHAR</Data></Cell>
+<Cell><Data ss:Type="String">4</Data></Cell>
+<Cell><Data ss:Type="String">0</Data></Cell>
+<Cell><Data ss:Type="String">VBRK</Data></Cell>
+<Cell><Data ss:Type="String">BUKRS</Data></Cell>
+</Row>
+<Row>
+<Cell><Data ss:Type="String">Header</Data></Cell>
+<Cell><Data ss:Type="String">General Data</Data></Cell>
+<Cell><Data ss:Type="String">Billing Date</Data></Cell>
+<Cell><Data ss:Type="String">mandatory</Data></Cell>
+<Cell><Data ss:Type="String">DATS</Data></Cell>
+<Cell><Data ss:Type="String">8</Data></Cell>
+<Cell><Data ss:Type="String">0</Data></Cell>
+<Cell><Data ss:Type="String">VBRK</Data></Cell>
+<Cell><Data ss:Type="String">FKDAT</Data></Cell>
+</Row>
+<Row>
+<Cell><Data ss:Type="String">Header</Data></Cell>
+<Cell><Data ss:Type="String">General Data</Data></Cell>
+<Cell><Data ss:Type="String">Document Currency</Data></Cell>
+<Cell><Data ss:Type="String">mandatory</Data></Cell>
+<Cell><Data ss:Type="String">CUKY</Data></Cell>
+<Cell><Data ss:Type="String">5</Data></Cell>
+<Cell><Data ss:Type="String">0</Data></Cell>
+<Cell><Data ss:Type="String">VBRK</Data></Cell>
+<Cell><Data ss:Type="String">WAERK</Data></Cell>
+</Row>
+<Row>
+<Cell><Data ss:Type="String">Header</Data></Cell>
+<Cell><Data ss:Type="String">General Data</Data></Cell>
+<Cell><Data ss:Type="String">Net Value</Data></Cell>
+<Cell><Data ss:Type="String">optional</Data></Cell>
+<Cell><Data ss:Type="String">CURR</Data></Cell>
+<Cell><Data ss:Type="String">15</Data></Cell>
+<Cell><Data ss:Type="String">2</Data></Cell>
+<Cell><Data ss:Type="String">VBRK</Data></Cell>
+<Cell><Data ss:Type="String">NETWR</Data></Cell>
+</Row>
+<Row>
+<Cell><Data ss:Type="String">Header</Data></Cell>
+<Cell><Data ss:Type="String">General Data</Data></Cell>
+<Cell><Data ss:Type="String">Fiscal Year</Data></Cell>
+<Cell><Data ss:Type="String">optional</Data></Cell>
+<Cell><Data ss:Type="String">NUMC</Data></Cell>
+<Cell><Data ss:Type="String">4</Data></Cell>
+<Cell><Data ss:Type="String">0</Data></Cell>
+<Cell><Data ss:Type="String">VBRK</Data></Cell>
+<Cell><Data ss:Type="String">GJAHR</Data></Cell>
+</Row>
+<Row>
+<Cell><Data ss:Type="String">Items</Data></Cell>
+<Cell><Data ss:Type="String">Item Data</Data></Cell>
+<Cell><Data ss:Type="String">Billing Document</Data></Cell>
+<Cell><Data ss:Type="String">mandatory</Data></Cell>
+<Cell><Data ss:Type="String">CHAR</Data></Cell>
+<Cell><Data ss:Type="String">10</Data></Cell>
+<Cell><Data ss:Type="String">0</Data></Cell>
+<Cell><Data ss:Type="String">VBRP</Data></Cell>
+<Cell><Data ss:Type="String">VBELN</Data></Cell>
+</Row>
+<Row>
+<Cell><Data ss:Type="String">Items</Data></Cell>
+<Cell><Data ss:Type="String">Item Data</Data></Cell>
+<Cell><Data ss:Type="String">Item</Data></Cell>
+<Cell><Data ss:Type="String">mandatory</Data></Cell>
+<Cell><Data ss:Type="String">NUMC</Data></Cell>
+<Cell><Data ss:Type="String">6</Data></Cell>
+<Cell><Data ss:Type="String">0</Data></Cell>
+<Cell><Data ss:Type="String">VBRP</Data></Cell>
+<Cell><Data ss:Type="String">POSNR</Data></Cell>
+</Row>
+<Row>
+<Cell><Data ss:Type="String">Items</Data></Cell>
+<Cell><Data ss:Type="String">Item Data</Data></Cell>
+<Cell><Data ss:Type="String">Material</Data></Cell>
+<Cell><Data ss:Type="String">mandatory</Data></Cell>
+<Cell><Data ss:Type="String">CHAR</Data></Cell>
+<Cell><Data ss:Type="String">40</Data></Cell>
+<Cell><Data ss:Type="String">0</Data></Cell>
+<Cell><Data ss:Type="String">VBRP</Data></Cell>
+<Cell><Data ss:Type="String">MATNR</Data></Cell>
+</Row>
+<Row>
+<Cell><Data ss:Type="String">Items</Data></Cell>
+<Cell><Data ss:Type="String">Item Data</Data></Cell>
+<Cell><Data ss:Type="String">Plant</Data></Cell>
+<Cell><Data ss:Type="String">optional</Data></Cell>
+<Cell><Data ss:Type="String">CHAR</Data></Cell>
+<Cell><Data ss:Type="String">4</Data></Cell>
+<Cell><Data ss:Type="String">0</Data></Cell>
+<Cell><Data ss:Type="String">VBRP</Data></Cell>
+<Cell><Data ss:Type="String">WERKS</Data></Cell>
+</Row>
+<Row>
+<Cell><Data ss:Type="String">Items</Data></Cell>
+<Cell><Data ss:Type="String">Item Data</Data></Cell>
+<Cell><Data ss:Type="String">Billed Quantity</Data></Cell>
+<Cell><Data ss:Type="String">optional</Data></Cell>
+<Cell><Data ss:Type="String">QUAN</Data></Cell>
+<Cell><Data ss:Type="String">13</Data></Cell>
+<Cell><Data ss:Type="String">2</Data></Cell>
+<Cell><Data ss:Type="String">VBRP</Data></Cell>
+<Cell><Data ss:Type="String">INVOICED_QTY</Data></Cell>
+</Row>
+<Row>
+<Cell><Data ss:Type="String">Items</Data></Cell>
+<Cell><Data ss:Type="String">Item Data</Data></Cell>
+<Cell><Data ss:Type="String">Net Value</Data></Cell>
+<Cell><Data ss:Type="String">optional</Data></Cell>
+<Cell><Data ss:Type="String">CURR</Data></Cell>
+<Cell><Data ss:Type="String">15</Data></Cell>
+<Cell><Data ss:Type="String">2</Data></Cell>
+<Cell><Data ss:Type="String">VBRP</Data></Cell>
+<Cell><Data ss:Type="String">NETWR</Data></Cell>
+</Row>
+<Row>
+<Cell><Data ss:Type="String">Items</Data></Cell>
+<Cell><Data ss:Type="String">Item Data</Data></Cell>
+<Cell><Data ss:Type="String">Payer (from header)</Data></Cell>
+<Cell><Data ss:Type="String">optional</Data></Cell>
+<Cell><Data ss:Type="String">CHAR</Data></Cell>
+<Cell><Data ss:Type="String">10</Data></Cell>
+<Cell><Data ss:Type="String">0</Data></Cell>
+<Cell><Data ss:Type="String">VBRP</Data></Cell>
+<Cell><Data ss:Type="String">KUNRG</Data></Cell>
+</Row>
+</Table>
+</Worksheet>
+<Worksheet ss:Name="Header">
+<Table>
+<Row>
+<Cell><Data ss:Type="String">Header</Data></Cell>
+</Row>
+<Row>
+<Cell><Data ss:Type="String">Historical billing document (custom, illustrative): Header. Enter data from row 9. Fields marked with * are mandatory.</Data></Cell>
+</Row>
+<Row>
+</Row>
+<Row ss:Hidden="1">
+<Cell><Data ss:Type="String">VBRK</Data></Cell>
+</Row>
+<Row ss:Hidden="1">
+<Cell><Data ss:Type="String">VBELN</Data></Cell>
+<Cell><Data ss:Type="String">FKART</Data></Cell>
+<Cell><Data ss:Type="String">VKORG</Data></Cell>
+<Cell><Data ss:Type="String">KUNRG</Data></Cell>
+<Cell><Data ss:Type="String">BUKRS</Data></Cell>
+<Cell><Data ss:Type="String">FKDAT</Data></Cell>
+<Cell><Data ss:Type="String">WAERK</Data></Cell>
+<Cell><Data ss:Type="String">NETWR</Data></Cell>
+<Cell><Data ss:Type="String">GJAHR</Data></Cell>
+</Row>
+<Row ss:Hidden="1">
+<Cell><Data ss:Type="String">CHAR(10)</Data></Cell>
+<Cell><Data ss:Type="String">CHAR(4)</Data></Cell>
+<Cell><Data ss:Type="String">CHAR(4)</Data></Cell>
+<Cell><Data ss:Type="String">CHAR(10)</Data></Cell>
+<Cell><Data ss:Type="String">CHAR(4)</Data></Cell>
+<Cell><Data ss:Type="String">DATS(8)</Data></Cell>
+<Cell><Data ss:Type="String">CUKY(5)</Data></Cell>
+<Cell><Data ss:Type="String">CURR(15)</Data></Cell>
+<Cell><Data ss:Type="String">NUMC(4)</Data></Cell>
+</Row>
+<Row>
+<Cell ss:MergeAcross="0"><Data ss:Type="String">Key</Data></Cell>
+<Cell ss:Index="2" ss:MergeAcross="7"><Data ss:Type="String">General Data</Data></Cell>
+</Row>
+<Row>
+<Cell><Data ss:Type="String">Billing Document*</Data></Cell>
+<Cell><Data ss:Type="String">Billing Type*</Data></Cell>
+<Cell><Data ss:Type="String">Sales Organization*</Data></Cell>
+<Cell><Data ss:Type="String">Payer*</Data></Cell>
+<Cell><Data ss:Type="String">Company Code*</Data></Cell>
+<Cell><Data ss:Type="String">Billing Date*</Data></Cell>
+<Cell><Data ss:Type="String">Document Currency*</Data></Cell>
+<Cell><Data ss:Type="String">Net Value</Data></Cell>
+<Cell><Data ss:Type="String">Fiscal Year</Data></Cell>
+</Row>
+</Table>
+</Worksheet>
+<Worksheet ss:Name="Items">
+<Table>
+<Row>
+<Cell><Data ss:Type="String">Items</Data></Cell>
+</Row>
+<Row>
+<Cell><Data ss:Type="String">Historical billing document (custom, illustrative): Items. Enter data from row 9. Fields marked with * are mandatory.</Data></Cell>
+</Row>
+<Row>
+</Row>
+<Row ss:Hidden="1">
+<Cell><Data ss:Type="String">VBRP</Data></Cell>
+</Row>
+<Row ss:Hidden="1">
+<Cell><Data ss:Type="String">VBELN</Data></Cell>
+<Cell><Data ss:Type="String">POSNR</Data></Cell>
+<Cell><Data ss:Type="String">MATNR</Data></Cell>
+<Cell><Data ss:Type="String">WERKS</Data></Cell>
+<Cell><Data ss:Type="String">INVOICED_QTY</Data></Cell>
+<Cell><Data ss:Type="String">NETWR</Data></Cell>
+<Cell><Data ss:Type="String">KUNRG</Data></Cell>
+</Row>
+<Row ss:Hidden="1">
+<Cell><Data ss:Type="String">CHAR(10)</Data></Cell>
+<Cell><Data ss:Type="String">NUMC(6)</Data></Cell>
+<Cell><Data ss:Type="String">CHAR(40)</Data></Cell>
+<Cell><Data ss:Type="String">CHAR(4)</Data></Cell>
+<Cell><Data ss:Type="String">QUAN(13)</Data></Cell>
+<Cell><Data ss:Type="String">CURR(15)</Data></Cell>
+<Cell><Data ss:Type="String">CHAR(10)</Data></Cell>
+</Row>
+<Row>
+<Cell ss:MergeAcross="0"><Data ss:Type="String">Key</Data></Cell>
+<Cell ss:Index="2" ss:MergeAcross="5"><Data ss:Type="String">Item Data</Data></Cell>
+</Row>
+<Row>
+<Cell><Data ss:Type="String">Billing Document*</Data></Cell>
+<Cell><Data ss:Type="String">Item*</Data></Cell>
+<Cell><Data ss:Type="String">Material*</Data></Cell>
+<Cell><Data ss:Type="String">Plant</Data></Cell>
+<Cell><Data ss:Type="String">Billed Quantity</Data></Cell>
+<Cell><Data ss:Type="String">Net Value</Data></Cell>
+<Cell><Data ss:Type="String">Payer (from header)</Data></Cell>
+</Row>
+</Table>
+</Worksheet>
+</Workbook>

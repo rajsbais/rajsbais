@@ -1,0 +1,40 @@
+# DDIC objects of the add-on (reference, not transported)
+
+| Object | Kind | Definition |
+|---|---|---|
+| `ZSDTF_S_PREDICATE` | structure | `FIELD TYPE FIELDNAME`, `OP TYPE CHAR2` (EQ NE BT NB GE GT LE LT CP NP), `LOW TYPE STRING`, `HIGH TYPE STRING` |
+| `ZSDTF_T_PREDICATE` | table type | standard table of `ZSDTF_S_PREDICATE` |
+| `ZSDTF_S_ROW` | structure | `ROWNO TYPE I`, `JSON TYPE STRING` (one row serialised by `/ui2/cl_json`, uppercase field names) |
+| `ZSDTF_T_ROW` | table type | standard table of `ZSDTF_S_ROW` |
+| `ZSDTF_S_FIELD` | structure | `FIELDNAME TYPE FIELDNAME`, `KEYFLAG TYPE KEYFLAG`, `DATATYPE TYPE DATATYPE_D`, `LENG TYPE DDLENG` |
+| `ZSDTF_T_FIELD` | table type | standard table of `ZSDTF_S_FIELD` |
+| `ZSDTF_S_WATERMARK` | structure | `TABNAME TYPE TABNAME`, `WATERMARK TYPE STRING` |
+| `ZSDTF_T_WATERMARK` | table type | standard table of `ZSDTF_S_WATERMARK` |
+| `ZSDTF_T_TABNAME` | table type | standard table of `TABNAME` |
+| `ZSDTF_S_FIELDNAME` | structure | `FIELDNAME TYPE FIELDNAME` (group-by / sum field of `Z_SDTF_AGGREGATE`) |
+| `ZSDTF_T_FIELDNAME` | table type | standard table of `ZSDTF_S_FIELDNAME` |
+| `ZSDTF_S_CDC_OBJECT` | structure | `OBJECT_TYPE TYPE CHAR48`, `TABNAME TYPE TABNAME`, `FIELD TYPE FIELDNAME`, `OP TYPE CHAR2`, `LOW TYPE STRING`, `HIGH TYPE STRING` (one row per table or per predicate range; empty FIELD = subscribe without predicate) |
+| `ZSDTF_T_CDC_OBJECT` | table type | standard table of `ZSDTF_S_CDC_OBJECT` |
+| `ZSDTF_S_CDC_EVENT` | structure | `SEQ TYPE I`, `CHANGENR TYPE CHAR32`, `OBJECT_TYPE TYPE CHAR48`, `TABNAME TYPE TABNAME`, `KEY TYPE STRING` (primary key values joined by `\|`, without MANDT), `OP TYPE CHAR1` (I/U/D), `CHANGED_AT TYPE CHAR14` (UTC YYYYMMDDHHMMSS), `CHANGED_BY TYPE SYUNAME`, `JSON TYPE STRING` (current row image; empty for D) |
+| `ZSDTF_T_CDC_EVENT` | table type | standard table of `ZSDTF_S_CDC_EVENT` |
+| `ZSDTF_S_CDC_WM` | structure | `UDATE TYPE D`, `UTIME TYPE T`, `CHANGENR TYPE CHAR32` (encoded into the opaque watermark string) |
+| `ZSDTF_SNAP` | transparent table | `TOKEN TYPE CHAR40` (key), `CREATED_AT TYPE TIMESTAMP`, `CREATED_BY TYPE SYUNAME`, `VALID_UNTIL TYPE TIMESTAMP` |
+
+Helper classes referenced by the function modules (to be implemented in the same package):
+
+* `ZCL_SDTF_SNAPSHOT=>CHECK( iv_token )` — raises `UNKNOWN` / `EXPIRED` from `ZSDTF_SNAP`.
+* `ZCL_SDTF_PREDICATE=>BUILD_WHERE( iv_table, it_predicate )` — validates every `FIELD` against the nametab,
+  escapes values with `cl_abap_dyn_prg=>quote`, groups predicates per field (positives joined by `OR`, negatives by
+  `AND NOT`, fields by `AND`), maps `CP`/`NP` to `LIKE` with `*`→`%`, `+`→`_`; returns the WHERE string and a hash of
+  the normalised predicate list used to bind cursors.
+* `ZCL_SDTF_PREDICATE=>VALIDATE_FIELDS( iv_table, it_group_by, it_sum )` — every field against the nametab, summed
+  fields numeric; returns the component table of the result structure (group fields, `COUNT` as INT8, `SUM_<F>` typed
+  like `F`), the SELECT list (`COUNT( * ) AS count`, `SUM( f ) AS sum_f`) and the GROUP BY list.
+* `ZCL_SDTF_PREDICATE=>KEY_FIELDS( iv_table )` — primary key fields without `MANDT`, in key order.
+* `ZCL_SDTF_PREDICATE=>BUILD_KEYSET_AFTER( it_keyfields, it_lastkey )` — `(k1 > a) OR (k1 = a AND k2 > b) OR …`.
+* `ZCL_SDTF_CDC` — `DECODE_WATERMARK` / `ENCODE_WATERMARK`, `COLLECT_DOCUMENT_CHANGES` (timestamp-watermarked header tables, items re-read with their header under the header's CHANGENR), `SEQUENCE_OF` (monotonic sequence derived from timestamp + change number), `OBJECT_TYPE_OF`, `KEY_STRING_OF` (CDPOS TABKEY → key string without MANDT), `ROW_IMAGE_JSON` (current row, predicates applied).
+* `ZCL_SDTF_CURSOR=>ENCODE/DECODE` — base64 JSON `{t, p, k[], s}`; `DECODE` raises `INVALID` when the table,
+  predicate hash or snapshot differ from the current call.
+
+Authorizations for the technical RFC user: `S_RFC` (FUGR `ZSDTF`), `S_TABU_NAM` activity 03 for the tables in
+scope only, no `S_TABU_DIS` wildcard. The add-on contains no write module.
