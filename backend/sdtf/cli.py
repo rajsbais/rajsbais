@@ -123,6 +123,14 @@ def main(argv=None):
     crre = crsub.add_parser("report", help="write the checklist report (Markdown)")
     crre.add_argument("--id", required=True)
     crre.add_argument("--out", default=None)
+    bpa = sub.add_parser("process-analysis", help="business process analysis from the database footprint of a registered system (TAANA-style variants, DB05 selectivity, age, DB02 growth, DB15 links) through the add-on")
+    bpa.add_argument("--system", required=True, help="registered system id")
+    bpa.add_argument("--area", choices=["ALL", "O2C", "P2P", "R2R"], default="ALL")
+    bpa.add_argument("--bukrs", default=None, help="comma-separated company codes for the pushdown")
+    bpa.add_argument("--top", type=int, default=10)
+    bpa.add_argument("--retention-years", type=int, default=7)
+    bpa.add_argument("--json", action="store_true")
+    bpa.add_argument("--out", default=None, help="write the Markdown report here")
     mdp = sub.add_parser("metadata", help="verify the API bindings against a service's $metadata: from a downloaded EDMX file or fetched from a registered API target")
     mdsub = mdp.add_subparsers(dest="mdcmd", required=True)
     mdc = mdsub.add_parser("check", help="check one service against an EDMX file, or every bound service against a target")
@@ -369,6 +377,26 @@ def main(argv=None):
                     print(f"  {ot}: {o['instances']} instances, {o['with_messages']} in log, {o['rejected']} rejected, {o['errors']} E / {o['warnings']} W; categories {o['categories'] or '-'}")
                 for reason, n in summ["unmatched_reasons"].items():
                     print(f"  unmatched x{n}: {reason}")
+        return 0
+    if a.cmd == "process-analysis":
+        from .discovery import process_analysis as pa
+        from .models import SapSystem
+
+        with session_scope() as s_:
+            system = s_.get(SapSystem, a.system)
+            if system is None:
+                print(f"system {a.system} not found", file=sys.stderr)
+                return 2
+            res = pa.analyse(s_, system, a.area, [c.strip() for c in a.bukrs.split(",")] if a.bukrs else None, a.top, a.retention_years)
+        md = pa.report_markdown(res)
+        if a.out:
+            with open(a.out, "w", encoding="utf-8") as fh:
+                fh.write(md)
+            print(f"written {a.out}")
+        if a.json:
+            print(json.dumps(res, indent=2, default=str))
+        elif not a.out:
+            print(md)
         return 0
     if a.cmd == "metadata":
         from .runtime import metadata_check as mc

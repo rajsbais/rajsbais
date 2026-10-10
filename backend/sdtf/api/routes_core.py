@@ -532,6 +532,19 @@ def business_objects(s: SapSystem = Depends(get_system), object_type: str | None
     return {"counts": {t: n for t, n in counts}, "items": [{"type": r.object_type, "key": r.object_key, "bukrs": r.bukrs, "werks": r.werks, "gjahr": r.gjahr, "status": r.status, "company_codes": r.company_codes} for r in rows]}
 
 
+@router.get("/systems/{system_id}/process-analysis", tags=["discovery"])
+def process_analysis(area: str = Query("ALL", pattern="^(ALL|O2C|P2P|R2R|all|o2c|p2p|r2r)$"), bukrs: str | None = Query(None, description="comma-separated company codes for the pushdown"), top: int = Query(10, ge=1, le=100), retention_years: int = Query(7, ge=0, le=50), markdown: bool = False, s: SapSystem = Depends(get_system), db: Session = Depends(get_db), p: Principal = Depends(require("project:read"))):
+    """Business process analysis from the database footprint through the add-on's aggregate module: process
+    variants (TAANA), selectivity (DB05), age profiles, growth (DB02) and table-to-object links (DB15); workload
+    statistics are reported as not available."""
+    from ..discovery import process_analysis as pa
+
+    res = pa.analyse(db, s, area, [c.strip() for c in bukrs.split(",")] if bukrs else None, top, retention_years)
+    if markdown:
+        res["markdown"] = pa.report_markdown(res)
+    return res
+
+
 # ------------------------------------------------------------------------------------------- graph
 @router.post("/systems/{system_id}/graph/build", tags=["graph"])
 def graph_build(s: SapSystem = Depends(get_system), db: Session = Depends(get_db), p: Principal = Depends(require("project:write"))):
