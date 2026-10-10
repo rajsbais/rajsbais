@@ -6,7 +6,7 @@
     "cpus": 4,
     "database": "sqlite",
     "staging": "relational",
-    "measured_at": "2026-10-10T15:17:49.405691+00:00"
+    "measured_at": "2026-10-10T18:11:19.149720+00:00"
   },
   "results": [
     {
@@ -17,13 +17,13 @@
       "load_mode": "api",
       "simulated": true,
       "steps": {
-        "generate_and_import_s": 0.295,
-        "discovery_add_on_s": 1.749,
-        "discovery_record_store_s": 0.092,
-        "graph_s": 0.155,
-        "scope_evaluate_s": 0.13,
-        "run_s": 2.245,
-        "end_to_end_s": 4.906
+        "generate_and_import_s": 0.317,
+        "discovery_add_on_s": 0.984,
+        "discovery_record_store_s": 0.088,
+        "graph_s": 0.147,
+        "scope_evaluate_s": 0.15,
+        "run_s": 1.9,
+        "end_to_end_s": 3.783
       },
       "landscape": {
         "tables": 51,
@@ -31,8 +31,8 @@
         "business_objects": 2978
       },
       "discovery_add_on": {
-        "rfc_calls": 254,
-        "rows_read": 9850,
+        "rfc_calls": 277,
+        "rows_read": 7282,
         "tables_sized": 51,
         "complete": true
       },
@@ -45,40 +45,40 @@
         "approvals_required": 37
       },
       "run": {
-        "id": "b334d8ead6ee4d318f9d99d10f6b8870",
+        "id": "cfe387be53464c9697c4da871f4b5187",
         "status": "COMPLETED",
         "stages": {
           "PRECHECK": {
             "ms": 0.0
           },
           "EXTRACT": {
-            "ms": 353.3,
+            "ms": 290.8,
             "records": 1795,
-            "records_per_second": 6211.1
+            "records_per_second": 7448.1
           },
           "TRANSFORM": {
-            "ms": 680.2,
+            "ms": 500.1,
             "records": 1795
           },
           "LOAD": {
-            "ms": 784.6,
+            "ms": 719.5,
             "loaded": 1790
           },
           "RECONCILE": {
-            "ms": 378.5,
-            "checks": 240
+            "ms": 348.1,
+            "checks": 291
           },
           "REPORT": {
-            "ms": 10.1
+            "ms": 8.0
           }
         }
       },
       "extraction": {
         "records": 1795,
-        "records_per_second": 6211.1
+        "records_per_second": 7448.1
       },
       "reconciliation": {
-        "checks": 240,
+        "checks": 291,
         "overall": "PASS"
       }
     },
@@ -90,13 +90,13 @@
       "load_mode": "api",
       "simulated": true,
       "steps": {
-        "generate_and_import_s": 0.581,
-        "discovery_add_on_s": 6.078,
-        "discovery_record_store_s": 0.14,
-        "graph_s": 0.292,
-        "scope_evaluate_s": 0.288,
-        "run_s": 3.81,
-        "end_to_end_s": 11.54
+        "generate_and_import_s": 0.722,
+        "discovery_add_on_s": 2.986,
+        "discovery_record_store_s": 0.133,
+        "graph_s": 0.279,
+        "scope_evaluate_s": 0.31,
+        "run_s": 3.431,
+        "end_to_end_s": 8.206
       },
       "landscape": {
         "tables": 51,
@@ -104,8 +104,8 @@
         "business_objects": 5603
       },
       "discovery_add_on": {
-        "rfc_calls": 317,
-        "rows_read": 18873,
+        "rfc_calls": 362,
+        "rows_read": 13719,
         "tables_sized": 51,
         "complete": true
       },
@@ -114,44 +114,44 @@
         "edges": 17284
       },
       "scope": {
-        "objects": 1089,
-        "approvals_required": 42
+        "objects": 1088,
+        "approvals_required": 41
       },
       "run": {
-        "id": "a784c4bb2c324c078125d03e320f1340",
+        "id": "164b7127d45c4117b48a24a5bab8428d",
         "status": "COMPLETED",
         "stages": {
           "PRECHECK": {
             "ms": 0.0
           },
           "EXTRACT": {
-            "ms": 815.7,
-            "records": 3109,
-            "records_per_second": 4428.8
+            "ms": 774.3,
+            "records": 3107,
+            "records_per_second": 4658.2
           },
           "TRANSFORM": {
-            "ms": 1075.8,
-            "records": 3109
+            "ms": 970.0,
+            "records": 3107
           },
           "LOAD": {
-            "ms": 1377.3,
-            "loaded": 3104
+            "ms": 1145.6,
+            "loaded": 3102
           },
           "RECONCILE": {
-            "ms": 502.5,
-            "checks": 240
+            "ms": 504.4,
+            "checks": 294
           },
           "REPORT": {
-            "ms": 5.2
+            "ms": 5.7
           }
         }
       },
       "extraction": {
-        "records": 3109,
-        "records_per_second": 4428.8
+        "records": 3107,
+        "records_per_second": 4658.2
       },
       "reconciliation": {
-        "checks": 240,
+        "checks": 294,
         "overall": "PASS"
       }
     },
@@ -163,13 +163,13 @@
       "load_mode": "api",
       "simulated": true,
       "steps": {
-        "generate_and_import_s": 0.97,
-        "discovery_add_on_s": 13.545,
-        "discovery_record_store_s": 0.239,
-        "graph_s": 0.5,
-        "scope_evaluate_s": 0.509,
-        "run_s": 5.788,
-        "end_to_end_s": 21.992
+        "generate_and_import_s": 0.957,
+        "discovery_add_on_s": 7.001,
+        "discovery_record_store_s": 0.314,
+        "graph_s": 0.485,
+        "scope_evaluate_s": 0.584,
+        "run_s": 6.404,
+        "end_to_end_s": 16.263
       },
       "landscape": {
         "tables": 51,
@@ -177,8 +177,8 @@
         "business_objects": 8220
       },
       "discovery_add_on": {
-        "rfc_calls": 382,
-        "rows_read": 28270,
+        "rfc_calls": 450,
+        "rows_read": 20466,
         "tables_sized": 51,
         "complete": true
       },
@@ -187,44 +187,44 @@
         "edges": 25962
       },
       "scope": {
-        "objects": 1608,
-        "approvals_required": 98
+        "objects": 1605,
+        "approvals_required": 95
       },
       "run": {
-        "id": "7d3fa41433a64316b88341f1d8b4492c",
+        "id": "570bec849045492a9c4c74e428d6b254",
         "status": "COMPLETED",
         "stages": {
           "PRECHECK": {
             "ms": 0.0
           },
           "EXTRACT": {
-            "ms": 1799.7,
-            "records": 4526,
-            "records_per_second": 2818.2
+            "ms": 1947.6,
+            "records": 4520,
+            "records_per_second": 2558.0
           },
           "TRANSFORM": {
-            "ms": 1301.5,
-            "records": 4526
+            "ms": 1735.2,
+            "records": 4520
           },
           "LOAD": {
-            "ms": 1801.5,
-            "loaded": 4521
+            "ms": 1727.2,
+            "loaded": 4515
           },
           "RECONCILE": {
-            "ms": 840.9,
-            "checks": 240
+            "ms": 941.3,
+            "checks": 294
           },
           "REPORT": {
-            "ms": 5.2
+            "ms": 6.7
           }
         }
       },
       "extraction": {
-        "records": 4526,
-        "records_per_second": 2818.2
+        "records": 4520,
+        "records_per_second": 2558.0
       },
       "reconciliation": {
-        "checks": 240,
+        "checks": 294,
         "overall": "PASS"
       }
     }

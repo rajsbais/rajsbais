@@ -200,6 +200,7 @@ def build_source_view(session: Session, source: SapSystem, manifest, limit: int 
             view._integrity.append(("source_read_integrity", table, expected, n, "row count computed in the source vs rows read"))
 
     read("T001K", cc_preds)
+    read("T001", cc_preds)  # the company-code currency for the foreign-currency open items
     areas = sorted({str(r["BWKEY"]) for r in view.rows("T001K")})
     for t in ("BKPF", "BSEG", "BSID", "BSIK", "ANLC"):
         read(t, cc_preds)
@@ -439,6 +440,9 @@ def journal_aggregates(client: AbapAddonClient, company_codes: list[str], journa
         A["open_ap"] = [a for a in open_items if a["KOART"] == "K"]
         A["intercompany"] = _acdoca_rows(client.aggregate("ACDOCA", base + open_pred + [predicate("RASSC", "NE", "")], ["RBUKRS", "RASSC", "KOART", "DRCRK"], ["HSL"]), g)
         A["assets"], A["assets_measure"], A["assets_comparable"] = asset_values(client, company_codes, ledger, asset_config(system))
+        # period-end: debits and credits per fiscal period, and the open items per document currency (the journal line carries both)
+        A["periods"] = _acdoca_rows(client.aggregate("ACDOCA", base, ["RBUKRS", "GJAHR", "POPER", "DRCRK"], ["HSL"]), {**g, "POPER": "MONAT"})
+        A["open_fx"] = _acdoca_rows(client.aggregate("ACDOCA", base + open_pred + [predicate("KOART", "EQ", "D"), predicate("KOART", "EQ", "K")], ["RBUKRS", "RWCUR", "DRCRK"], ["HSL", "WSL"]), {**g, "RWCUR": "WAERS"})
     else:
         cc_preds = [predicate("BUKRS", "EQ", cc) for cc in company_codes]
         open_pred = [predicate("AUGBL", "EQ", "")]
@@ -449,7 +453,15 @@ def journal_aggregates(client: AbapAddonClient, company_codes: list[str], journa
         A["open_ap"] = client.aggregate("BSIK", cc_preds + open_pred, ["BUKRS", "SHKZG"], ["DMBTR"])
         A["intercompany"] = client.aggregate("BSEG", cc_preds + open_pred + [predicate("VBUND", "NE", "")], ["BUKRS", "VBUND", "KOART", "SHKZG"], ["DMBTR"])
         A["assets"] = client.aggregate("ANLC", cc_preds, ["BUKRS"], ["KANSW"])
+        # the classic line carries neither the period nor the document currency: the period-end checks on BSEG
+        # need the header join the aggregate module does not do; declared not available in aggregate mode
+        A["periods"], A["open_fx"] = None, None
     A["documents_by_year"] = client.aggregate("BKPF", [predicate("BUKRS", "EQ", cc) for cc in company_codes], ["BUKRS", "GJAHR"], [])
+    A["documents_by_period"] = client.aggregate("BKPF", [predicate("BUKRS", "EQ", cc) for cc in company_codes], ["BUKRS", "GJAHR", "MONAT"], [])
+    try:
+        A["price_control"] = client.aggregate("MBEW", [predicate("BWKEY", "EQ", a) for a in valuation_areas], ["BWKEY", "VPRSV"], []) if valuation_areas else []
+    except RfcError:
+        A["price_control"] = None
     A["inventory"], A["inventory_measure"], A["inventory_comparable"] = inventory_values(client, valuation_areas, inventory_config(system), system, ledger)
     return A
 
@@ -493,6 +505,7 @@ def _aggregate_source_view(session: Session, source: SapSystem, manifest, client
     view = AggregateSourceView(source.id)
     view.metrics.update({"mode": "aggregate", "mode_decision": decision})
     rows_transferred = view.add_rows("T001K", client.read_all("T001K", cc_preds))
+    rows_transferred += view.add_rows("T001", client.read_all("T001", cc_preds))  # the company-code currency for the foreign-currency open items
     areas = sorted({str(r["BWKEY"]) for r in view.rows("T001K")})
     area_preds = [predicate("BWKEY", "EQ", a) for a in areas]
     journal_table, ledger = journal_table_for(source, client)
@@ -501,11 +514,22 @@ def _aggregate_source_view(session: Session, source: SapSystem, manifest, client
     cls = manifest.selection.get("classification", {})
     not_transferred = [n.split(":", 1)[1] for n, c in cls.items() if c["type"] == "MD.Material" and c["classification"] not in ("FULLY_TRANSFERRED", "PARTIALLY_TRANSFERRED", "SHARED_DUPLICATED")]
     held = 0.0
+    held_by_area: dict[str, float] = defaultdict(float)
     if areas and not_transferred:
         for chunk in _chunks(not_transferred, rfc_config.key_chunk()):
-            for a in client.aggregate("MBEW", area_preds + [predicate("MATNR", "EQ", m) for m in chunk], [], ["SALK3"]):
+            for a in client.aggregate("MBEW", area_preds + [predicate("MATNR", "EQ", m) for m in chunk], ["BWKEY"], ["SALK3"]):
                 held += float(a["SUM_SALK3"])
+                held_by_area[str(a["BWKEY"])] += float(a["SUM_SALK3"])
     A["inventory_held"] = round(held, 2)
+    A["inventory_held_by_area"] = {k: round(v, 2) for k, v in held_by_area.items()}
+    # price control of the transferred materials only, counted per area in the source (the target holds no other)
+    transferred_mats = [n.split(":", 1)[1] for n, c in cls.items() if c["type"] == "MD.Material" and c["classification"] in ("FULLY_TRANSFERRED", "PARTIALLY_TRANSFERRED", "SHARED_DUPLICATED")]
+    if areas and A.get("price_control") is not None:
+        counts: dict[tuple[str, str], int] = defaultdict(int)
+        for chunk in _chunks(transferred_mats, rfc_config.key_chunk()):
+            for a in client.aggregate("MBEW", area_preds + [predicate("MATNR", "EQ", m) for m in chunk], ["BWKEY", "VPRSV"], []):
+                counts[(str(a["BWKEY"]), str(a["VPRSV"]))] += int(a["COUNT"])
+        A["price_control"] = [{"BWKEY": k[0], "VPRSV": k[1], "COUNT": n} for k, n in sorted(counts.items())]
     # the retained documents' lines, by key: the only line items that cross the wire
     retained = [n.split(":", 1)[1] for n, c in cls.items() if c["type"] == "FI.AccountingDocument" and c["classification"] not in ("FULLY_TRANSFERRED", "PARTIALLY_TRANSFERRED", "SHARED_DUPLICATED")]
     by_cc_year: dict[tuple[str, str], list[str]] = defaultdict(list)
@@ -524,7 +548,7 @@ def _aggregate_source_view(session: Session, source: SapSystem, manifest, client
         debit = round(sum(float(a["SUM_DMBTR"]) for a in A["totals"] if a["BUKRS"] == cc and a["SHKZG"] == "S"), 2)
         credit = round(sum(float(a["SUM_DMBTR"]) for a in A["totals"] if a["BUKRS"] == cc and a["SHKZG"] == "H"), 2)
         view._integrity.append(("source_trial_balance", cc, debit, credit, "debits and credits of the source company code computed in the source database"))
-    view.metrics.update({"transport": getattr(transport, "name", "?"), "snapshot": client.snapshot, "journal_table": journal_table, "ledger": A.get("ledger"), "company_codes": scope_ccs, "valuation_areas": areas, "rfc_calls": client.calls, "packages": client.packages, "rows": rows_transferred, "rows_avoided": sum(A["counts"].values()), "retained_documents": in_scope_retained, "retained_documents_outside_scope": len(retained) - in_scope_retained, "retained_lines": len(view.retained_lines), "by_table": {"T001K": len(view.rows("T001K")), "BSEG(retained)": len(view.retained_lines)}, "aggregate_available": True, "unreadable": [], "counts": A["counts"]})
+    view.metrics.update({"transport": getattr(transport, "name", "?"), "snapshot": client.snapshot, "journal_table": journal_table, "ledger": A.get("ledger"), "company_codes": scope_ccs, "valuation_areas": areas, "rfc_calls": client.calls, "packages": client.packages, "rows": rows_transferred, "rows_avoided": sum(A["counts"].values()), "retained_documents": in_scope_retained, "retained_documents_outside_scope": len(retained) - in_scope_retained, "retained_lines": len(view.retained_lines), "by_table": {"T001K": len(view.rows("T001K")), "T001": len(view.rows("T001")), "BSEG(retained)": len(view.retained_lines)}, "aggregate_available": True, "unreadable": [], "counts": A["counts"]})
     return view
 
 

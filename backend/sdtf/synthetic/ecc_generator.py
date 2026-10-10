@@ -273,16 +273,22 @@ class EccLandscapeGenerator:
                     self.add("ANLC", {"BUKRS": cc.bukrs, "ANLN1": anln1, "ANLN2": "0", "GJAHR": y, "AFABE": "01", "KANSW": acq, "KNAFA": round(acq * 0.1 * (y - 2020), 2), "NAFAG": round(acq * 0.1, 2)})
 
     # ------------------------------------------------------------ FI helpers
-    def _post_fi(self, bukrs: str, year: int, blart: str, posting: date, lines: list[dict], awtyp: str = "", awkey: str = "", bvorg: str = "", xblnr: str = "") -> str:
-        """Post a balanced accounting document. lines: dicts with HKONT, amount (+debit/-credit), optional KOART/KUNNR/LIFNR/KOSTL/PRCTR/VBUND/MATNR/WERKS."""
+    FX_RATES = {("EUR", "USD"): 1.1, ("USD", "EUR"): 0.9}  # local -> document currency, fixed for determinism
+
+    def _post_fi(self, bukrs: str, year: int, blart: str, posting: date, lines: list[dict], awtyp: str = "", awkey: str = "", bvorg: str = "", xblnr: str = "", waers: str | None = None) -> str:
+        """Post a balanced accounting document. lines: dicts with HKONT, amount (+debit/-credit, local currency),
+        optional KOART/KUNNR/LIFNR/KOSTL/PRCTR/VBUND/MATNR/WERKS. `waers` posts the document in a foreign currency:
+        WRBTR carries the document-currency amount at the fixed rate, DMBTR the local amount."""
         cc = self.cc_by_code[bukrs]
         belnr = self.counters["BELNR"].next()
         total = round(sum(line["amount"] for line in lines), 2)
         assert abs(total) < 0.005, f"unbalanced document {bukrs}/{belnr}: {total}"
-        self.add("BKPF", {"BUKRS": bukrs, "BELNR": belnr, "GJAHR": year, "BLART": blart, "BLDAT": self._ds(posting), "BUDAT": self._ds(posting), "MONAT": posting.month, "WAERS": cc.currency, "AWTYP": awtyp, "AWKEY": awkey, "BVORG": bvorg, "XBLNR": xblnr, "BSTAT": ""})
+        doc_cur = waers or cc.currency
+        rate = self.FX_RATES.get((cc.currency, doc_cur), 1.0) if doc_cur != cc.currency else 1.0
+        self.add("BKPF", {"BUKRS": bukrs, "BELNR": belnr, "GJAHR": year, "BLART": blart, "BLDAT": self._ds(posting), "BUDAT": self._ds(posting), "MONAT": posting.month, "WAERS": doc_cur, "AWTYP": awtyp, "AWKEY": awkey, "BVORG": bvorg, "XBLNR": xblnr, "BSTAT": ""})
         for i, line in enumerate(lines, start=1):
             amt = line["amount"]
-            self.add("BSEG", {"BUKRS": bukrs, "BELNR": belnr, "GJAHR": year, "BUZEI": i, "KOART": line.get("KOART", "S"), "SHKZG": "S" if amt >= 0 else "H", "HKONT": line["HKONT"], "DMBTR": abs(amt), "WRBTR": abs(amt), "KUNNR": line.get("KUNNR", ""), "LIFNR": line.get("LIFNR", ""), "KOSTL": line.get("KOSTL", ""), "PRCTR": line.get("PRCTR", ""), "AUGBL": line.get("AUGBL", ""), "AUGDT": line.get("AUGDT", ""), "VBUND": line.get("VBUND", ""), "MATNR": line.get("MATNR", ""), "WERKS": line.get("WERKS", "")})
+            self.add("BSEG", {"BUKRS": bukrs, "BELNR": belnr, "GJAHR": year, "BUZEI": i, "KOART": line.get("KOART", "S"), "SHKZG": "S" if amt >= 0 else "H", "HKONT": line["HKONT"], "DMBTR": abs(amt), "WRBTR": round(abs(amt) * rate, 2), "KUNNR": line.get("KUNNR", ""), "LIFNR": line.get("LIFNR", ""), "KOSTL": line.get("KOSTL", ""), "PRCTR": line.get("PRCTR", ""), "AUGBL": line.get("AUGBL", ""), "AUGDT": line.get("AUGDT", ""), "VBUND": line.get("VBUND", ""), "MATNR": line.get("MATNR", ""), "WERKS": line.get("WERKS", "")})
             if line.get("KOART") == "D":
                 self.add("BSID", {"BUKRS": bukrs, "KUNNR": line["KUNNR"], "UMSKS": "", "UMSKZ": "", "AUGDT": line.get("AUGDT", ""), "AUGBL": line.get("AUGBL", ""), "ZUONR": belnr, "GJAHR": year, "BELNR": belnr, "BUZEI": i, "DMBTR": abs(amt), "SHKZG": "S" if amt >= 0 else "H"})
             if line.get("KOART") == "K":
@@ -359,11 +365,13 @@ class EccLandscapeGenerator:
                 continue
             bi = self.counters["VBELN_BI"].next()
             bd = dd + timedelta(days=rng.randint(0, 10))
-            self.add("VBRK", {"VBELN": bi, "FKART": "F2", "VKORG": cc.bukrs, "KUNRG": kunnr, "BUKRS": cc.bukrs, "FKDAT": self._ds(bd), "WAERK": cc.currency, "NETWR": round(total, 2), "RFBSK": "C", "GJAHR": bd.year})
+            fx = "USD" if cc.currency == "EUR" else "EUR"  # every fifth invoice is billed in a foreign currency
+            foreign = fx if int(bi[-1]) % 5 == 0 else None
+            self.add("VBRK", {"VBELN": bi, "FKART": "F2", "VKORG": cc.bukrs, "KUNRG": kunnr, "BUKRS": cc.bukrs, "FKDAT": self._ds(bd), "WAERK": foreign or cc.currency, "NETWR": round(total * (self.FX_RATES.get((cc.currency, foreign), 1.0) if foreign else 1.0), 2), "RFBSK": "C", "GJAHR": bd.year})
             for it in items:
                 self.add("VBRP", {"VBELN": bi, "POSNR": it["POSNR"], "MATNR": it["MATNR"], "WERKS": werks, "FKIMG": it["KWMENG"], "NETWR": it["NETWR"], "VGBEL": dl, "VGPOS": it["POSNR"], "AUBEL": so, "AUPOS": it["POSNR"]})
                 self.add("VBFA", {"VBELV": dl, "POSNV": it["POSNR"], "VBELN": bi, "POSNN": it["POSNR"], "VBTYP_N": "M", "VBTYP_V": "J", "RFMNG": it["KWMENG"]})
-            fi = self._post_fi(cc.bukrs, bd.year, "RV", bd, [{"HKONT": "140000", "amount": round(total, 2), "KOART": "D", "KUNNR": kunnr}, {"HKONT": "800000", "amount": -round(total, 2), "PRCTR": self.cc_profitcenters[cc.bukrs][0]}], awtyp="VBRK", awkey=bi)
+            fi = self._post_fi(cc.bukrs, bd.year, "RV", bd, [{"HKONT": "140000", "amount": round(total, 2), "KOART": "D", "KUNNR": kunnr}, {"HKONT": "800000", "amount": -round(total, 2), "PRCTR": self.cc_profitcenters[cc.bukrs][0]}], awtyp="VBRK", awkey=bi, waers=foreign)
             if cross:
                 # intercompany billing: delivering company code invoices the selling company code
                 ic_amount = round(total * 0.8, 2)

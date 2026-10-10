@@ -82,7 +82,7 @@ def test_source_view_reads_scope_through_the_addon_with_integrity_evidence(sessi
     assert {r["BWKEY"] for r in v.rows("MBEW")} == areas and v.metrics["valuation_areas"] == sorted(areas)
     assert "KNA1" not in v.tables()  # only what the reconciliation reads
     integ = v.integrity_results("x")
-    assert {r.check_name for r in integ} == {"source_read_integrity", "source_read_amounts"} and all(r.status == "PASS" for r in integ) and len([r for r in integ if r.check_name == "source_read_integrity"]) == 7
+    assert {r.check_name for r in integ} == {"source_read_integrity", "source_read_amounts"} and all(r.status == "PASS" for r in integ) and len([r for r in integ if r.check_name == "source_read_integrity"]) == 8
     # the view equals the direct read for the reconciliation: same outcome on the slice
     run = session.get(MigrationRun, slice_result["run_id"])
     tgt_view = views.build_target_view(session, session.get(SapSystem, slice_result["target_id"]), m, views.loaded_keys_of(get_backend(session=session), run.id), v)
@@ -118,7 +118,7 @@ def test_source_view_reads_scope_through_the_addon_with_integrity_evidence(sessi
     assert v3.metrics["aggregate_available"] is False and v3.integrity_results("x") == [] and v3.count("BSEG") == v.count("BSEG")
     # a table the user is not authorised for is reported, not fatal
     monkeypatch.undo()
-    rfc_src.meta = {"rfc": {"transport": "simulated", "allowed_tables": ["T001K", "BKPF", "BSEG", "BSID", "BSIK", "MBEW"]}}
+    rfc_src.meta = {"rfc": {"transport": "simulated", "allowed_tables": ["T001K", "T001", "BKPF", "BSEG", "BSID", "BSIK", "MBEW"]}}
     v4 = views.build_source_view(session, rfc_src, m)
     assert v4.unreadable == {"ANLC"} and "ANLC" in v4.metrics["errors"]
     session.expire_all()
@@ -308,7 +308,7 @@ def test_aggregate_only_reconciliation_matches_the_row_read(session, slice_resul
     assert isinstance(agg_view, views.AggregateSourceView) and agg_view.aggregate_only and agg_view.origin == "rfc_aggregate" and agg_view.metrics["mode"] == "aggregate" and agg_view.metrics["mode_decision"]["reason"] == "requested"
     # only T001K and the retained documents' lines crossed the wire; the large tables stayed in the source
     assert agg_view.rows("BSEG") == [] and agg_view.rows("BKPF") == [] and agg_view.count("T001K") > 0
-    assert agg_view.metrics["rows"] == agg_view.count("T001K") + len(agg_view.retained_lines) and agg_view.metrics["rows_avoided"] == sum(agg_view.aggregates["counts"].values()) > agg_view.metrics["rows"]
+    assert agg_view.metrics["rows"] == agg_view.count("T001K") + agg_view.count("T001") + len(agg_view.retained_lines) and agg_view.metrics["rows_avoided"] == sum(agg_view.aggregates["counts"].values()) > agg_view.metrics["rows"]
     retained_all = {n.split(":", 1)[1] for n, c in m.selection["classification"].items() if c["type"] == "FI.AccountingDocument" and c["classification"] not in ("FULLY_TRANSFERRED", "PARTIALLY_TRANSFERRED", "SHARED_DUPLICATED")}
     retained_docs = {k for k in retained_all if k.split("|")[0] in set(m.definition["company_codes"])}  # the ParentCo side of cross-company documents is retained outside the scope: not read
     assert agg_view.metrics["retained_documents"] == len(retained_docs) and agg_view.metrics["retained_documents_outside_scope"] == len(retained_all) - len(retained_docs) and {f"{l['BUKRS']}|{l['BELNR']}|{l['GJAHR']}" for l in agg_view.retained_lines} == retained_docs
@@ -319,8 +319,12 @@ def test_aggregate_only_reconciliation_matches_the_row_read(session, slice_resul
     fin_agg = _financial(session, run.id)
     assert by_agg["overall"] == by_rows["overall"] == "PASS" and by_agg["views"]["source"]["mode"] == "aggregate"
     # the same financial verdicts and source totals, except currency totals which the aggregate source knows per company code only
+    per_period = ("period_trial_balance", "period_cutoff", "fx_open_items", "material_price_control")
+    assert all(fin_agg[k][0] == "NOT_VERIFIED" for k in fin_agg if k[0] == "fx_open_items") and all(fin_agg[k][0] == "PASS" for k in fin_agg if k[0] == "period_cutoff") and any(k[0] == "period_cutoff" for k in fin_agg)  # the classic journal line carries no currency; the headers still give the periods
+    assert all(fin_agg[k][0] == "PASS" for k in fin_agg if k[0] == "period_trial_balance") and any(k[0] == "period_trial_balance" for k in fin_agg)  # the target rows still balance per period
+    assert all(fin_agg[k][0] == "PASS" for k in fin_agg if k[0] == "material_price_control")  # transferred materials per price control, counted in the source
     for key, (status, src_val, tgt_val) in fin_rows.items():
-        if key[0] == "currency_totals":
+        if key[0] == "currency_totals" or key[0] in per_period:
             continue
         assert key in fin_agg, key
         assert fin_agg[key][0] == status and fin_agg[key][1] == src_val and fin_agg[key][2] == tgt_val, (key, fin_rows[key], fin_agg[key])
@@ -525,8 +529,16 @@ def test_target_aggregate_only_compares_totals_computed_in_the_target(session, s
     assert {r.check_name for r in integ} >= {"target_trial_balance"} and all(r.status == "PASS" for r in integ)
     by_agg, fin_agg = fin(agg_view)
     assert by_agg["overall"] == by_rows["overall"] and by_agg["views"]["target"]["mode"] == "aggregate"
+    # the classic journal line of this target carries no period and no document currency: those period-end checks
+    # say so in aggregate mode instead of comparing (ACDOCA targets compare, see the Universal Journal test)
+    per_period = ("period_trial_balance", "period_cutoff", "fx_open_items", "material_price_control")
+    assert agg_view.metrics["target_aggregates"]["journal_table"] == "BSEG"
+    for name in (per_period[0], per_period[2]):
+        unavailable = [r for (n, _s), r in fin_agg.items() if n == name]
+        assert unavailable and all(r.status == "NOT_VERIFIED" and r.evidence.get("unavailable") for r in unavailable), name
+    assert all(r.status == "PASS" for (n, _s), r in fin_agg.items() if n == "period_cutoff")  # the headers' periods are aggregated on both sides
     for key, r in fin_rows.items():
-        if r.layer != "FINANCIAL" or key[0] in ("currency_totals", "ar_open_items", "ap_open_items"):
+        if r.layer != "FINANCIAL" or key[0] in ("currency_totals", "ar_open_items", "ap_open_items") or key[0] in per_period:
             continue
         a = fin_agg[key]
         assert (a.status, a.source_value, a.target_value) == (r.status, r.source_value, r.target_value), (key, (r.status, r.source_value, r.target_value), (a.status, a.source_value, a.target_value))
@@ -621,8 +633,11 @@ def test_target_aggregate_mode_uses_acdoca_on_s4hana(session, slice_result):
         assert v_ac.metrics["target_aggregates"]["journal_table"] == "ACDOCA" and v_ac.metrics["target_aggregates"]["ledger"] == "0L" and "assets_measure" in v_ac.metrics["target_aggregates"]
         assert all(r.status == "PASS" for r in v_ac.integrity_results("x") if r.check_name == "target_trial_balance")
         summ, fin_ac = fin(v_ac)
+        per_period = ("period_trial_balance", "period_cutoff", "fx_open_items", "material_price_control")
+        assert all(r.status == "PASS" for (n, _s), r in fin_ac.items() if n in per_period[:2]) and any(n == "period_trial_balance" and "/" in s for (n, s), _r in fin_ac.items())  # the Universal Journal carries the period
+        assert all(r.status == "NOT_VERIFIED" and r.evidence.get("unavailable") for (n, _s), r in fin_bseg.items() if n in (per_period[0], per_period[2]))  # the classic line carries neither period nor currency
         for key, r in fin_bseg.items():
-            if key[0] in ("asset_balances", "ar_open_items", "ap_open_items"):
+            if key[0] in ("asset_balances", "ar_open_items", "ap_open_items") or key[0] in per_period:
                 continue
             a = fin_ac[key]
             assert (a.status, a.source_value, a.target_value) == (r.status, r.source_value, r.target_value), (key, (r.status, r.source_value, r.target_value), (a.status, a.source_value, a.target_value))

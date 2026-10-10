@@ -265,6 +265,35 @@ class SourceBalances:
         self.intercompany: dict[tuple, float] = defaultdict(float)
         self.currency: dict[tuple, float] = defaultdict(float)  # (tcc, currency or "*") -> debit total in document currency
         self.mode = "rows"
+        # period-end: debits / credits and documents per fiscal period of the transferred documents, open items per
+        # document currency, valuation per area and price control per material (None when the path cannot know)
+        self.periods: dict[tuple, dict] | None = {}  # periods of the transferred documents (debit / credit)
+        self.periods_all: set[tuple] | None = set()  # every period the scoped company codes posted in (from the headers)
+        self.fx_open: dict[tuple, dict] | None = {}
+        self.cc_currency: dict[str, str] = {}
+        self.inventory_by_area: dict[str, float] = defaultdict(float)
+        self.held_by_area: dict[str, float] = defaultdict(float)
+        self.price_control: dict[tuple, tuple] | None = {}
+        self.price_counts: dict[tuple, int] | None = None
+
+
+def _period_key(h: dict) -> str:
+    m = h.get("MONAT")
+    return str(m).zfill(3) if m not in (None, "") else "000"
+
+
+def _add_period(periods: dict, key: tuple, line: dict, doc: str) -> None:
+    p = periods.setdefault(key, {"debit": 0.0, "credit": 0.0, "documents": set()})
+    p["debit" if line["SHKZG"] == "S" else "credit"] += float(line["DMBTR"])
+    p["documents"].add(doc)
+
+
+def _add_fx(fx: dict, key: tuple, line: dict) -> None:
+    f = fx.setdefault(key, {"count": 0, "wrbtr": 0.0, "dmbtr": 0.0})
+    sign = 1.0 if line["SHKZG"] == "S" else -1.0
+    f["count"] += 1
+    f["wrbtr"] += sign * float(line.get("WRBTR") or 0.0)
+    f["dmbtr"] += sign * float(line["DMBTR"])
 
 
 def _balances_from_rows(c: dict) -> SourceBalances:
@@ -273,6 +302,15 @@ def _balances_from_rows(c: dict) -> SourceBalances:
     retained = {n.split(":", 1)[1] for n, x in cls.items() if x["type"] == "FI.AccountingDocument" and x["classification"] not in TRANSFER}
     classified = {n.split(":", 1)[1] for n, x in cls.items() if x["type"] == "FI.AccountingDocument"}
     filtered = {f"{h['BUKRS']}|{h['BELNR']}|{h['GJAHR']}" for h in store.rows("BKPF") if h["BUKRS"] in scope_ccs} - classified
+    b.cc_currency = {tcc_of(r["BUKRS"]): r["WAERS"] for r in store.rows("T001") if r["BUKRS"] in scope_ccs}
+    heads = {(h["BUKRS"], h["BELNR"], str(h["GJAHR"])): h for h in store.rows("BKPF") if h["BUKRS"] in scope_ccs}
+    for (bukrs, _belnr, gjahr), h in heads.items():
+        b.periods_all.add((tcc_of(bukrs), str(gjahr), _period_key(h)))
+    for cc in scope_ccs:  # without T001 (a view that does not read it) the company-code currency is the one most documents carry
+        if tcc_of(cc) not in b.cc_currency:
+            cur = Counter(h.get("WAERS") for h in heads.values() if h["BUKRS"] == cc and h.get("WAERS")).most_common(1)
+            if cur:
+                b.cc_currency[tcc_of(cc)] = cur[0][0]
     for l in store.rows("BSEG"):
         if l["BUKRS"] not in scope_ccs:
             continue
@@ -280,6 +318,11 @@ def _balances_from_rows(c: dict) -> SourceBalances:
         a = _amt(l)
         b.gl[k] += a
         doc = f"{l['BUKRS']}|{l['BELNR']}|{l['GJAHR']}"
+        h = heads.get((l["BUKRS"], l["BELNR"], str(l["GJAHR"])))
+        if h and doc in classified and doc not in retained:
+            _add_period(b.periods, (tcc_of(l["BUKRS"]), str(l["GJAHR"]), _period_key(h)), l, doc)
+        if h and l["KOART"] in ("D", "K") and not l.get("AUGBL") and h.get("WAERS") and h["WAERS"] != b.cc_currency.get(tcc_of(l["BUKRS"])):
+            _add_fx(b.fx_open, (tcc_of(l["BUKRS"]), h["WAERS"]), l)
         if doc in retained:
             b.retained[k] += a
         elif doc in filtered:
@@ -302,8 +345,13 @@ def _balances_from_rows(c: dict) -> SourceBalances:
     for r in store.rows("MBEW"):
         if r["BWKEY"] in areas:
             b.inventory += float(r["SALK3"])
+            area = c["plant_map"].get(r["BWKEY"], r["BWKEY"])
+            b.inventory_by_area[area] += float(r["SALK3"])
             if r["MATNR"] in not_transferred:
                 b.inventory_held += float(r["SALK3"])
+                b.held_by_area[area] += float(r["SALK3"])
+            elif r.get("VPRSV"):
+                b.price_control[(r["MATNR"], area)] = (r["VPRSV"], float(r["STPRS"] if r["VPRSV"] == "S" else r["VERPR"]))
     b.inventory, b.inventory_held = round(b.inventory, 2), round(b.inventory_held, 2)
     return b
 
@@ -353,6 +401,33 @@ def _balances_from_aggregates(c: dict) -> SourceBalances:
     for a in A.get("totals", []):
         if a["BUKRS"] in scope_ccs and a["SHKZG"] == "S":
             b.currency[(tcc_of(a["BUKRS"]), "*")] += float(a.get("SUM_WRBTR", 0.0))
+    b.cc_currency = {tcc_of(r["BUKRS"]): r["WAERS"] for r in store.rows("T001") if r["BUKRS"] in scope_ccs}
+    b.periods_all = {(tcc_of(a["BUKRS"]), str(a["GJAHR"]), str(a["MONAT"]).zfill(3)) for a in A.get("documents_by_period", []) if a["BUKRS"] in scope_ccs} if A.get("documents_by_period") is not None else None
+    if A.get("periods") is None:
+        b.periods = None  # the classic journal line carries no period
+    else:
+        docs = {(a["BUKRS"], str(a["GJAHR"]), str(a["MONAT"]).zfill(3)): int(a["COUNT"]) for a in A.get("documents_by_period", [])}
+        for a in A["periods"]:
+            if a["BUKRS"] in scope_ccs:
+                key = (tcc_of(a["BUKRS"]), str(a["GJAHR"]), str(a["MONAT"]).zfill(3))
+                p = b.periods.setdefault(key, {"debit": 0.0, "credit": 0.0, "documents": set(), "document_count": 0})
+                p["debit" if a["SHKZG"] == "S" else "credit"] += float(a["SUM_DMBTR"])
+                p["document_count"] = docs.get((a["BUKRS"], str(a["GJAHR"]), str(a["MONAT"]).zfill(3)), 0)
+    if A.get("open_fx") is None:
+        b.fx_open = None
+    else:
+        for a in A["open_fx"]:
+            if a["BUKRS"] in scope_ccs and a.get("WAERS") and a["WAERS"] != b.cc_currency.get(tcc_of(a["BUKRS"])):
+                f = b.fx_open.setdefault((tcc_of(a["BUKRS"]), a["WAERS"]), {"count": 0, "wrbtr": 0.0, "dmbtr": 0.0})
+                f["count"] += int(a["COUNT"])
+                f["wrbtr"] += signed(a, "SUM_WRBTR")
+                f["dmbtr"] += signed(a)
+    for a in A.get("inventory", []):
+        b.inventory_by_area[c["plant_map"].get(str(a["BWKEY"]), str(a["BWKEY"]))] += float(a["SUM_SALK3"])
+    for area, v in (A.get("inventory_held_by_area") or {}).items():
+        b.held_by_area[c["plant_map"].get(str(area), str(area))] += float(v)
+    b.price_control = None
+    b.price_counts = None if A.get("price_control") is None else {(c["plant_map"].get(str(a["BWKEY"]), str(a["BWKEY"])), str(a["VPRSV"])): int(a["COUNT"]) for a in A["price_control"]}
     return b
 
 
@@ -380,10 +455,19 @@ class TargetBalances:
         self.currency: dict[tuple, float] = defaultdict(float)
         self.docs_by_year: dict[tuple[str, str], int] = defaultdict(int)
         self.mode = "rows"
+        self.periods: dict[tuple, dict] | None = {}
+        self.periods_all: set[tuple] | None = set()
+        self.fx_open: dict[tuple, dict] | None = {}
+        self.inventory_by_area: dict[str, float] = defaultdict(float)
+        self.price_control: dict[tuple, tuple] | None = {}
+        self.price_counts: dict[tuple, int] | None = None
 
 
-def target_balances(target: RecordStore, target_ccs: set[str], val_areas: set[str], collapse_currency: bool) -> TargetBalances:
+def target_balances(target: RecordStore, target_ccs: set[str], val_areas: set[str], collapse_currency: bool, cc_currency: dict[str, str] | None = None) -> TargetBalances:
     b = TargetBalances()
+    cc_currency = dict(cc_currency or {})
+    for r in target.rows("T001"):
+        cc_currency.setdefault(r["BUKRS"], r["WAERS"])
     if getattr(target, "aggregate_only", False):
         A = target.aggregates
         b.mode = "aggregate"
@@ -413,6 +497,31 @@ def target_balances(target: RecordStore, target_ccs: set[str], val_areas: set[st
         for a in A.get("documents_by_year", []):
             if a["BUKRS"] in target_ccs:
                 b.docs_by_year[(a["BUKRS"], str(a["GJAHR"]))] += int(a["COUNT"])
+        b.periods_all = {(a["BUKRS"], str(a["GJAHR"]), str(a["MONAT"]).zfill(3)) for a in A.get("documents_by_period", []) if a["BUKRS"] in target_ccs} if A.get("documents_by_period") is not None else None
+        if A.get("periods") is None:
+            b.periods = None
+        else:
+            docs = {(a["BUKRS"], str(a["GJAHR"]), str(a["MONAT"]).zfill(3)): int(a["COUNT"]) for a in A.get("documents_by_period", [])}
+            for a in A["periods"]:
+                if a["BUKRS"] in target_ccs:
+                    key = (a["BUKRS"], str(a["GJAHR"]), str(a["MONAT"]).zfill(3))
+                    p = b.periods.setdefault(key, {"debit": 0.0, "credit": 0.0, "documents": set(), "document_count": 0})
+                    p["debit" if a["SHKZG"] == "S" else "credit"] += float(a["SUM_DMBTR"])
+                    p["document_count"] = docs.get(key, 0)
+        if A.get("open_fx") is None:
+            b.fx_open = None
+        else:
+            for a in A["open_fx"]:
+                if a["BUKRS"] in target_ccs and a.get("WAERS") and a["WAERS"] != cc_currency.get(a["BUKRS"]):
+                    f = b.fx_open.setdefault((a["BUKRS"], a["WAERS"]), {"count": 0, "wrbtr": 0.0, "dmbtr": 0.0})
+                    f["count"] += int(a["COUNT"])
+                    f["wrbtr"] += signed(a, "SUM_WRBTR")
+                    f["dmbtr"] += signed(a)
+        for a in A.get("inventory", []):
+            if str(a["BWKEY"]) in val_areas:
+                b.inventory_by_area[str(a["BWKEY"])] += float(a["SUM_SALK3"])
+        b.price_control = None
+        b.price_counts = None if A.get("price_control") is None else {(str(a["BWKEY"]), str(a["VPRSV"])): int(a["COUNT"]) for a in A["price_control"]}
         return b
     tgt_bseg = [l for l in target.rows("BSEG") if l["BUKRS"] in target_ccs]
     for tcc in target_ccs:
@@ -430,13 +539,32 @@ def target_balances(target: RecordStore, target_ccs: set[str], val_areas: set[st
     if chain:
         vals, b.inventory_measure, b.inventory_comparable = chain
         b.inventory = round(sum(float(v["SUM_SALK3"]) for v in vals if str(v["BWKEY"]) in val_areas), 2)
+        for v in vals:
+            if str(v["BWKEY"]) in val_areas:
+                b.inventory_by_area[str(v["BWKEY"])] += float(v["SUM_SALK3"])
     else:
         b.inventory = round(sum(float(r["SALK3"]) for r in target.rows("MBEW") if r["BWKEY"] in val_areas), 2)
+        for r in target.rows("MBEW"):
+            if r["BWKEY"] in val_areas:
+                b.inventory_by_area[r["BWKEY"]] += float(r["SALK3"])
+    mbew = [r for r in target.rows("MBEW") if r["BWKEY"] in val_areas]
+    if mbew and not all(r.get("VPRSV") for r in mbew):
+        b.price_control = None  # the target's valuation rows carry no price control (read service without it)
+    else:
+        for r in mbew:
+            b.price_control[(r["MATNR"], r["BWKEY"])] = (r["VPRSV"], float(r["STPRS"] if r["VPRSV"] == "S" else (r.get("VERPR") or 0)))
+    heads = {(h["BUKRS"], h["BELNR"], str(h["GJAHR"])): h for h in target.rows("BKPF") if h["BUKRS"] in target_ccs}
+    for (bukrs, _belnr, gjahr), h in heads.items():
+        b.periods_all.add((bukrs, str(gjahr), _period_key(h)))
     for l in tgt_bseg:
+        h = heads.get((l["BUKRS"], l["BELNR"], str(l["GJAHR"])))
+        if h is not None:
+            _add_period(b.periods, (l["BUKRS"], str(l["GJAHR"]), _period_key(h)), l, f"{l['BUKRS']}|{l['BELNR']}|{l['GJAHR']}")
+            if l["KOART"] in ("D", "K") and not l.get("AUGBL") and h.get("WAERS") and h["WAERS"] != cc_currency.get(l["BUKRS"]):
+                _add_fx(b.fx_open, (l["BUKRS"], h["WAERS"]), l)
         if l.get("VBUND") and l["KOART"] in ("D", "K") and not l.get("AUGBL"):
             b.intercompany[(l["BUKRS"], l["VBUND"])] += _amt(l)
         if l["SHKZG"] == "S":
-            h = target.get("BKPF", BUKRS=l["BUKRS"], BELNR=l["BELNR"], GJAHR=l["GJAHR"])
             cur = "*" if collapse_currency else (h["WAERS"] if h else None)
             if cur is not None:
                 b.currency[(l["BUKRS"], cur)] += float(l["WRBTR"])
@@ -465,7 +593,10 @@ def financial_checks(rid: str, sources: list[dict], target: RecordStore) -> tupl
         results.append(_r(rid, "FINANCIAL", "trial_balance", "WARN", "+".join(sorted(target_ccs)), "", "not readable", "", "journal entries are not readable through the target's adapter: the financial layer could not be verified", {"unreadable": True}))
         return results, 0
     tgt_val_areas = set().union(*(b.valuation_areas for b in balances)) if balances else set()
-    tb = target_balances(target, target_ccs, tgt_val_areas, aggregate_mode)
+    cc_currency: dict[str, str] = {}
+    for b in balances:
+        cc_currency.update(b.cc_currency)
+    tb = target_balances(target, target_ccs, tgt_val_areas, aggregate_mode, cc_currency)
     # trial balance per target company code and per document
     for tcc in sorted(target_ccs):
         t = tb.trial.get(tcc) or {"debit": 0.0, "credit": 0.0, "unbalanced": 0, "documents": 0}
@@ -575,6 +706,7 @@ def financial_checks(rid: str, sources: list[dict], target: RecordStore) -> tupl
     for k in sorted(set(s_cur) | set(t_cur)):
         s, t = round(s_cur.get(k, 0), 2), round(t_cur.get(k, 0), 2)
         results.append(_r(rid, "FINANCIAL", "currency_totals", "PASS" if abs(s - t) < 0.005 else "WARN", f"{k[0]}/{k[1]}", s, t, round(s - t, 2), ("" if abs(s - t) < 0.005 else "Document-currency debit totals differ; see gl_balance explanations") + (" (all currencies together: an aggregate-only side carries no document currency per line)" if aggregate_mode else "")))
+    results += period_end_checks(rid, sources, balances, tb, target_ccs, aggregate_mode, mode_note)
     # fiscal period controls (per source range, on that source's target company codes)
     for c in sources:
         yf, yt = c["defn"].get("fiscal_year_from"), c["defn"].get("fiscal_year_to")
@@ -582,6 +714,124 @@ def financial_checks(rid: str, sources: list[dict], target: RecordStore) -> tupl
         out_of_range = sum(n for (cc, year), n in tb.docs_by_year.items() if cc in tccs and ((yf and int(year) < yf) or (yt and int(year) > yt)))
         results.append(_r(rid, "FINANCIAL", "fiscal_period_control", "PASS" if out_of_range == 0 else "FAIL", f"{'+'.join(sorted(tccs))}:{yf or '*'}-{yt or '*'}", "", out_of_range, out_of_range, "Target documents outside the scoped fiscal years" if out_of_range else ""))
     return results, gl_fail
+
+
+def period_end_checks(rid: str, sources: list[dict], balances: list, tb, target_ccs: set[str], aggregate_mode: bool, mode_note: str) -> list[ReconciliationResult]:
+    """Period-end: the target's trial balance per fiscal period, the period cut-off against the transferred
+    documents, the open items in a foreign currency (document-currency amounts must agree; local amounts may
+    differ after the target's foreign currency valuation), the valuation per area and the price control of the
+    transferred materials. Each check says when a path cannot know."""
+    out: list[ReconciliationResult] = []
+    # 1. trial balance per period on the target
+    if tb.periods is None:
+        out.append(_r(rid, "FINANCIAL", "period_trial_balance", "NOT_VERIFIED", "+".join(sorted(target_ccs)), "", "not available", "", "the target's journal line carries no fiscal period in aggregate mode (classic BSEG): debits and credits are verified per company code and per document year only" + mode_note, {"unavailable": True}))
+    else:
+        for key in sorted(tb.periods):
+            p = tb.periods[key]
+            debit, credit = round(p["debit"], 2), round(p["credit"], 2)
+            n = len(p["documents"]) or p.get("document_count", 0)
+            ok = abs(debit - credit) < 0.005
+            out.append(_r(rid, "FINANCIAL", "period_trial_balance", "PASS" if ok else "FAIL", f"{key[0]}/{key[1]}/{key[2]}", debit, credit, round(debit - credit, 2), "Debits equal credits in the period" if ok else "Debits and credits differ in the period: a document was loaded partially or the period's carry-forward is missing", {"documents": n, **({"target_mode": "aggregate"} if tb.mode == "aggregate" else {})}))
+    # 2. period cut-off: the target may post only in periods the source posted in (headers on both sides), and every
+    #    period of the transferred documents should have arrived (needs the periods of the transferred documents)
+    src_all: dict[str, set] = defaultdict(set)
+    src_tr: dict[str, set] = defaultdict(set)
+    all_known = all(b.periods_all is not None for b in balances) and tb.periods_all is not None
+    tr_known = all(b.periods is not None for b in balances) and tb.periods is not None
+    for b in balances:
+        for (tcc, year, per) in b.periods_all or ():
+            src_all[tcc].add((year, per))
+        for (tcc, year, per) in b.periods or ():
+            src_tr[tcc].add((year, per))
+    if not all_known:
+        out.append(_r(rid, "FINANCIAL", "period_cutoff", "NOT_VERIFIED", "+".join(sorted(target_ccs)), "", "not available", "", "the period cut-off needs the fiscal period of the document headers on both sides" + mode_note, {"unavailable": True}))
+    else:
+        for tcc in sorted(target_ccs):
+            s_all, t_all = src_all.get(tcc, set()), {(y, p) for (c, y, p) in tb.periods_all if c == tcc}
+            extra = sorted(t_all - s_all)
+            missing = sorted(src_tr.get(tcc, set()) - t_all) if tr_known else []
+            last_s, last_t = (max(s_all) if s_all else None), (max(t_all) if t_all else None)
+            if extra:
+                status, expl = "FAIL", f"the target holds postings in {len(extra)} period(s) the source never posted in: {', '.join('/'.join(x) for x in extra[:5])}"
+            elif missing:
+                status, expl = "WARN", f"{len(missing)} period(s) of the transferred documents have no posting in the target: {', '.join('/'.join(x) for x in missing[:5])} (documents rejected by rules or not loaded yet; see gl_balance)"
+            else:
+                status, expl = "PASS", f"{len(t_all)} period(s) posted in the target, all within the source's; last period {'/'.join(last_t) if last_t else '-'}" + ("" if tr_known else "; the periods of the transferred documents are not known on this path, so missing periods are not verified")
+            out.append(_r(rid, "FINANCIAL", "period_cutoff", status, tcc, "/".join(last_s) if last_s else "", "/".join(last_t) if last_t else "", len(extra) + len(missing), expl + mode_note, {"source_periods": len(s_all), "target_periods": len(t_all), "transferred_periods_verified": tr_known}))
+    # 3. open items in a foreign currency
+    if any(b.fx_open is None for b in balances) or tb.fx_open is None:
+        out.append(_r(rid, "FINANCIAL", "fx_open_items", "NOT_VERIFIED", "+".join(sorted(target_ccs)), "", "not available", "", "open items per document currency need the currency on the journal line: available from ACDOCA, not from BSEG in aggregate mode" + mode_note, {"unavailable": True}))
+    else:
+        s_fx: dict[tuple, dict] = {}
+        for b in balances:
+            for k, f in b.fx_open.items():
+                agg = s_fx.setdefault(k, {"count": 0, "wrbtr": 0.0, "dmbtr": 0.0})
+                for kk in ("count", "wrbtr", "dmbtr"):
+                    agg[kk] += f[kk]
+        keys = sorted(k for k in set(s_fx) | set(tb.fx_open) if k[0] in target_ccs)
+        if not keys:
+            out.append(_r(rid, "FINANCIAL", "fx_open_items", "PASS", "+".join(sorted(target_ccs)), "0", "0", 0, "no open items in a foreign currency on either side" + mode_note))
+        for k in keys:
+            s, t = s_fx.get(k, {"count": 0, "wrbtr": 0.0, "dmbtr": 0.0}), tb.fx_open.get(k, {"count": 0, "wrbtr": 0.0, "dmbtr": 0.0})
+            s_w, t_w, s_l, t_l = round(s["wrbtr"], 2), round(t["wrbtr"], 2), round(s["dmbtr"], 2), round(t["dmbtr"], 2)
+            if s["count"] == t["count"] and abs(s_w - t_w) < 0.005:
+                if abs(s_l - t_l) < 0.005:
+                    status, expl = "PASS", f"{s['count']} open item(s) in {k[1]}: document-currency and local amounts agree"
+                else:
+                    status, expl = "WARN", f"document-currency amounts agree; local amounts differ by {round(s_l - t_l, 2)}: the target's foreign currency valuation (FAGL_FCV) restated them, or the load used another rate; run the valuation in the target before period end and compare again"
+            else:
+                status, expl = "WARN", f"{s['count']} vs {t['count']} open item(s) in {k[1]}, document-currency amounts {s_w} vs {t_w}: open items of documents retained by the seller or excluded by policy (see gl_balance)"
+            out.append(_r(rid, "FINANCIAL", "fx_open_items", status, f"{k[0]}/{k[1]}", f"{s['count']} / {s_w} ({k[1]}) / {s_l} (local)", f"{t['count']} / {t_w} ({k[1]}) / {t_l} (local)", round(s_w - t_w, 2), expl + mode_note, {"local_variance": round(s_l - t_l, 2)}))
+    # 4. valuation per area
+    s_area: dict[str, float] = defaultdict(float)
+    held_area: dict[str, float] = defaultdict(float)
+    for b in balances:
+        for a, v in b.inventory_by_area.items():
+            s_area[a] += v
+        for a, v in b.held_by_area.items():
+            held_area[a] += v
+    if getattr(tb, "inventory_measure", "") and not tb.inventory_comparable:
+        out.append(_r(rid, "FINANCIAL", "inventory_valuation_by_area", "WARN", "valuation_areas", round(sum(s_area.values()), 2), "not comparable", "", f"target value is {tb.inventory_measure}: the per-area comparison waits for a comparable measure (see inventory_valuation)", {"measure": tb.inventory_measure}))
+    else:
+        for a in sorted(set(s_area) | set(tb.inventory_by_area)):
+            s, t, h = round(s_area.get(a, 0.0), 2), round(tb.inventory_by_area.get(a, 0.0), 2), round(held_area.get(a, 0.0), 2)
+            var = round(s - t, 2)
+            status = "PASS" if abs(var) < 0.005 else ("WARN" if abs(var - h) < 0.005 else "FAIL")
+            out.append(_r(rid, "FINANCIAL", "inventory_valuation_by_area", status, a, s, t, var, ("" if status == "PASS" else f"{h} held by materials not transferred; unexplained {round(var - h, 2)}") + mode_note, {"held": h}))
+    # 5. price control of the transferred materials
+    if tb.price_control is None and tb.price_counts is None:
+        out.append(_r(rid, "FINANCIAL", "material_price_control", "WARN", "valuation_areas", "", "not readable", "", "the target's valuation rows carry no price control (product valuation read without it): verify price control and prices by report (MM03 / CKM3)", {"unreadable": True}))
+    elif all(b.price_control is not None for b in balances) and tb.price_control is not None:
+        src: dict[tuple, tuple] = {}
+        for b in balances:
+            src.update(b.price_control)
+        areas = sorted({a for (_m, a) in src} | {a for (_m, a) in tb.price_control})
+        for a in areas:
+            keys = [k for k in src if k[1] == a]
+            diffs = [(k[0], src[k], tb.price_control.get(k)) for k in keys if tb.price_control.get(k) != src[k]]
+            missing = [k[0] for k in keys if k not in tb.price_control]
+            status = "PASS" if not diffs else "FAIL"
+            expl = f"{len(keys)} transferred material(s) with the same price control and price" if not diffs else f"{len(diffs)} material(s) differ: " + "; ".join(f"{m} {s_[0]} {s_[1]} vs {t_[0] if t_ else '-'} {t_[1] if t_ else '-'}" for m, s_, t_ in diffs[:5]) + ("" if len(missing) == 0 else f"; {len(missing)} not valuated in the target")
+            out.append(_r(rid, "FINANCIAL", "material_price_control", status, a, len(keys), len(keys) - len(missing), len(diffs), expl, {"differing": len(diffs), "missing": len(missing)}))
+    else:
+        # an aggregate side knows counts per area and price control (transferred materials only), not the prices
+        s_cnt: dict[tuple, int] = defaultdict(int)
+        for b in balances:
+            for k, n in (b.price_counts or {}).items():
+                s_cnt[k] += n
+            for (_m, area), (vprsv, _price) in (b.price_control or {}).items():
+                s_cnt[(area, vprsv)] += 1
+        t_cnt: dict[tuple, int] = defaultdict(int)
+        for k, n in (tb.price_counts or {}).items():
+            t_cnt[k] += n
+        for (_m, area), (vprsv, _price) in (tb.price_control or {}).items():
+            t_cnt[(area, vprsv)] += 1
+        for a in sorted({k[0] for k in s_cnt} | {k[0] for k in t_cnt}):
+            s_txt = ", ".join(f"{k[1]}: {n}" for k, n in sorted(s_cnt.items()) if k[0] == a)
+            t_txt = ", ".join(f"{k[1]}: {n}" for k, n in sorted(t_cnt.items()) if k[0] == a)
+            same = {k[1]: n for k, n in s_cnt.items() if k[0] == a} == {k[1]: n for k, n in t_cnt.items() if k[0] == a}
+            out.append(_r(rid, "FINANCIAL", "material_price_control", "PASS" if same else "WARN", a, s_txt, t_txt, "", ("transferred materials per price control agree; prices are not compared on an aggregate side: verify them by report (CKM3)" if same else "transferred materials per price control differ; compare the prices by report (CKM3) for the transferred materials") + mode_note, {"aggregate": True}))
+    return out
 
 
 def reconcile_merge_group(session: Session, runs: list[MigrationRun], target: RecordStore) -> dict:
