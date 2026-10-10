@@ -73,6 +73,24 @@ tests:                              # embedded, executed on validate
 ```
 `when` supports `equals`, `in`, `not_in`, `present`, `prefix`, and `all`/`any` composition.
 
+## Editor, lookup tables and per-rule decisions
+The YAML above is what gets hashed, validated and approved; the Rules workbench edits it through a grid
+(`backend/sdtf/rules/editor.py`). `POST /projects/{id}/rulesets/compose` turns a structured document (name,
+description, applies_to, lookups, rules in order, tests) into the canonical YAML and back, with the validation;
+`POST /projects/{id}/rulesets` accepts either `source_yaml` or `document`, and `based_on` names the previous version
+so that the decisions of rules whose content is unchanged carry over. `GET /rulesets/{id}/rules` is the grid: every
+rule in words (fields, mapping or action, condition), with its decision.
+
+Lookup tables come from two-column CSV exports (`POST /rulesets/lookups/from-csv`, `sdtf lookup-csv`): comma,
+semicolon, tab or pipe; the first row is the header when it names the requested columns or reads like one
+(source/target, from/to, old/new, key/value); duplicates with the same value are skipped and reported, keys that map
+to different values are errors; the result is the `lookups:` fragment.
+
+An approver decides per rule (`POST /rulesets/{id}/rules/{rule_id}/decision`: APPROVED, REJECTED with a comment, or
+back to PENDING) while the set is a draft and under four eyes (not its author); the decisions are audit events. The
+approval of the set is refused while any rule is rejected, and approves every rule still pending with it, recorded
+per rule with the approver and comment, so the lineage of each rule names who accepted it.
+
 ## Guarantees
 * **Deterministic**: same ruleset + record ⇒ same output; inputs are never mutated.
 * **Lineage**: every change yields `{rule, field, from, to}` persisted on the staged record.

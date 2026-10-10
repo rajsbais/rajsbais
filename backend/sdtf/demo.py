@@ -127,10 +127,15 @@ def approve_ruleset(session: Session, rs: RuleSet, approver: str, comment: str =
     if rs.status != "DRAFT":
         raise ValueError(f"ruleset is {rs.status}")
     from .models import ApprovalRecord
+    from .rules.editor import blanket_approve_rules, check_rule_decisions
 
+    rejected = check_rule_decisions(rs)
+    if rejected:
+        raise ValueError(f"{len(rejected)} rule(s) rejected by an approver: {', '.join(rejected[:6])}; remove or rework them in a new version")
+    with_set = blanket_approve_rules(rs, approver, comment)
     rs.status = "APPROVED"
     rs.approved_by = approver
     session.add(ApprovalRecord(subject_type="RULESET", subject_id=rs.id, decision="APPROVED", decided_by=approver, kind="TECHNICAL", comment=comment))
-    record_event(session, approver, "RULESET_APPROVED", "RULESET", rs.id, {"version": rs.version, "hash": rs.content_hash})
+    record_event(session, approver, "RULESET_APPROVED", "RULESET", rs.id, {"version": rs.version, "hash": rs.content_hash, "rules_approved_with_set": with_set})
     session.flush()
     return rs

@@ -186,6 +186,7 @@ class RuleSet(IdMixin, Base):
     status: Mapped[str] = mapped_column(String(16), default="DRAFT", nullable=False)
     created_by: Mapped[str] = mapped_column(String(64), nullable=False)
     approved_by: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    rule_decisions: Mapped[dict | None] = mapped_column(JSON, nullable=True)  # {rule_id: {decision, by, at, comment}}
     __table_args__ = (UniqueConstraint("project_id", "name", "version", name="uq_ruleset_version"),)
 
 

@@ -142,6 +142,12 @@ def main(argv=None):
     bpa.add_argument("--retention-years", type=int, default=7)
     bpa.add_argument("--json", action="store_true")
     bpa.add_argument("--out", default=None, help="write the Markdown report here")
+    lk = sub.add_parser("lookup-csv", help="turn a two-column CSV export into a lookup table of the rule DSL (duplicates and conflicts reported); paste the YAML into a rule set")
+    lk.add_argument("--file", required=True, help="CSV file (comma, semicolon, tab or pipe)")
+    lk.add_argument("--name", required=True, help="lookup name, e.g. coa_map")
+    lk.add_argument("--key-column", default=None)
+    lk.add_argument("--value-column", default=None)
+    lk.add_argument("--json", action="store_true", help="print the parse report instead of the YAML")
     mdp = sub.add_parser("metadata", help="verify the API bindings against a service's $metadata: from a downloaded EDMX file or fetched from a registered API target")
     mdsub = mdp.add_subparsers(dest="mdcmd", required=True)
     mdc = mdsub.add_parser("check", help="check one service against an EDMX file, or every bound service against a target")
@@ -453,6 +459,20 @@ def main(argv=None):
         elif not a.out:
             print(md)
         return 0
+    if a.cmd == "lookup-csv":
+        from .rules.editor import lookup_yaml, parse_lookup_csv
+
+        with open(a.file, encoding="utf-8-sig") as fh:
+            rep = parse_lookup_csv(fh.read(), a.name, a.key_column, a.value_column)
+        if a.json:
+            print(json.dumps(rep, indent=2))
+        elif rep["errors"]:
+            for e in rep["errors"]:
+                print("error: " + e, file=sys.stderr)
+        else:
+            print(lookup_yaml(a.name, rep["entries"]), end="")
+            print(f"# {len(rep['entries'])} entries from {rep['rows']} rows ({rep['skipped']} skipped, {len(rep['duplicates'])} duplicates)", file=sys.stderr)
+        return 0 if not rep["errors"] else 2
     if a.cmd == "metadata":
         from .runtime import metadata_check as mc
 

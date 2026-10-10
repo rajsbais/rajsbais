@@ -70,6 +70,25 @@ def test_all_screens_render_against_live_api():
         pg.wait_for_timeout(2500)
         txt = pg.inner_text("main")
         assert "Read path" in txt and "Reconcile again through the adapters" in txt
+        # rules workbench: the grid of the current set, the inline editor, a lookup parsed from pasted CSV
+        pg.goto(base + "/rules")
+        pg.wait_for_timeout(2500)
+        txt = pg.inner_text("main")
+        assert "Mapping / action" in txt and "Decision" in txt and "cc-reassign" in txt
+        pg.click("button:has-text('Add rule')")
+        pg.wait_for_timeout(500)
+        txt = pg.inner_text("main")
+        assert "Rule id" in txt and "unsaved changes" in txt
+        pg.click("button:has-text('Close editor')")
+        pg.fill("main textarea.code >> nth=-1", "source;target\n140000;12100000\n800000;41000000\n")
+        pg.fill("input[placeholder='coa_map']", "coa_map")
+        pg.click("button:has-text('Parse CSV')")
+        pg.wait_for_timeout(1500)
+        txt = pg.inner_text("main")
+        assert "2 entries" in txt and "header source" in txt
+        pg.click("button:has-text('Add lookup')")
+        pg.wait_for_timeout(500)
+        assert "coa_map" in pg.inner_text("main")
         # read configuration of the source (Connect page; RFC or synthetic-over-RFC systems show the card): save a ledger, reset
         pg.goto(base + "/connect")
         pg.wait_for_timeout(2500)

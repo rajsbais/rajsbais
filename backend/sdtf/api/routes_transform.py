@@ -25,6 +25,16 @@ from ..models import (
     ScopeManifest,
     TransformationException,
 )
+from ..rules.editor import (
+    carry_decisions,
+    compose_ruleset,
+    decide_rule,
+    decisions_summary,
+    document_of,
+    lookup_yaml,
+    parse_lookup_csv,
+    rule_grid,
+)
 from ..rules.engine import dry_run, parse_ruleset, validate_ruleset
 from ..rules.factory import generate_candidate_ruleset
 from ..runtime.pipeline import RunPrecondition, resume_run, start_run
@@ -186,23 +196,100 @@ def carveout_residual(m: ScopeManifest = Depends(get_manifest), db: Session = De
 
 # --------------------------------------------------------------------------------------------- rules
 class RuleSetCreate(BaseModel):
-    source_yaml: str
+    source_yaml: str | None = Field(None, description="the YAML of the DSL; or give `document`")
+    document: dict | None = Field(None, description="structured rule document from the editor grid (ruleset, description, applies_to, lookups, rules, tests); composed into canonical YAML")
+    based_on: str | None = Field(None, description="previous rule set of the project: decisions of rules that are unchanged carry over to the new version")
+
+
+def _source_of(req: RuleSetCreate) -> str:
+    if req.document is not None:
+        try:
+            return compose_ruleset(req.document)
+        except ValueError as e:
+            raise HTTPException(400, f"invalid rule document: {e}") from None
+    if not req.source_yaml:
+        raise HTTPException(400, "give source_yaml or document")
+    return req.source_yaml
 
 
 @router.post("/projects/{project_id}/rulesets", tags=["rules"], status_code=201)
 def ruleset_create(project_id: str, req: RuleSetCreate, db: Session = Depends(get_db), p: Principal = Depends(require("rules:write"))):
     assert_project_access(db, p, project_id)
+    source_yaml = _source_of(req)
     try:
-        rs = parse_ruleset(req.source_yaml)
+        rs = parse_ruleset(source_yaml)
     except Exception as e:  # noqa: BLE001
         raise HTTPException(400, f"invalid ruleset: {e}") from None
     validation = validate_ruleset(rs)
+    previous = None
+    if req.based_on:
+        previous = db.get(RuleSet, req.based_on)
+        if previous is None or previous.project_id != project_id:
+            raise HTTPException(404, "based_on rule set not found in project")
     version = (db.execute(select(func.max(RuleSet.version)).where(RuleSet.project_id == project_id, RuleSet.name == rs.name)).scalar() or 0) + 1
-    row = RuleSet(project_id=project_id, name=rs.name, version=version, content_hash=rs.content_hash, source_yaml=req.source_yaml, compiled={"rules": rs.rules, "lookups": rs.lookups, "applies_to": rs.applies_to}, validation=validation, created_by=p.username)
+    row = RuleSet(project_id=project_id, name=rs.name, version=version, content_hash=rs.content_hash, source_yaml=source_yaml, compiled={"rules": rs.rules, "lookups": rs.lookups, "applies_to": rs.applies_to}, validation=validation, created_by=p.username, rule_decisions=carry_decisions(previous, rs.rules) if previous else {})
     db.add(row)
     db.flush()
-    record_event(db, p.username, "RULESET_CREATED", "RULESET", row.id, {"name": rs.name, "version": version, "valid": validation["ok"]})
+    record_event(db, p.username, "RULESET_CREATED", "RULESET", row.id, {"name": rs.name, "version": version, "valid": validation["ok"], "based_on": req.based_on, "decisions_carried": len(row.rule_decisions or {})})
     return ruleset_out(row, full=True)
+
+
+class ComposeRequest(BaseModel):
+    document: dict | None = None
+    source_yaml: str | None = None
+
+
+@router.post("/projects/{project_id}/rulesets/compose", tags=["rules"])
+def ruleset_compose(project_id: str, req: ComposeRequest, db: Session = Depends(get_db), p: Principal = Depends(require("project:read"))):
+    """Both forms of a rule set from either one: the canonical YAML of a structured document (what the editor grid
+    saves) or the structured document of a YAML (what the grid shows), with the validation."""
+    assert_project_access(db, p, project_id)
+    empty = {"ok": False, "errors": [], "warnings": [], "tests": {"passed": 0, "failed": 0, "results": []}, "rule_count": 0}
+    try:
+        source_yaml = compose_ruleset(req.document) if req.document is not None else req.source_yaml
+        if not source_yaml:
+            raise ValueError("give document or source_yaml")
+        rs = parse_ruleset(source_yaml)
+    except Exception as e:  # noqa: BLE001
+        return {"source_yaml": None, "document": None, "validation": {**empty, "errors": [str(e)]}}
+    doc = {"ruleset": rs.name, "version": rs.version, "description": rs.description, "applies_to": rs.applies_to, "lookups": rs.lookups, "rules": rs.rules, "tests": rs.tests}
+    return {"source_yaml": source_yaml, "document": doc, "validation": validate_ruleset(rs)}
+
+
+class LookupCsv(BaseModel):
+    name: str = Field(..., max_length=64)
+    text: str = Field(..., max_length=5_000_000, description="the CSV content (comma, semicolon, tab or pipe)")
+    key_column: str | None = None
+    value_column: str | None = None
+    delimiter: str | None = Field(None, max_length=1)
+
+
+@router.post("/rulesets/lookups/from-csv", tags=["rules"])
+def lookup_from_csv(req: LookupCsv, p: Principal = Depends(require("project:read"))):
+    """A lookup table from a CSV export: entries, duplicates and conflicts reported, the YAML fragment to paste."""
+    rep = parse_lookup_csv(req.text, req.name, req.key_column, req.value_column, req.delimiter)
+    rep["yaml"] = lookup_yaml(req.name, rep["entries"]) if rep["entries"] and not rep["errors"] else None
+    return rep
+
+
+@router.get("/rulesets/{ruleset_id}/rules", tags=["rules"])
+def ruleset_rules(r: RuleSet = Depends(get_ruleset), p: Principal = Depends(require("project:read"))):
+    """The grid of a rule set: one row per rule in words, with its decision; the structured document for editing."""
+    return {"ruleset": ruleset_out(r), "rules": rule_grid(r), "decisions": decisions_summary(r), "lookups": {k: len(v) for k, v in (r.compiled.get("lookups") or {}).items()}, "document": document_of(r)}
+
+
+class RuleDecision(BaseModel):
+    decision: str = Field(..., pattern="^(APPROVED|REJECTED|PENDING)$")
+    comment: str = Field("", max_length=1000)
+
+
+@router.post("/rulesets/{ruleset_id}/rules/{rule_id}/decision", tags=["rules"])
+def ruleset_rule_decide(rule_id: str, req: RuleDecision, r: RuleSet = Depends(get_ruleset), db: Session = Depends(get_db), p: Principal = Depends(require("approve:rules"))):
+    try:
+        dec = decide_rule(db, r, rule_id, req.decision, p.username, req.comment)
+    except LookupError as e:
+        raise HTTPException(404, str(e)) from None
+    return {"rule": rule_id, **dec, "decisions": decisions_summary(r)}
 
 
 class GenerateOptions(BaseModel):

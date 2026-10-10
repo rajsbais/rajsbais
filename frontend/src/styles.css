@@ -177,3 +177,5 @@ textarea.code { font-family: var(--mono); font-size: 12.5px; width: 100%; min-he
 .approach h4 { margin: 0 0 6px; font-size: 15px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 .approach ul { margin: 8px 0 0; padding-left: 18px; font-size: 13.5px; }
 @media (max-width: 1000px) { .phases, .jstrip { grid-template-columns: 1fr; } .phase + .phase::before { content: "↓"; left: 18px; top: -16px; } .approaches { grid-template-columns: 1fr; } }
+.grid-actions { display: flex; gap: 4px; flex-wrap: wrap; }
+.grid-actions button { padding: 4px 9px; font-size: 12px; border-radius: 8px; }

@@ -5,6 +5,7 @@ from sqlalchemy.orm import Session
 
 from ..db import get_db
 from ..models import MigrationRun, RuleSet, SapSystem, ScopeManifest
+from ..rules.editor import decisions_summary
 from ..security.auth import Principal, assert_project_access, current_principal
 
 
@@ -48,7 +49,7 @@ def manifest_out(m: ScopeManifest, full: bool = False) -> dict:
 
 
 def ruleset_out(r: RuleSet, full: bool = False) -> dict:
-    d = {"id": r.id, "project_id": r.project_id, "name": r.name, "version": r.version, "status": r.status, "content_hash": r.content_hash, "created_by": r.created_by, "approved_by": r.approved_by, "created_at": r.created_at, "validation": r.validation, "rule_count": len(r.compiled.get("rules", []))}
+    d = {"id": r.id, "project_id": r.project_id, "name": r.name, "version": r.version, "status": r.status, "content_hash": r.content_hash, "created_by": r.created_by, "approved_by": r.approved_by, "created_at": r.created_at, "validation": r.validation, "rule_count": len(r.compiled.get("rules", [])), "decisions": decisions_summary(r)}
     if full:
         d["source_yaml"] = r.source_yaml
         d["compiled"] = r.compiled
