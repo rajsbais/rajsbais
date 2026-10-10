@@ -7,9 +7,10 @@ Selective, business-consistent SAP non-production refresh with masking, conflict
 
 ## Run
 ```bash
-cd backend && pip install -e '.[test]' && python -m pytest          # 627 tests
+cd backend && pip install -e '.[test]' && python -m pytest          # 647 tests
 cd ../frontend && npm install && npm run build                       # UI served by the API from frontend/dist
 cd ../backend && uvicorn rfactory.api.main:app --port 8088           # http://localhost:8088  (API docs at /docs). Not 8000: a local SAP system's HTTP port is 8000
+# several instances on one PostgreSQL database: RFACTORY_DATABASE_URL=postgresql://... plus the same RFACTORY_STATE_KEY and RFACTORY_AUDIT_KEY on each (docs/06-deployment.md)
 # durable state (survives restarts, encrypted at rest):  RFACTORY_DATA_DIR=./data RFACTORY_STATE_KEY=$(python -c 'from cryptography.fernet import Fernet;print(Fernet.generate_key().decode())') uvicorn ...
 # UI dev server: cd frontend && npm run dev   (proxies /api to :8000, edit frontend/vite.config.ts if you moved the API)
 # UI end-to-end + accessibility tests (starts its own backend per test): cd frontend && npm run test:e2e

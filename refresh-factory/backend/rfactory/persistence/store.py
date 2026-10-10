@@ -14,8 +14,10 @@ Design
     only has to implement wrap/unwrap (no such provider is built; `LocalKek` is the only one).
   * Key custody is the weak point: the KEK comes from RFACTORY_STATE_KEY, otherwise a 0600 key file next to the database (development only).
 
-NOT provided: PostgreSQL (the schema in db/schema.sql is still a design), multi-process writers, schema migrations (a version mismatch is
-refused), online backup, retention of old versions.
+Two backends (persistence/backends.py): SQLite (one process) and PostgreSQL (several instances sharing one database: a cross-instance write
+lock, a version counter, catch-up on read and write, a shared hash-chained audit log). See that module for exactly what is and is not provided.
+
+NOT provided: schema migrations (a version mismatch is refused), online backup, retention of old versions, horizontal write scalability.
 """
 from __future__ import annotations
 
@@ -23,12 +25,13 @@ import hashlib
 import io
 import os
 import pickle
-import sqlite3
 import threading
 from datetime import datetime, timezone
 from pathlib import Path
 
 from cryptography.fernet import Fernet, InvalidToken
+
+from .backends import Backend, PostgresBackend, SqliteBackend
 
 SCHEMA_VERSION = 2
 KEY_CHECK = b"rfactory-state-key-check"
@@ -87,6 +90,26 @@ def _loads(data: bytes):
     return _Unpickler(io.BytesIO(data)).load()
 
 
+def _maps(svc) -> tuple[tuple[str, dict], ...]:
+    return (("delta", svc.delta.scenarios), ("tdm_policy", svc.tdm.policies), ("tdm_dataset", svc.tdm.datasets), ("tdm_request", svc.tdm.requests),
+            ("lean_template", svc.lean.templates), ("lean_build", svc.lean.builds), ("pc_profile", svc.postcopy.profiles), ("pc_run", svc.postcopy.runs),
+            ("full", svc.full.programs), ("job", svc.orch.jobs), ("schedule", svc.orch.schedules), ("pipeline", svc.orch.pipelines))
+
+
+def forget(svc, kind: str, k: str) -> None:
+    """Drop an aggregate another instance deleted (the singletons are never deleted)."""
+    if kind == "system":
+        svc.systems.pop(k, None); svc.adapters.pop(k, None); svc.remote_profiles.pop(k, None)
+    elif kind == "project":
+        svc.projects.pop(k, None); svc.required_sensitive.pop(k, None); svc.engines.pop(k, None)
+    elif kind == "run":
+        svc.runs.pop(k, None)
+    else:
+        for name, mapping in _maps(svc):
+            if name == kind:
+                mapping.pop(k, None)
+
+
 def collect(svc) -> dict[tuple[str, str], object]:
     """Every aggregate the platform holds, keyed by (kind, id). Objects inside one aggregate keep their mutual references."""
     out: dict[tuple[str, str], object] = {}
@@ -99,9 +122,7 @@ def collect(svc) -> dict[tuple[str, str], object]:
         out[("project", pid)] = {"project": p, "sensitive": svc.required_sensitive.get(pid), "engine": svc.engines.get(pid)}
     for rid, r in svc.runs.items():
         out[("run", rid)] = r
-    for kind, mapping in (("delta", svc.delta.scenarios), ("tdm_policy", svc.tdm.policies), ("tdm_dataset", svc.tdm.datasets), ("tdm_request", svc.tdm.requests),
-                          ("lean_template", svc.lean.templates), ("lean_build", svc.lean.builds), ("pc_profile", svc.postcopy.profiles), ("pc_run", svc.postcopy.runs),
-                          ("full", svc.full.programs), ("job", svc.orch.jobs), ("schedule", svc.orch.schedules), ("pipeline", svc.orch.pipelines)):
+    for kind, mapping in _maps(svc):
         for k, v in mapping.items():
             out[(kind, k)] = v
     out[("agents", "all")] = {"reports": svc.agents.reports, "recs": svc.agents.recs}
@@ -132,9 +153,7 @@ def apply(svc, objs: dict[tuple[str, str], object]) -> None:
         if pack["engine"] is not None:
             svc.engines[pid] = pack["engine"]
     svc.runs.update(by.get("run", {}))
-    for kind, mapping in (("delta", svc.delta.scenarios), ("tdm_policy", svc.tdm.policies), ("tdm_dataset", svc.tdm.datasets), ("tdm_request", svc.tdm.requests),
-                          ("lean_template", svc.lean.templates), ("lean_build", svc.lean.builds), ("pc_profile", svc.postcopy.profiles), ("pc_run", svc.postcopy.runs),
-                          ("full", svc.full.programs), ("job", svc.orch.jobs), ("schedule", svc.orch.schedules), ("pipeline", svc.orch.pipelines)):
+    for kind, mapping in _maps(svc):
         mapping.update(by.get(kind, {}))
     if "agents" in by:
         a = by["agents"]["all"]
@@ -152,23 +171,27 @@ def apply(svc, objs: dict[tuple[str, str], object]) -> None:
         o.windows, o.leases, o.events, o.subs, o.outbox, o.skew = s["windows"], s["leases"], s["events"], s["subs"], s["outbox"], s["skew"]
 
 
+
+
 class StateStore:
-    def __init__(self, svc, path: Path, key: bytes | None = None, provider: KeyProvider | None = None):
-        self.svc, self.path = svc, Path(path)
-        self.path.parent.mkdir(parents=True, exist_ok=True)
+    def __init__(self, svc, path: Path | None = None, key: bytes | None = None, provider: KeyProvider | None = None, backend: Backend | None = None):
+        if backend is None and path is None:
+            raise StoreError("a state store needs a path (SQLite) or a backend")
+        self.svc = svc
+        self.backend = backend or SqliteBackend(Path(path))
+        self.path = getattr(self.backend, "path", None)  # the database file, for SQLite only
         self.key_source = "environment (RFACTORY_STATE_KEY)" if (key or os.environ.get("RFACTORY_STATE_KEY")) else "key file next to the database (development only)"
         self.provider = provider or LocalKek(self._resolve_key(key))
         self._fernet: Fernet | None = None  # the data key, known once the database is opened (load) or created
-        self._lock = threading.Lock()
-        self._db = sqlite3.connect(self.path, check_same_thread=False)
-        self._db.execute("PRAGMA journal_mode=WAL")
-        self._db.execute("PRAGMA synchronous=FULL")
-        self._db.execute("CREATE TABLE IF NOT EXISTS aggregates (kind TEXT NOT NULL, id TEXT NOT NULL, hash TEXT NOT NULL, blob BLOB NOT NULL, updated TEXT NOT NULL, PRIMARY KEY (kind, id))")
-        self._db.execute("CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value BLOB NOT NULL)")
-        self._hashes: dict[tuple[str, str], str] = {}
+        self._lock = threading.RLock()
+        self._hashes: dict[tuple[str, str], str] = {}  # hash of what THIS process last serialised/loaded, per aggregate
+        self._remote: dict[tuple[str, str], str] = {}  # hash the database held for it when we last looked
+        self._version = -1
+        self._write_held = False
         self.last_saved: str | None = None
         self.last_save_stats: dict = {}
         self.interrupted: list[str] = []
+        self.refreshed = 0  # aggregates picked up from other instances, for status
 
     # ---------------------------------------------------------------- key handling
     def _resolve_key(self, key: bytes | None) -> bytes:
@@ -177,6 +200,8 @@ class StateStore:
         env = os.environ.get("RFACTORY_STATE_KEY")
         if env:
             return env.encode()
+        if self.backend.multi_instance:
+            raise StoreError("a shared database needs the state key from RFACTORY_STATE_KEY: a key file would differ between instances and they could not read each other's data")
         kf = self.path.with_suffix(".key")
         if kf.exists():
             return kf.read_bytes().strip()
@@ -188,18 +213,16 @@ class StateStore:
 
     # ---------------------------------------------------------------- load
     def exists(self) -> bool:
-        return self._db.execute("SELECT COUNT(*) FROM aggregates").fetchone()[0] > 0 or self._meta("schema") is not None
+        return self.backend.aggregate_count() > 0 or self._meta("schema") is not None
 
     def _meta(self, k: str):
-        r = self._db.execute("SELECT value FROM meta WHERE key=?", (k,)).fetchone()
-        return r[0] if r else None
+        return self.backend.meta_get(k)
 
     def _init_meta(self) -> None:
         dek = Fernet.generate_key()
-        with self._db:
-            self._db.execute("INSERT OR REPLACE INTO meta VALUES ('schema', ?)", (str(SCHEMA_VERSION).encode(),))
-            self._db.execute("INSERT OR REPLACE INTO meta VALUES ('wrapped_dek', ?)", (self.provider.wrap(dek),))
-            self._db.execute("INSERT OR REPLACE INTO meta VALUES ('key_check', ?)", (Fernet(dek).encrypt(KEY_CHECK),))
+        self.backend.meta_put("schema", str(SCHEMA_VERSION).encode())
+        self.backend.meta_put("wrapped_dek", self.provider.wrap(dek))
+        self.backend.meta_put("key_check", Fernet(dek).encrypt(KEY_CHECK))
         self._fernet = Fernet(dek)
 
     def _open_existing(self) -> None:
@@ -218,31 +241,50 @@ class StateStore:
             raise StoreError("the data key does not open this database: it was modified or corrupted")
         self._fernet = f
 
+    def _read_objs(self, keys=None) -> dict[tuple[str, str], tuple[str, object]]:
+        out = {}
+        for kind, k, h, blob in self.backend.read(keys):
+            try:
+                plain = self._fernet.decrypt(blob)
+            except InvalidToken:
+                raise StoreError(f"aggregate {kind}/{k} failed authentication: the database was modified or corrupted")
+            if hashlib.sha256(plain).hexdigest() != h:
+                raise StoreError(f"aggregate {kind}/{k} does not match its recorded hash")
+            out[(kind, k)] = (h, _loads(plain))
+        return out
+
+    def _adopt(self, loaded: dict[tuple[str, str], tuple[str, object]]) -> None:
+        """Install loaded aggregates into the platform and remember both hashes: the database's and ours (re-serialised, so that an
+        aggregate nobody changes is never rewritten just because pickling is not byte-stable across processes)."""
+        apply(self.svc, {k: o for k, (_h, o) in loaded.items()})
+        cur = collect(self.svc)
+        for key, (h, _o) in loaded.items():
+            self._remote[key] = h
+            self._hashes[key] = hashlib.sha256(_dumps(cur[key])).hexdigest() if key in cur else h
+
     def load(self) -> int:
-        """Restore the platform from disk. Refuses (never silently starts empty) on a wrong key, tampering, or a schema mismatch."""
-        with self._lock:
-            ver = self._meta("schema")
-            if ver is None:
-                if self._db.execute("SELECT COUNT(*) FROM aggregates").fetchone()[0]:
-                    raise StoreError("state database has data but no schema marker: refusing to load")
-                self._init_meta()
-                return 0
-            self._open_existing()
-            objs: dict[tuple[str, str], object] = {}
-            for kind, k, h, blob in self._db.execute("SELECT kind, id, hash, blob FROM aggregates"):
-                try:
-                    plain = self._fernet.decrypt(blob)
-                except InvalidToken:
-                    raise StoreError(f"aggregate {kind}/{k} failed authentication: the database was modified or corrupted")
-                if hashlib.sha256(plain).hexdigest() != h:
-                    raise StoreError(f"aggregate {kind}/{k} does not match its recorded hash")
-                objs[(kind, k)] = _loads(plain)
-                self._hashes[(kind, k)] = h
-            apply(self.svc, objs)
-            self.interrupted = self.find_interrupted()
-            if self.interrupted:
-                self.svc.audit.append("system", "persistence.interrupted_work_found", "store", {"items": self.interrupted[:20]})
-            return len(objs)
+        """Restore the platform from the database. Refuses (never silently starts empty) on a wrong key, tampering, or a schema mismatch.
+        With a shared database the whole start-up runs under the write lock, so two instances starting together cannot both create keys."""
+        self.backend.acquire_write(120.0)
+        try:
+            with self._lock:
+                ver = self._meta("schema")
+                if ver is None:
+                    if self.backend.aggregate_count():
+                        raise StoreError("state database has data but no schema marker: refusing to load")
+                    self._init_meta()
+                    self._version = self.backend.version()
+                    return 0
+                self._open_existing()
+                self._version = self.backend.version()
+                loaded = self._read_objs()
+                self._adopt(loaded)
+                self.interrupted = self.find_interrupted()
+                if self.interrupted:
+                    self.svc.audit.append("system", "persistence.interrupted_work_found", "store", {"items": self.interrupted[:20]})
+                return len(loaded)
+        finally:
+            self.backend.release_write()
 
     def find_interrupted(self) -> list[str]:
         """Work recorded as in progress when the state was saved. Saves happen at request boundaries, so this means the process was
@@ -256,13 +298,54 @@ class StateStore:
         out += [f"job {k}" for k, j in svc.orch.jobs.items() if j.status == "RUNNING"]
         return out
 
+    # ---------------------------------------------------------------- catching up with other instances
+    def refresh(self) -> int:
+        """Pick up what other instances saved since we last looked. One cheap query when nothing changed. Returns the aggregates replaced."""
+        if self._fernet is None or not self.backend.multi_instance:
+            return 0
+        with self._lock:
+            v = self.backend.version()
+            if v == self._version:
+                return 0
+            try:
+                self._fernet.decrypt(self._meta("key_check"))
+            except InvalidToken:  # another instance rotated the data key: take the new one (needs the same key-encryption key)
+                self._open_existing()
+            remote = self.backend.list_hashes()
+            changed = [k for k, h in remote.items() if self._remote.get(k) != h]
+            gone = [k for k in self._hashes if k not in remote]
+            loaded = self._read_objs(changed) if changed else {}
+            self._adopt(loaded)
+            for kind, k in gone:
+                forget(self.svc, kind, k)
+                self._hashes.pop((kind, k), None)
+                self._remote.pop((kind, k), None)
+            self._version = v
+            self.refreshed += len(loaded) + len(gone)
+            return len(loaded) + len(gone)
+
+    def begin_write(self, timeout: float = 60.0) -> int:
+        """Start of a mutating request: take the deployment's write lock, then catch up, so this request works on the latest state."""
+        self.backend.acquire_write(timeout)
+        try:
+            self._write_held = True
+            return self.refresh()
+        except BaseException:
+            self._write_held = False
+            self.backend.release_write()
+            raise
+
+    def end_write(self) -> None:
+        if self._write_held:
+            self._write_held = False
+            self.backend.release_write()
+
     # ---------------------------------------------------------------- save
     def save(self) -> dict:
         """Write every aggregate that changed since the last save, in one transaction."""
         with self._lock:
             if self._fernet is None:
                 raise StoreError("the store has not been opened: call load() first")
-            now = datetime.now(timezone.utc).isoformat()
             cur = collect(self.svc)
             changed: list[tuple[tuple[str, str], str, bytes]] = []
             for key, obj in cur.items():
@@ -271,24 +354,25 @@ class StateStore:
                 if self._hashes.get(key) != h:
                     changed.append((key, h, plain))
             gone = [k for k in self._hashes if k not in cur]
-            with self._db:  # one transaction: all or nothing
-                for (kind, k), h, plain in changed:
-                    self._db.execute("INSERT OR REPLACE INTO aggregates VALUES (?,?,?,?,?)", (kind, k, h, self._fernet.encrypt(plain), now))
-                for kind, k in gone:
-                    self._db.execute("DELETE FROM aggregates WHERE kind=? AND id=?", (kind, k))
+            if changed or gone:
+                v = self.backend.commit([(kind, k, h, self._fernet.encrypt(plain)) for (kind, k), h, plain in changed], gone)
+                if self._write_held or not self.backend.multi_instance:
+                    self._version = v  # nobody can have saved in between: we are current
             for (key, h, _p) in changed:
                 self._hashes[key] = h
+                self._remote[key] = h
             for k in gone:
                 self._hashes.pop(k, None)
-            self.last_saved = now
+                self._remote.pop(k, None)
+            self.last_saved = datetime.now(timezone.utc).isoformat()
             self.last_save_stats = {"written": len(changed), "deleted": len(gone), "aggregates": len(cur)}
             return self.last_save_stats
 
     # ---------------------------------------------------------------- key rotation
     @classmethod
-    def open_for_maintenance(cls, path: Path, kek: bytes) -> "StateStore":
+    def open_for_maintenance(cls, path: Path | None, kek: bytes, backend: Backend | None = None) -> "StateStore":
         """Open a database without a running platform (offline key rotation)."""
-        st = cls(None, path, key=kek)
+        st = cls(None, path, key=kek, backend=backend)
         if st._meta("schema") is None:
             raise StoreError("no database to maintain")
         st._open_existing()
@@ -298,30 +382,44 @@ class StateStore:
         """Re-wrap the data key under a new key-encryption key. Cheap: no blob is touched."""
         with self._lock:
             dek = self.provider.unwrap(self._meta("wrapped_dek"))
-            with self._db:
-                self._db.execute("INSERT OR REPLACE INTO meta VALUES ('wrapped_dek', ?)", (new_provider.wrap(dek),))
+            self.backend.meta_put("wrapped_dek", new_provider.wrap(dek))
             self.provider = new_provider
 
     def rotate_dek(self) -> int:
-        """Replace the data key and re-encrypt every stored blob in ONE transaction (all or nothing)."""
-        with self._lock:
-            old, new_key = self._fernet, Fernet.generate_key()
-            new = Fernet(new_key)
-            rows = self._db.execute("SELECT kind, id, blob FROM aggregates").fetchall()
-            with self._db:
-                for kind, k, blob in rows:
-                    self._db.execute("UPDATE aggregates SET blob=? WHERE kind=? AND id=?", (new.encrypt(old.decrypt(blob)), kind, k))
-                self._db.execute("INSERT OR REPLACE INTO meta VALUES ('wrapped_dek', ?)", (self.provider.wrap(new_key),))
-                self._db.execute("INSERT OR REPLACE INTO meta VALUES ('key_check', ?)", (new.encrypt(KEY_CHECK),))
-            self._fernet = new
-            return len(rows)
+        """Replace the data key and re-encrypt every stored blob in ONE transaction (all or nothing). Other instances notice at their next
+        refresh (the key check no longer opens with their key) and take the new key."""
+        owns = self._write_held  # inside a mutating request the lock is already ours
+        if not owns:
+            self.backend.acquire_write(60.0)
+        try:
+            with self._lock:
+                if self.svc is not None:  # a maintenance tool has no running platform to catch up
+                    self.refresh()
+                old, new_key = self._fernet, Fernet.generate_key()
+                new = Fernet(new_key)
+                n = self.backend.rewrite(lambda blob: new.encrypt(old.decrypt(blob)),
+                                         {"wrapped_dek": self.provider.wrap(new_key), "key_check": new.encrypt(KEY_CHECK)})
+                self._fernet = new
+                self._version = self.backend.version()
+                return n
+        finally:
+            if not owns:
+                self.backend.release_write()
 
     def status(self) -> dict:
         kinds: dict[str, int] = {}
         for kind, _ in self._hashes:
             kinds[kind] = kinds.get(kind, 0) + 1
-        size = self.path.stat().st_size if self.path.exists() else 0
-        return {"durable": True, "database": self.path.name, "bytes": size, "aggregates": len(self._hashes), "by_kind": kinds, "schema_version": SCHEMA_VERSION,
-                "interrupted_work": self.interrupted, "encrypted_at_rest": True, "key_source": self.key_source, "key_provider": self.provider.name, "envelope_encryption": True, "last_saved": self.last_saved, "last_save": self.last_save_stats,
-                "limits": ["single writer: mutating API requests are serialised", "SQLite, not PostgreSQL", "no schema migrations", "no online backup or version history",
-                           "the audit log (audit.jsonl) is append-only on disk and is not encrypted"]}
+        multi = self.backend.multi_instance
+        d = self.backend.describe()
+        limits = ["single writer: mutating API requests are serialised" + (" across all instances (one write lock in the database)" if multi else ""),
+                  "no schema migrations", "no online backup or version history",
+                  "the audit log is " + ("an append-only table in the same database (not encrypted)" if multi else "audit.jsonl, append-only on disk and not encrypted")]
+        if not multi:
+            limits.insert(1, "SQLite: one process only; use RFACTORY_DATABASE_URL (PostgreSQL) to run several instances")
+        else:
+            limits.append("state is replicated in each instance's memory and caught up at every request (one query when nothing changed)")
+        return {"durable": True, **d, "bytes": self.backend.size(), "aggregates": len(self._hashes), "by_kind": kinds, "schema_version": SCHEMA_VERSION,
+                "interrupted_work": self.interrupted, "encrypted_at_rest": True, "key_source": self.key_source, "key_provider": self.provider.name,
+                "envelope_encryption": True, "last_saved": self.last_saved, "last_save": self.last_save_stats, "version": self._version,
+                "aggregates_taken_from_other_instances": self.refreshed, "limits": limits}

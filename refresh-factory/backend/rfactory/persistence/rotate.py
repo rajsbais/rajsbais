@@ -2,6 +2,7 @@
 
   python -m rfactory.persistence.rotate --data-dir DIR --rotate-data-key
   python -m rfactory.persistence.rotate --data-dir DIR --new-key-env NEW_KEY_VAR     # re-wrap the data key under a new KEK
+  python -m rfactory.persistence.rotate --database-url-env VAR --rotate-data-key     # the same for a shared PostgreSQL database (URL read from VAR)
 
 The old KEK is taken from RFACTORY_STATE_KEY or the key file. After a KEK rotation with --new-key-env, start the platform with
 RFACTORY_STATE_KEY set to the new value. If the KEK lives in the key file (no environment variable), pass --write-key-file and the file is replaced.
@@ -19,14 +20,23 @@ from cryptography.fernet import Fernet
 from .store import LocalKek, StateStore, StoreError
 
 
-def rotate(data_dir: Path, new_kek: bytes | None = None, rotate_data_key: bool = False, write_key_file: bool = False) -> dict:
-    data_dir = Path(data_dir)
-    db = data_dir / "state.db"
-    kf = db.with_suffix(".key")
-    old = os.environ.get("RFACTORY_STATE_KEY", "").encode() or (kf.read_bytes().strip() if kf.exists() else b"")
+def rotate(data_dir: Path | None, new_kek: bytes | None = None, rotate_data_key: bool = False, write_key_file: bool = False, database_url: str | None = None) -> dict:
+    backend = None
+    if database_url:
+        from .backends import PostgresBackend
+        backend = PostgresBackend(database_url)
+        db = kf = None
+        old = os.environ.get("RFACTORY_STATE_KEY", "").encode()
+        if write_key_file:
+            raise StoreError("a shared database has no key file: the key lives in RFACTORY_STATE_KEY")
+    else:
+        data_dir = Path(data_dir)
+        db = data_dir / "state.db"
+        kf = db.with_suffix(".key")
+        old = os.environ.get("RFACTORY_STATE_KEY", "").encode() or (kf.read_bytes().strip() if kf.exists() else b"")
     if not old:
         raise StoreError("no current key: set RFACTORY_STATE_KEY or provide the key file")
-    st = StateStore.open_for_maintenance(db, old)
+    st = StateStore.open_for_maintenance(db, old, backend=backend)
     out: dict = {}
     if rotate_data_key:
         out["blobs_reencrypted"] = st.rotate_dek()
@@ -47,14 +57,18 @@ def rotate(data_dir: Path, new_kek: bytes | None = None, rotate_data_key: bool =
 
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--data-dir", required=True)
+    ap.add_argument("--data-dir")
+    ap.add_argument("--database-url-env", help="name of an environment variable holding the PostgreSQL URL of a shared database")
     ap.add_argument("--rotate-data-key", action="store_true")
     ap.add_argument("--new-key-env", help="name of an environment variable holding the new Fernet key")
     ap.add_argument("--write-key-file", action="store_true")
     a = ap.parse_args(argv)
     new = os.environ[a.new_key_env].encode() if a.new_key_env else None
     try:
-        print(rotate(Path(a.data_dir), new, a.rotate_data_key, a.write_key_file))
+        if not a.data_dir and not a.database_url_env:
+            raise StoreError("give --data-dir (SQLite) or --database-url-env (PostgreSQL)")
+        url = os.environ[a.database_url_env] if a.database_url_env else None
+        print(rotate(Path(a.data_dir) if a.data_dir else None, new, a.rotate_data_key, a.write_key_file, database_url=url))
     except StoreError as e:
         print(f"error: {e}", file=sys.stderr)
         return 1

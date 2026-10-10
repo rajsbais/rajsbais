@@ -40,13 +40,24 @@ def load_audit_key(directory: Path | None) -> bytes | None:
 
 
 class AuditLog:
-    def __init__(self, path: Path | None = None, key: bytes | None = None):
+    """Hash-chained, optionally signed. Stored in a JSONL file (one instance) or, with a `sink` (the PostgreSQL backend), in a shared
+    append-only table: then every instance extends ONE chain, because the next entry is built from the current end of the shared log."""
+
+    def __init__(self, path: Path | None = None, key: bytes | None = None, sink=None):
         self._entries: list[dict] = []
         self._lock = threading.Lock()
         self._path = path
         self._key = key
-        if path and path.exists():
+        self._sink = sink
+        if sink is not None:
+            self._sync()
+        elif path and path.exists():
             self._entries = [json.loads(l) for l in path.read_text().splitlines() if l.strip()]
+
+    def _sync(self) -> None:
+        """Shared log only: pick up the entries other instances appended since we last looked."""
+        if self._sink is not None:
+            self._entries += [json.loads(t) for t in self._sink.audit_tail(len(self._entries))]
 
     @staticmethod
     def _digest(e: dict) -> str:
@@ -58,6 +69,17 @@ class AuditLog:
 
     def append(self, actor: str, action: str, resource: str, details: dict | None = None) -> dict:
         with self._lock:
+            if self._sink is not None:
+                def build(prev_seq, prev_hash):
+                    e = {"seq": prev_seq + 1, "ts": datetime.now(timezone.utc).isoformat(), "actor": actor, "action": action, "resource": resource,
+                         "details": details or {}, "prev": prev_hash or GENESIS}
+                    e["hash"] = self._digest(e)
+                    if self._key:
+                        e["sig"] = self._sign(e["hash"])
+                    return e, json.dumps(e, default=str)
+                e = self._sink.audit_append(build)
+                self._sync()
+                return e
             prev = self._entries[-1]["hash"] if self._entries else GENESIS
             e = {"seq": len(self._entries) + 1, "ts": datetime.now(timezone.utc).isoformat(), "actor": actor,
                  "action": action, "resource": resource, "details": details or {}, "prev": prev}
@@ -71,18 +93,23 @@ class AuditLog:
             return e
 
     def entries(self, resource: str | None = None, limit: int | None = None) -> list[dict]:
+        with self._lock:
+            self._sync()
         out = [e for e in self._entries if resource is None or e["resource"].startswith(resource)]
         return out[-limit:] if limit else list(out)
 
     def head(self) -> dict:
         """A signed statement of the log's current end: store it somewhere the platform cannot write, to detect truncation later."""
         with self._lock:
+            self._sync()
             seq = len(self._entries)
             h = self._entries[-1]["hash"] if self._entries else GENESIS
             ts = datetime.now(timezone.utc).isoformat()
             return {"seq": seq, "head": h, "ts": ts, "signature": self._sign(f"{seq}|{h}|{ts}") if self._key else None, "signed": bool(self._key)}
 
     def verify(self, expected_head: dict | None = None) -> dict:
+        with self._lock:
+            self._sync()
         prev, signed_seen, legacy = GENESIS, False, 0
         for i, e in enumerate(self._entries):
             if e["prev"] != prev or e["seq"] != i + 1 or self._digest(e) != e["hash"]:

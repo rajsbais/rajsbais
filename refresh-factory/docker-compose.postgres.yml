@@ -1,0 +1,33 @@
+# NEVER RUN by the authors. An example of several platform instances sharing one PostgreSQL database (see docs/06-deployment.md).
+# Every instance needs the SAME RFACTORY_STATE_KEY and RFACTORY_AUDIT_KEY (from .env) and the same database; a reverse proxy in front of the two
+# published ports (not included) spreads the requests. Run: docker compose -f docker-compose.postgres.yml up
+x-instance: &instance
+  build: .
+  env_file: .env
+  environment:
+    RFACTORY_ENV: production
+    RFACTORY_DATABASE_URL: postgresql://rf:${POSTGRES_PASSWORD}@db:5432/rf   # POSTGRES_PASSWORD from .env
+  depends_on:
+    db: { condition: service_healthy }
+  read_only: true
+  tmpfs: [/tmp, /data]
+  cap_drop: [ALL]
+  security_opt: ["no-new-privileges:true"]
+  restart: unless-stopped
+services:
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: rf
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: rf
+    volumes: [rf-pg:/var/lib/postgresql/data]
+    healthcheck: { test: ["CMD-SHELL", "pg_isready -U rf"], interval: 5s, timeout: 5s, retries: 10 }
+  refresh-factory-1:
+    <<: *instance
+    ports: ["127.0.0.1:8088:8088"]
+  refresh-factory-2:
+    <<: *instance
+    ports: ["127.0.0.1:8089:8088"]
+volumes:
+  rf-pg:

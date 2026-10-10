@@ -71,10 +71,19 @@ class Project:
 
 
 class RefreshService:
-    def __init__(self, data_dir: Path | None = None, persist: bool = False):
+    def __init__(self, data_dir: Path | None = None, persist: bool = False, database_url: str | None = None):
         self.data_dir = data_dir or Path(tempfile.mkdtemp(prefix="rfactory-"))
         self.data_dir.mkdir(parents=True, exist_ok=True)
-        self.audit = AuditLog(self.data_dir / "audit.jsonl", load_audit_key(self.data_dir))
+        self.backend = None
+        if database_url:  # several instances share one PostgreSQL database: state and audit log live there, keys come from the environment
+            from .persistence.backends import PostgresBackend
+            if not os.environ.get("RFACTORY_STATE_KEY") or not os.environ.get("RFACTORY_AUDIT_KEY"):
+                raise RuntimeError("RFACTORY_DATABASE_URL needs RFACTORY_STATE_KEY and RFACTORY_AUDIT_KEY: key files would differ between instances")
+            self.backend = PostgresBackend(database_url)
+            persist = True
+            self.audit = AuditLog(None, load_audit_key(None), sink=self.backend)
+        else:
+            self.audit = AuditLog(self.data_dir / "audit.jsonl", load_audit_key(self.data_dir))
         self.registries = {"ECC": Registry("ECC"), "S4": Registry("S4")}
         self.registry = self.registries["ECC"]  # default / ECC
         self.systems: dict[str, SapSystem] = {}
@@ -108,7 +117,7 @@ class RefreshService:
         self.store = None
         if persist:
             from .persistence.store import StateStore
-            self.store = StateStore(self, self.data_dir / "state.db")
+            self.store = StateStore(self, self.data_dir / "state.db", backend=self.backend) if self.backend else StateStore(self, self.data_dir / "state.db")
             self.store.load()
 
     def checkpoint(self) -> dict | None:

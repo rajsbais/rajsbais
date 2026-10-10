@@ -48,7 +48,7 @@ def production_problems(auth, persist: bool, env=None) -> list[str]:
     if getattr(auth, "mode", "demo") != "oidc":
         out.append("authentication is the demo header: set RFACTORY_AUTH=oidc (and the issuer, audience and JWKS)")
     if not persist:
-        out.append("state is not durable: set RFACTORY_DATA_DIR")
+        out.append("state is not durable: set RFACTORY_DATA_DIR (one instance) or RFACTORY_DATABASE_URL (PostgreSQL, several instances)")
     if not e.get("RFACTORY_STATE_KEY"):
         out.append("RFACTORY_STATE_KEY is not set: the state encryption key would sit in a file next to the data")
     if not e.get("RFACTORY_AUDIT_KEY"):

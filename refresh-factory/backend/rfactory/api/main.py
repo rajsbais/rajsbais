@@ -342,9 +342,10 @@ def create_app(data_dir: Path | None = None, persist: bool | None = None, auth: 
     env_dir = os.environ.get("RFACTORY_DATA_DIR")
     if data_dir is None and env_dir:
         data_dir = Path(env_dir)
+    database_url = os.environ.get("RFACTORY_DATABASE_URL") or None
     if persist is None:
-        persist = bool(env_dir)
-    svc = RefreshService(data_dir, persist=persist)
+        persist = bool(env_dir) or bool(database_url)
+    svc = RefreshService(data_dir, persist=persist, database_url=database_url)
     auth = auth or AuthConfig.from_env()
     auth.check_login()
     production = os.environ.get("RFACTORY_ENV", "").lower() == "production"
@@ -362,6 +363,7 @@ def create_app(data_dir: Path | None = None, persist: bool | None = None, auth: 
         verifier.revocations = svc.revocations
 
     write_lock = asyncio.Lock()
+    lock_timeout = float(os.environ.get("RFACTORY_WRITE_LOCK_TIMEOUT", "60"))  # seconds a request waits for the other instances' writes
     sec_headers = hardening.headers(auth, os.environ.get("RFACTORY_HSTS") == "1")
 
     @app.middleware("http")
@@ -382,16 +384,36 @@ def create_app(data_dir: Path | None = None, persist: bool | None = None, auth: 
 
     @app.middleware("http")
     async def single_writer(request: Request, call_next):
-        """Mutating requests run one at a time and the state is saved at the request boundary, so what is on disk is always consistent."""
-        if request.method in ("GET", "HEAD", "OPTIONS") or svc.store is None:
+        """Mutating requests run one at a time and the state is saved at the request boundary, so what is stored is always consistent.
+        With a shared database ("several instances") the same holds across all of them: the request takes the deployment's write lock,
+        first catches up with what the other instances saved, and releases the lock after saving. Reads only catch up."""
+        store = svc.store
+        if store is None:
+            return await call_next(request)
+        shared = store.backend.multi_instance
+        if request.method in ("GET", "HEAD", "OPTIONS"):
+            if shared and request.url.path.startswith("/api/"):
+                try:
+                    await run_in_threadpool(store.refresh)
+                except Exception as e:  # noqa: BLE001
+                    return JSONResponse({"detail": f"the shared state could not be read: {type(e).__name__}: {e}"}, 503)
             return await call_next(request)
         async with write_lock:
-            resp = await call_next(request)
+            if shared:
+                try:
+                    await run_in_threadpool(store.begin_write, lock_timeout)
+                except Exception as e:  # noqa: BLE001 - nothing was changed: the caller may retry
+                    return JSONResponse({"detail": f"could not take the write lock of the shared state: {type(e).__name__}: {e}"}, 503)
             try:
-                await run_in_threadpool(svc.checkpoint)
-            except Exception as e:  # noqa: BLE001 - the effect happened in memory but is NOT durable: say so loudly
-                return JSONResponse({"detail": f"the request was applied but the state could not be saved: {type(e).__name__}: {e}"}, 500)
-            return resp
+                resp = await call_next(request)
+                try:
+                    await run_in_threadpool(svc.checkpoint)
+                except Exception as e:  # noqa: BLE001 - the effect happened in memory but is NOT durable: say so loudly
+                    return JSONResponse({"detail": f"the request was applied but the state could not be saved: {type(e).__name__}: {e}"}, 500)
+                return resp
+            finally:
+                if shared:
+                    await run_in_threadpool(store.end_write)
 
     @app.exception_handler(NotFound)
     async def _nf(_: Request, e: NotFound):

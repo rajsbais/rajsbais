@@ -1,5 +1,5 @@
--- PostgreSQL schema for the production persistence layer (DESIGN ARTEFACT: NOT executed or tested by the MVP,
--- which keeps state in memory and the audit log in JSONL). Multi-tenant via tenant_id on every table + row-level security.
+-- PostgreSQL schema for a future RELATIONAL persistence layer (DESIGN ARTEFACT: NOT executed or tested). The PostgreSQL support that exists
+-- (M30, persistence/backends.py) stores encrypted aggregates in rf_aggregates/rf_meta/rf_version and the audit log in rf_audit instead. Multi-tenant via tenant_id on every table + row-level security.
 CREATE TABLE sap_system (
   id uuid PRIMARY KEY, tenant_id uuid NOT NULL, sid text NOT NULL, client text NOT NULL, role text NOT NULL CHECK (role IN ('PRD','QAS','DEV','UAT','SBX','TRN')),
   product text NOT NULL, family text NOT NULL CHECK (family IN ('ECC','S4')), release text, db_type text, owner text,

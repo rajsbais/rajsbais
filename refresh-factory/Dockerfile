@@ -15,7 +15,7 @@ WORKDIR /app
 COPY backend/pyproject.toml backend/pyproject.toml
 COPY backend/rfactory backend/rfactory
 # editable on purpose: the API finds the built UI at <app>/frontend/dist relative to the source tree
-RUN pip install --no-cache-dir -e ./backend
+RUN pip install --no-cache-dir -e "./backend[postgres]"
 COPY --from=ui /ui/dist frontend/dist
 USER rf
 VOLUME /data
