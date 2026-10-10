@@ -106,6 +106,18 @@ TABLES: dict[str, TableDef] = {
         _t("AFIH", "Maintenance order header (PM part of the order; simplified)", ["AUFNR"], ["AUFNR", "ILART", "EQUNR", "TPLNR", "QMNUM", "PRIOK", "GSTRP"]),
         # Project system (PS): project definition, WBS elements (a hierarchy inside the project) and actual cost lines. Simplified: external keys
         # (PSPID, POSID) instead of the internal PSPNR numbers, no networks, milestones, budgets or commitments.
+        # Warehouse management. WM (also in S/4HANA as the classic warehouse): bins, quants, transfer orders. Simplified: one-field keys (SAP's keys
+        # start with the warehouse number) and the plant on the bin. EWM (S/4HANA embedded): SCWM_* are STAND-INS for the /SCWM/ tables, because
+        # this model's keys cannot carry a slash in a table name. No handling units, resources, queues or wave management in either.
+        _t("T300", "Warehouse numbers", ["LGNUM"], ["LGNUM", "LNUMT"], True),
+        _t("LAGP", "WM storage bin", ["LGPLA"], ["LGPLA", "LGNUM", "LGTYP", "LGBER", "LKAPV", "WERKS"]),
+        _t("LQUA", "WM quant", ["LQNUM"], ["LQNUM", "LGNUM", "LGTYP", "LGPLA", "MATNR", "WERKS", "VERME", "MEINS", "WDATU"]),
+        _t("LTAK", "WM transfer order header", ["TANUM"], ["TANUM", "LGNUM", "BWLVS", "BDATU", "QNAME"]),
+        _t("LTAP", "WM transfer order item", ["TANUM", "TAPOS"], ["TANUM", "TAPOS", "MATNR", "WERKS", "VLTYP", "VLPLA", "NLTYP", "NLPLA", "NSOLM", "MEINS"]),
+        _t("SCWM_LAGP", "EWM storage bin (stand-in for /SCWM/LAGP)", ["LGPLA"], ["LGPLA", "LGNUM", "LGTYP", "LGBER", "WERKS"]),
+        _t("SCWM_QUAN", "EWM quant (stand-in for /SCWM/QUAN)", ["QUANID"], ["QUANID", "LGNUM", "LGPLA", "MATNR", "WERKS", "QUAN", "UNIT"]),
+        _t("SCWM_WHO", "EWM warehouse order (stand-in for /SCWM/WHO)", ["WHO"], ["WHO", "LGNUM", "STATUS", "CREATED_ON", "CREATED_BY"]),
+        _t("SCWM_ORDIM_O", "EWM warehouse task (stand-in for /SCWM/ORDIM_O)", ["WHO", "TANUM"], ["WHO", "TANUM", "MATNR", "WERKS", "VLPLA", "NLPLA", "VSOLM", "UNIT"]),
         _t("PROJ", "Project definition", ["PSPID"], ["PSPID", "POST1", "VBUKR", "WERKS", "ERNAM", "ERDAT"]),
         _t("PRPS", "WBS element", ["POSID"], ["POSID", "PSPID", "POST1", "POSID_UP", "STUFE", "PBUKR", "WERKS", "ERNAM"]),
         _t("COSP", "Actual cost line of a WBS element (simplified key WBS/year/cost element)", ["POSID", "GJAHR", "KSTAR"], ["POSID", "GJAHR", "KSTAR", "WRTTP", "WKGBTR", "TWAER"]),
@@ -146,6 +158,9 @@ NUMBER_RANGE_OBJECTS: dict[str, tuple[str, str]] = {
     "QALS": ("QM_LOT", "PRUEFLOS"),
     "EQUI": ("PM_EQUI", "EQUNR"),
     "QMEL": ("PM_NOTIF", "QMNUM"),
+    "LQUA": ("WM_QUANT", "LQNUM"),
+    "LTAK": ("WM_TO", "TANUM"),
+    "SCWM_WHO": ("EWM_WHO", "WHO"),
     "MKPF": ("MM_MBLNR", "MBLNR"),
     "MATDOC": ("MM_MBLNR", "MBLNR"),
 }

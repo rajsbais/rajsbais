@@ -186,6 +186,7 @@ def build_source_dataset(seed: int = 42, family: str = "ECC") -> dict[str, list[
     _add_qm(d)
     _add_pm(d)
     _add_ps(d)
+    _add_wm(d, family)
     _add_flight(d)
     _add_hr(d)
 
@@ -202,6 +203,9 @@ def build_source_dataset(seed: int = 42, family: str = "ECC") -> dict[str, list[
         {"OBJECT": "QM_LOT", "NRRANGENR": "01", "FROMNUMBER": 100000000, "TONUMBER": 199999999, "NRLEVEL": mx("QALS", "PRUEFLOS")},
         {"OBJECT": "PM_EQUI", "NRRANGENR": "01", "FROMNUMBER": 10000000, "TONUMBER": 19999999, "NRLEVEL": mx("EQUI", "EQUNR")},
         {"OBJECT": "PM_NOTIF", "NRRANGENR": "01", "FROMNUMBER": 300000000, "TONUMBER": 399999999, "NRLEVEL": mx("QMEL", "QMNUM")},
+        {"OBJECT": "WM_QUANT", "NRRANGENR": "01", "FROMNUMBER": 1, "TONUMBER": 9999999999, "NRLEVEL": mx("LQUA", "LQNUM")},
+        {"OBJECT": "WM_TO", "NRRANGENR": "01", "FROMNUMBER": 1, "TONUMBER": 9999999999, "NRLEVEL": mx("LTAK", "TANUM")},
+        {"OBJECT": "EWM_WHO", "NRRANGENR": "01", "FROMNUMBER": 1, "TONUMBER": 9999999999, "NRLEVEL": mx("SCWM_WHO", "WHO")},
         {"OBJECT": "MM_MBLNR", "NRRANGENR": "01", "FROMNUMBER": 4900000000, "TONUMBER": 4999999999, "NRLEVEL": mx("MKPF", "MBLNR")},
     ]
     if family == "S4":
@@ -414,6 +418,68 @@ def _add_ps(d: dict[str, list[Row]]) -> None:
                                           "WKGBTR": round(rng.uniform(500, 40000), 2), "TWAER": cur.get(cc, "EUR")})
 
 
+def _add_wm(d: dict[str, list[Row]], family: str) -> None:
+    """Warehouses, bins, quants and transfer orders (WM), and for S/4HANA also an EWM warehouse with its bins, quants and warehouse orders. Own
+    random stream. Quantities and references are consistent by construction: a quant sits in a bin of its own warehouse and plant, a transfer
+    order moves between bins of its own warehouse."""
+    rng = random.Random(9191)
+    d["T300"] = [{"LGNUM": "100", "LNUMT": "Munich high-bay warehouse"}, {"LGNUM": "110", "LNUMT": "Hamburg distribution centre"}, {"LGNUM": "200", "LNUMT": "Austin warehouse"}]
+    plant_of = {"100": "1000", "110": "1010", "200": "2000"}
+    if family == "S4":
+        d["T300"].append({"LGNUM": "E100", "LNUMT": "Munich EWM warehouse"})
+        plant_of["E100"] = "1000"
+    mats: dict[str, list[str]] = {}
+    for m in d["MARC"]:
+        mats.setdefault(m["WERKS"], []).append(m["MATNR"])
+    quant = who = to = 0
+    for lgnum, plant in plant_of.items():
+        is_ewm = lgnum.startswith("E")
+        bins = []
+        for typ, sections in (("001", ("A", "B")), ("002", ("P",)), ("902", ("R",))):
+            for sec in sections:
+                for n in range(1, 4):
+                    pid = f"{lgnum}-{typ}-{sec}{n:02d}"
+                    row = {"LGPLA": pid, "LGNUM": lgnum, "LGTYP": typ, "LGBER": sec, "WERKS": plant}
+                    if is_ewm:
+                        d["SCWM_LAGP"].append(row)
+                    else:
+                        d["LAGP"].append({**row, "LKAPV": rng.choice([100, 250, 500])})
+                    bins.append(pid)
+        pool = mats.get(plant) or []
+        if not pool:
+            continue
+        for b in bins:
+            if b.split("-")[1] == "902":  # the receiving area is empty
+                continue
+            for _ in range(rng.randint(0, 2)):
+                quant += 1
+                qty = float(rng.randint(5, 200))
+                day = (REF_DATE - timedelta(days=rng.randint(5, 300))).isoformat()
+                if is_ewm:
+                    d["SCWM_QUAN"].append({"QUANID": f"{quant:010d}", "LGNUM": lgnum, "LGPLA": b, "MATNR": rng.choice(pool), "WERKS": plant, "QUAN": qty, "UNIT": "EA"})
+                else:
+                    d["LQUA"].append({"LQNUM": f"{quant:010d}", "LGNUM": lgnum, "LGTYP": b.split("-")[1], "LGPLA": b, "MATNR": rng.choice(pool), "WERKS": plant,
+                                      "VERME": qty, "MEINS": "EA", "WDATU": day})
+        for _ in range(5 if lgnum in ("100", "E100") else 3):  # movements between two bins of the warehouse
+            when = (REF_DATE - timedelta(days=rng.randint(1, 120))).isoformat()
+            user = f"WM{rng.randint(1, 5):04d}"
+            frm, dst = rng.sample(bins, 2)
+            items = [(rng.choice(pool), frm, dst, float(rng.randint(1, 40))) for _ in range(rng.randint(1, 3))]
+            if is_ewm:
+                who += 1
+                w = f"{who:010d}"
+                d["SCWM_WHO"].append({"WHO": w, "LGNUM": lgnum, "STATUS": rng.choice(["C", "C", "O"]), "CREATED_ON": when, "CREATED_BY": user})
+                for k, (mat, v, n_, q) in enumerate(items, start=1):
+                    d["SCWM_ORDIM_O"].append({"WHO": w, "TANUM": f"{k:04d}", "MATNR": mat, "WERKS": plant, "VLPLA": v, "NLPLA": n_, "VSOLM": q, "UNIT": "EA"})
+            else:
+                to += 1
+                t = f"{to:010d}"
+                d["LTAK"].append({"TANUM": t, "LGNUM": lgnum, "BWLVS": rng.choice(["999", "319", "313"]), "BDATU": when, "QNAME": user})
+                for k, (mat, v, n_, q) in enumerate(items, start=1):
+                    d["LTAP"].append({"TANUM": t, "TAPOS": f"{k:04d}", "MATNR": mat, "WERKS": plant, "VLTYP": v.split("-")[1], "VLPLA": v,
+                                      "NLTYP": n_.split("-")[1], "NLPLA": n_, "NSOLM": q, "MEINS": "EA"})
+
+
 def _add_flight(d: dict[str, list[Row]]) -> None:
     """The SAP flight demo model (airlines, connections, flights, customers, bookings). Own random stream: nothing generated before it changed."""
     rng = random.Random(5151)
@@ -523,6 +589,7 @@ def build_target_dataset(source: dict[str, list[Row]], seed: int = 7) -> tuple[d
     d: dict[str, list[Row]] = {t: [] for t in TABLES}
     d["T001"] = copy.deepcopy(source["T001"])
     d["T001W"] = [copy.deepcopy(r) for r in source["T001W"] if r["WERKS"] != "2000"]  # config gap on purpose
+    d["T300"] = copy.deepcopy(source["T300"])  # the warehouse numbers exist in the target
     owners: dict[str, str] = {}
 
     c1, c2 = _cust(100001), _cust(100002)
@@ -567,6 +634,9 @@ def build_target_dataset(source: dict[str, list[Row]], seed: int = 7) -> tuple[d
         {"OBJECT": "QM_LOT", "NRRANGENR": "01", "FROMNUMBER": 100000000, "TONUMBER": 199999999, "NRLEVEL": 100000000},
         {"OBJECT": "PM_EQUI", "NRRANGENR": "01", "FROMNUMBER": 10000000, "TONUMBER": 19999999, "NRLEVEL": 10000000},
         {"OBJECT": "PM_NOTIF", "NRRANGENR": "01", "FROMNUMBER": 300000000, "TONUMBER": 399999999, "NRLEVEL": 300000000},
+        {"OBJECT": "WM_QUANT", "NRRANGENR": "01", "FROMNUMBER": 1, "TONUMBER": 9999999999, "NRLEVEL": 0},
+        {"OBJECT": "WM_TO", "NRRANGENR": "01", "FROMNUMBER": 1, "TONUMBER": 9999999999, "NRLEVEL": 0},
+        {"OBJECT": "EWM_WHO", "NRRANGENR": "01", "FROMNUMBER": 1, "TONUMBER": 9999999999, "NRLEVEL": 0},
         {"OBJECT": "MM_MBLNR", "NRRANGENR": "01", "FROMNUMBER": 4900000000, "TONUMBER": 4999999999, "NRLEVEL": 4900000000},
     ]
     return d, owners

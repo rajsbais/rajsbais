@@ -114,6 +114,12 @@ OBJECT_TYPES: dict[str, ObjectType] = {o.name: o for o in [
     ObjectType("INSPECTION_LOT", "Inspection lot (QM)", "QM", "document",
                (L("QALS"), L("QAMV", "QALS", [("PRUEFLOS", "PRUEFLOS")]), L("QASR", "QALS", [("PRUEFLOS", "PRUEFLOS")]), L("QAVE", "QALS", [("PRUEFLOS", "PRUEFLOS")])),
                ("PRUEFLOS",), ("QALS", "ENSTEHDAT"), {"plants": ("QALS", "WERKS"), "materials": ("QALS", "MATNR")}, 38),
+    ObjectType("STORAGE_BIN", "Storage bin with its quants (WM)", "WM", "master",
+               (L("LAGP"), L("LQUA", "LAGP", [("LGPLA", "LGPLA")])),
+               ("LGPLA",), None, {"plants": ("LAGP", "WERKS"), "materials": ("LQUA", "MATNR")}, 33),
+    ObjectType("TRANSFER_ORDER", "Transfer order (WM)", "WM", "document",
+               (L("LTAK"), L("LTAP", "LTAK", [("TANUM", "TANUM")])),
+               ("TANUM",), ("LTAK", "BDATU"), {"plants": ("LTAP", "WERKS"), "materials": ("LTAP", "MATNR")}, 42),
     ObjectType("PROJECT", "Project with its WBS and costs (PS)", "PS", "document",
                (L("PROJ"), L("PRPS", "PROJ", [("PSPID", "PSPID")]), L("COSP", "PRPS", [("POSID", "POSID")])),
                ("PSPID",), ("PROJ", "ERDAT"), {"company_codes": ("PROJ", "VBUKR"), "plants": ("PROJ", "WERKS")}, 41),
@@ -149,7 +155,7 @@ OBJECT_TYPES: dict[str, ObjectType] = {o.name: o for o in [
                {"company_codes": ("MSEG", "BUKRS"), "plants": ("MSEG", "WERKS"), "materials": ("MSEG", "MATNR")}, 36),
 ]}
 
-CONFIG_TYPES = {"COMPANY_CODE": ("T001", "BUKRS"), "PLANT": ("T001W", "WERKS")}
+CONFIG_TYPES = {"COMPANY_CODE": ("T001", "BUKRS"), "PLANT": ("T001W", "WERKS"), "WAREHOUSE": ("T300", "LGNUM")}
 
 R, C = RelKind.REQUIRES, RelKind.CONFIG
 RELATIONSHIPS: list[Relationship] = [
@@ -193,6 +199,15 @@ RELATIONSHIPS: list[Relationship] = [
     Relationship("inspection lot→production order", "INSPECTION_LOT", "PRODUCTION_ORDER", R, "QALS", "AUFNR", reverse=True,
                  description="Lot created for a production order (goods receipt inspection); a lot without an order has no such requirement"),
     Relationship("inspection lot→plant", "INSPECTION_LOT", "PLANT", C, "QALS", "WERKS"),
+    Relationship("storage bin→material", "STORAGE_BIN", "MATERIAL", R, "LQUA", "MATNR", description="Stock of a material in the bin"),
+    Relationship("storage bin→plant", "STORAGE_BIN", "PLANT", C, "LAGP", "WERKS"),
+    Relationship("storage bin→warehouse", "STORAGE_BIN", "WAREHOUSE", C, "LAGP", "LGNUM"),
+    Relationship("transfer order→material", "TRANSFER_ORDER", "MATERIAL", R, "LTAP", "MATNR"),
+    Relationship("transfer order→source bin", "TRANSFER_ORDER", "STORAGE_BIN", R, "LTAP", "VLPLA", reverse=True,
+                 description="A bin root can pull in the transfer orders that move stock from it"),
+    Relationship("transfer order→destination bin", "TRANSFER_ORDER", "STORAGE_BIN", R, "LTAP", "NLPLA", reverse=True),
+    Relationship("transfer order→plant", "TRANSFER_ORDER", "PLANT", C, "LTAP", "WERKS"),
+    Relationship("transfer order→warehouse", "TRANSFER_ORDER", "WAREHOUSE", C, "LTAK", "LGNUM"),
     Relationship("project→plant", "PROJECT", "PLANT", C, "PROJ", "WERKS"),
     Relationship("project→company code", "PROJECT", "COMPANY_CODE", C, "PROJ", "VBUKR"),
     Relationship("functional location→superior", "FUNC_LOCATION", "FUNC_LOCATION", R, "IFLOT", "TPLMA",
@@ -277,6 +292,22 @@ class Registry:
                 "MATERIAL_DOCUMENT", "Material document line (S/4HANA MATDOC)", "MM", "document", (L("MATDOC"),), ("MBLNR", "MJAHR", "ZEILE"), ("MATDOC", "BUDAT"),
                 {"company_codes": ("MATDOC", "BUKRS"), "plants": ("MATDOC", "WERKS"), "materials": ("MATDOC", "MATNR")}, 36)
             self.relationships = [replace(r, via_table="MATDOC") if r.via_table == "MSEG" else r for r in self.relationships]
+            # Embedded EWM (S/4HANA only). The tables are stand-ins (SCWM_*) for the /SCWM/ ones, see ddic.py.
+            self.types["EWM_BIN"] = ObjectType("EWM_BIN", "Storage bin with its quants (EWM)", "EWM", "master", (L("SCWM_LAGP"), L("SCWM_QUAN", "SCWM_LAGP", [("LGPLA", "LGPLA")])),
+                                               ("LGPLA",), None, {"plants": ("SCWM_LAGP", "WERKS"), "materials": ("SCWM_QUAN", "MATNR")}, 34)
+            self.types["EWM_WAREHOUSE_ORDER"] = ObjectType("EWM_WAREHOUSE_ORDER", "Warehouse order with its tasks (EWM)", "EWM", "document",
+                                                           (L("SCWM_WHO"), L("SCWM_ORDIM_O", "SCWM_WHO", [("WHO", "WHO")])), ("WHO",), ("SCWM_WHO", "CREATED_ON"),
+                                                           {"plants": ("SCWM_ORDIM_O", "WERKS"), "materials": ("SCWM_ORDIM_O", "MATNR")}, 43)
+            self.relationships += [
+                Relationship("EWM bin→material", "EWM_BIN", "MATERIAL", R, "SCWM_QUAN", "MATNR"),
+                Relationship("EWM bin→plant", "EWM_BIN", "PLANT", C, "SCWM_LAGP", "WERKS"),
+                Relationship("EWM bin→warehouse", "EWM_BIN", "WAREHOUSE", C, "SCWM_LAGP", "LGNUM"),
+                Relationship("warehouse order→material", "EWM_WAREHOUSE_ORDER", "MATERIAL", R, "SCWM_ORDIM_O", "MATNR"),
+                Relationship("warehouse order→source bin", "EWM_WAREHOUSE_ORDER", "EWM_BIN", R, "SCWM_ORDIM_O", "VLPLA", reverse=True),
+                Relationship("warehouse order→destination bin", "EWM_WAREHOUSE_ORDER", "EWM_BIN", R, "SCWM_ORDIM_O", "NLPLA", reverse=True),
+                Relationship("warehouse order→plant", "EWM_WAREHOUSE_ORDER", "PLANT", C, "SCWM_ORDIM_O", "WERKS"),
+                Relationship("warehouse order→warehouse", "EWM_WAREHOUSE_ORDER", "WAREHOUSE", C, "SCWM_WHO", "LGNUM"),
+            ]
 
     def register_object_type(self, ot: ObjectType) -> None:
         self.types[ot.name] = ot

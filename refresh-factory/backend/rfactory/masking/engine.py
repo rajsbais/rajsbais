@@ -136,6 +136,8 @@ CATALOG: dict[tuple[str, str], tuple[str, str]] = {
     # PM: the people who reported a malfunction
     # PS: project owners
     ("PROJ", "ERNAM"): ("user", "USER_ID"), ("PRPS", "ERNAM"): ("user", "USER_ID"),
+    # WM and EWM: who created the transfer or warehouse order
+    ("LTAK", "QNAME"): ("user", "USER_ID"), ("SCWM_WHO", "CREATED_BY"): ("user", "USER_ID"),
     ("QMEL", "ERNAM"): ("user", "USER_ID"), ("AFRU", "ERNAM"): ("user", "USER_ID"),
     # HR infotypes: special-category data. Pay is perturbed, identifiers and bank details are replaced, dates of birth shifted.
     ("PA0002", "NACHN"): ("name", "LAST_NAME"), ("PA0002", "VORNA"): ("name", "FIRST_NAME"), ("PA0002", "GBDAT"): ("birthdate", "BIRTHDATE"),

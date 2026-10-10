@@ -6,8 +6,11 @@ Selective, business-consistent SAP non-production refresh with masking, conflict
 > No real SAP system is read or written. See [`docs/01-capability-matrix.md`](docs/01-capability-matrix.md) for what is real, simulated, catalogued or planned.
 
 ## Run
+**Quick start (any machine with Python 3.11+, and Node.js 20+ for the screens):** `python start.py` (Windows: double-click `start.bat`; Linux/macOS: `./start.sh`). It sets everything up the first time, starts the platform on the first free port from 8088 and opens your browser. `python start.py --memory` keeps nothing; `python start.py --check` only checks the prerequisites. State is kept encrypted in `.rfactory/data`; the launcher never deletes anything.
+
+The individual steps, if you prefer them:
 ```bash
-cd backend && pip install -e '.[test]' && python -m pytest          # 647 tests
+cd backend && pip install -e '.[test]' && python -m pytest          # 681 tests
 cd ../frontend && npm install && npm run build                       # UI served by the API from frontend/dist
 cd ../backend && uvicorn rfactory.api.main:app --port 8088           # http://localhost:8088  (API docs at /docs). Not 8000: a local SAP system's HTTP port is 8000
 # several instances on one PostgreSQL database: RFACTORY_DATABASE_URL=postgresql://... plus the same RFACTORY_STATE_KEY and RFACTORY_AUDIT_KEY on each (docs/06-deployment.md)

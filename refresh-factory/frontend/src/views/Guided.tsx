@@ -14,6 +14,8 @@ const SCENARIOS: Scenario[] = [
   { id: "maintenance", label: "Maintenance orders", hint: "With notifications, equipment and locations", type: "MAINT_ORDER", company: "", plants: "1000", days: 0, down: [] },
   { id: "quality", label: "Inspection lots", hint: "With results, usage decisions and their orders", type: "INSPECTION_LOT", company: "", plants: "1000", days: 0, down: [] },
   { id: "projects", label: "Projects", hint: "With the WBS hierarchy and costs", type: "PROJECT", company: "1000", plants: "", days: 0, down: [] },
+  { id: "warehouse", label: "Warehouse transfer orders (WM)", hint: "With their storage bins and materials", type: "TRANSFER_ORDER", company: "", plants: "1000", days: 0, down: [] },
+  { id: "ewm", label: "Warehouse orders (embedded EWM, S/4HANA only)", hint: "With their bins and materials; pick an S/4HANA source", type: "EWM_WAREHOUSE_ORDER", company: "", plants: "1000", days: 0, down: [] },
   { id: "employees", label: "Employees (HR)", hint: "Special-category personal data: anonymised on every run", type: "EMPLOYEE", company: "1000", plants: "", days: 0, down: [], template: "gdpr-strict", needs: "hr:copy" },
 ];
 

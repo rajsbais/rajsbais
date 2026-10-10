@@ -7,3 +7,6 @@ refresh-factory/frontend/dist/
 .venv/
 refresh-factory/frontend/test-results/
 refresh-factory/frontend/playwright-report/
+
+# local runs of start.py
+.rfactory/

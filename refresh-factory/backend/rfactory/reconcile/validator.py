@@ -276,6 +276,42 @@ def reconcile(run: Run, plan: Plan, source: SourceAdapter, target: TargetAdapter
         checks.append(_chk("business", "BUS-QM-REFS", "Inspection lots are complete in the target and refer to existing materials, orders and characteristics", not qm_bad,
                            f"{len(qm_bad)} inconsistent", qm_bad))
 
+    # warehouse management (against the TARGET): bins, quants and transfer orders must be whole, and stock must add up to what was loaded
+    def _wh_check(prefix, label, bin_t, quant_t, quant_key, qty_f, order_t, item_t, order_key, bin_type, order_type):
+        bad = []
+        bins, orders = docs(bin_type), docs(order_type)
+        for inst in bins:
+            if target.get(bin_t, (inst.key,)) is None:
+                bad.append(f"bin {inst.key} missing in target")
+                continue
+            want = sorted((q[quant_key], float(q[qty_f])) for q in inst.rows.get(quant_t, []))
+            have = sorted((q[quant_key], float(q[qty_f])) for q in target.lookup(quant_t, "LGPLA", inst.key))
+            if want != have:
+                bad.append(f"bin {inst.key}: quants in the target differ from what was loaded ({len(have)} vs {len(want)}, quantity {sum(x[1] for x in have):g} vs {sum(x[1] for x in want):g})")
+            for q in target.lookup(quant_t, "LGPLA", inst.key):
+                if not target.get("MARA", (q["MATNR"],)):
+                    bad.append(f"bin {inst.key}: quant {q[quant_key]} holds material {q['MATNR']} missing in target")
+        for inst in orders:
+            hdr = target.get(order_t, (inst.key,))
+            if hdr is None:
+                bad.append(f"order {inst.key} missing in target")
+                continue
+            items = target.lookup(item_t, order_key, inst.key)
+            if len(items) != len(inst.rows.get(item_t, [])):
+                bad.append(f"order {inst.key}: {len(items)} items in the target, {len(inst.rows.get(item_t, []))} were loaded")
+            for it in items:
+                for f in ("VLPLA", "NLPLA"):
+                    if it.get(f) and not target.get(bin_t, (it[f],)):
+                        bad.append(f"order {inst.key}: {f} bin {it[f]} missing in target")
+                if not target.get("MARA", (it["MATNR"],)):
+                    bad.append(f"order {inst.key}: material {it['MATNR']} missing in target")
+        if bins or orders:
+            checks.append(_chk("business", prefix, label, not bad, f"{len(bad)} inconsistent", bad))
+    _wh_check("BUS-WM-REFS", "Warehouse bins, quants and transfer orders are whole in the target: stock adds up, bins and materials exist", "LAGP", "LQUA", "LQNUM", "VERME",
+              "LTAK", "LTAP", "TANUM", "STORAGE_BIN", "TRANSFER_ORDER")
+    _wh_check("BUS-EWM-REFS", "EWM bins, quants and warehouse orders are whole in the target: stock adds up, bins and materials exist", "SCWM_LAGP", "SCWM_QUAN", "QUANID", "QUAN",
+              "SCWM_WHO", "SCWM_ORDIM_O", "WHO", "EWM_BIN", "EWM_WAREHOUSE_ORDER")
+
     # project system (against the TARGET): the WBS must be a whole hierarchy of the project and its costs must add up to what was loaded
     ps_bad = []
     projects = docs("PROJECT")
