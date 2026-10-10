@@ -150,7 +150,7 @@ test("small screens: no horizontal page scroll in any view, navigation opens fro
   await expectAccessible(page, "AI agents at 320px");
 });
 
-test("the colour-scheme preference does not break accessibility (only a dark theme exists today)", async ({ app }) => {
+test("the colour-scheme preference does not break accessibility (light and dark follow the operating system)", async ({ app }) => {
   const { page } = app;
   await app.loadLandscape();
   for (const scheme of ["dark", "light"] as const) {
