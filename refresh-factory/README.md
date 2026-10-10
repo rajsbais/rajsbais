@@ -22,6 +22,8 @@ Register systems · discover company codes/plants/objects · scope by company co
 conflict detection (identical/modified target objects, tester-owned documents, missing customizing, number ranges) · masking with discovery of custom PII fields ·
 approval with separation of duties · checkpointed load, resume, rollback · 34+ technical/business/security checks with a release gate · report + evidence ZIP + hash-chained audit.
 
+**Guided refresh:** *Guided refresh* is the easiest way in: pick a business area (sales, purchasing, production, maintenance, quality, projects, HR), one *Prepare* click saves the scope, expands the dependencies, checks the target, adds the advisor's masking rules and keeps (never overwrites) objects that already differ in the target, then submit, a different person approves, run, and read the result. It uses the same API and the same approvals as the Selective designer.
+
 **Delta refresh:** *Delta refresh* screen → create the weekend QA sync, add the recommended masking rule (Dave), submit (Alice), approve (Carol), run; then *Simulate source activity* and preview/run again to see only the difference move.
 
 **Remote source (RFC):** *Landscape → Connect demo remote source (fake RFC)* registers a second ECC production source reached through the RFC adapter over a **fake** transport; use it as the source in the Selective designer. The adapter is read-only (allow-listed function modules, bounded scans, WHERE pushdown). It has never run against a real SAP system; connecting a real one needs `pyrfc` and the SAP NetWeaver RFC SDK, which this repository does not install or test (`POST /api/systems/connect`).
