@@ -26,7 +26,7 @@ Last updated: 2026-10-10 (branch `claude/clever-maxwell-ues8be`, PR #1).
 | 12 | Period-end reconciliation (trial balance per period, cut-off, foreign-currency items, valuation per area, price control) | 88c7c45 | Finance page, financial layer |
 | 13 | Manufacturing masters: BOM, routing, work center, batch | this push | Landscape and Carve-out pages list the four object types; cockpit export routes them to their migration objects |
 
-Test suite at the last push: 241 tests, 238 passed, 3 skipped by default (UI e2e, OIDC e2e, Neo4j). CI green on
+Test suite at the last push: 237 tests, 234 passed, 3 skipped by default (UI e2e, OIDC e2e, Neo4j). CI green on
 every pushed head today.
 
 ## 2. In progress now
