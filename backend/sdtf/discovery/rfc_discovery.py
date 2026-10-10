@@ -33,11 +33,21 @@ SAMPLE_DEPENDENCIES: dict[str, list[tuple[str, str, str]]] = {
     "SD.Delivery": [("LIPS", "VBELN", "VBELN"), ("VBFA", "VBELV", "VBELN")],
     "SD.BillingDocument": [("VBRP", "VBELN", "VBELN")],
     "MM.PurchaseOrder": [("EKPO", "EBELN", "EBELN"), ("EKBE", "EBELN", "EBELN")],
-    "MM.MaterialDocument": [("MSEG", "MBLNR", "MBLNR")],
-    "FI.AccountingDocument": [("BSEG", "BELNR", "BELNR"), ("BKPF", "BVORG", "BVORG")],
+    "FI.AccountingDocument": [("BSID", "BELNR", "BELNR"), ("BSIK", "BELNR", "BELNR"), ("BKPF", "BVORG", "BVORG")],
     "PP.ProductionOrder": [("AFPO", "AUFNR", "AUFNR")],
     "Z.ExportControl": [("MARC", "MATNR", "MATNR")],
     "Z.SupplierExt": [("LFB1", "LIFNR", "LIFNR")],
+}
+
+
+# dependencies answered by an aggregate instead of rows: (table, lookup field, header field, group fields); the
+# store receives one thin row per group (the group fields and COUNT), enough for the company-code derivation
+AGGREGATE_DEPENDENCIES: dict[str, list[tuple[str, str, str, list[str]]]] = {
+    "MM.MaterialDocument": [("MSEG", "MBLNR", "MBLNR", ["MBLNR", "MJAHR", "BUKRS"])],
+}
+LEAN_NOTES = {
+    "FI.AccountingDocument": "status from the open-item tables BSID / BSIK (compatibility views over ACDOCA on S/4HANA); BSEG not read",
+    "MM.MaterialDocument": "company codes from MSEG aggregated by document and company code; MSEG rows not read",
 }
 
 
@@ -301,7 +311,23 @@ def _add_rows(store: RecordStore, table: str, rows: list[dict]) -> None:
 
 
 def _prefetch(client: AbapAddonClient, store: RecordStore, bo_id: str, sample: list[dict], read: dict) -> None:
-    """The dependent rows of the sampled instances (items, company-code segments, document flow), read by key."""
+    """The dependent rows of the sampled instances (items, company-code segments, document flow), read by key;
+    where an aggregate answers the question (which company codes a material document touches) only the
+    aggregate is read. Line-item tables (BSEG, MSEG) are never read for the inventory."""
+    if bo_id in LEAN_NOTES:
+        read.setdefault("lean", {})[bo_id] = LEAN_NOTES[bo_id]
+    for table, lookup_field, header_field, group_by in AGGREGATE_DEPENDENCIES.get(bo_id, []):
+        values = sorted({str(r[header_field]) for r in sample if r.get(header_field)})
+        if not values:
+            continue
+        groups: list[dict] = []
+        try:
+            for chunk in _chunks(values, 50):
+                groups.extend(client.aggregate(table, [predicate(lookup_field, "EQ", v) for v in chunk], group_by, []))
+        except RfcError as e:
+            read["notes"].append(f"{bo_id}: {table} not aggregated for the sample ({e.key})")
+            continue
+        _add_rows(store, table, [{**{g: a.get(g) for g in group_by}, "COUNT": a.get("COUNT")} for a in groups])
     for table, lookup_field, header_field in SAMPLE_DEPENDENCIES.get(bo_id, []):
         values = sorted({str(r[header_field]) for r in sample if r.get(header_field)})
         if not values:

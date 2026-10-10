@@ -91,6 +91,21 @@ back to PENDING) while the set is a draft and under four eyes (not its author); 
 approval of the set is refused while any rule is rejected, and approves every rule still pending with it, recorded
 per rule with the approver and comment, so the lineage of each rule names who accepted it.
 
+## Learned mappings (rule factory v2)
+`rules/learning.py`, `POST /projects/{id}/rulesets/generate?manifest_id=…&learn=true`, `GET /projects/{id}/rulesets/learned`,
+`sdtf rules-learn --project <id>`, the *learn from approved rule sets* switch of the Rules workbench.
+
+Every approved rule set of the tenant's other projects is a reviewed statement of how a value maps. When a
+candidate rule set is generated with learning on, the mappings of `value_map` and `org_reassign` rules (maps and
+lookups) are collected per field; values every approved set agrees on become a `learned_<field>` lookup and a
+`learned-<field>` rule on the tables that carry the field (on_missing passthrough), whose description names the
+provenance (project, rule set, version, approver). Values the approved sets map differently are **conflicts**:
+listed for review, never proposed. Organisational fields (company code, plant, sales and purchasing organisation,
+controlling area) are not learned unless asked for: a company-code map belongs to its own deal. Fields the
+generated rules already cover are left alone. Draft and rejected sets teach nothing; other tenants' sets are
+never read. Learned rules start as pending decisions like any other rule, so the approver decides with the
+provenance in front of them.
+
 ## Guarantees
 * **Deterministic**: same ruleset + record ⇒ same output; inputs are never mutated.
 * **Lineage**: every change yields `{rule, field, from, to}` persisted on the staged record.

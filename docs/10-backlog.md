@@ -28,7 +28,7 @@ Legend: P0 next increment · P1 following · P2 later. Sizes are relative (S/M/L
 | ✅ | RFC adapter against the add-on contract: transports (pyrfc, simulated add-on), pushdown, keyset packages, snapshot token, checksums, connector test endpoint, `demo --connector RFC` (ADR-0013) | L |
 | P0 | ABAP add-on activation: compile/review `sap-abap/src/` on an SAP development system, authorizations, transport; live verification of the adapter | XL (needs an SAP system) |
 | ✅ | Discovery through the add-on (ADR-0017): organisational and interface tables read in full, catalogue tables sized with Z_SDTF_TABLE_METADATA (DB_GET_TABLE_SIZE), custom tables from DD02L / DD02T / DD03L, distributions counted with Z_SDTF_AGGREGATE, the complete instance index read with the dependent rows by key, a labelled quick-look sample the scope engine refuses, unreadable tables listed; route by connector with override, CLI | M |
-| P1 | Discovery through the add-on: derive the open-item status from BSID / BSIK and the document company codes from aggregates instead of reading BSEG / MSEG for the instance index (volume on a live ECC) | M |
+| ✅ | Discovery through the add-on without the line-item tables: open-item status from BSID / BSIK, material-document company codes from MSEG aggregates (`read.lean`); the inventory equals the record-store discovery | M |
 | P1 | CDS/ODP adapter for S/4 sources; OData adapter for masters | L |
 | P1 | Loaders: Business Partner API, Product API, Journal Entry SOAP, Migration Cockpit staging | XL |
 
@@ -78,5 +78,5 @@ Legend: P0 next increment · P1 following · P2 later. Sizes are relative (S/M/L
 | P | Item | Size |
 |---|---|---|
 | ✅ | LLM reasoner behind the `Reasoner` interface (ADR-0018): redacted evidence bundle only, Anthropic Messages API or any OpenAI-compatible endpoint over httpx, key from a named environment variable, guard against numbers absent from the facts, fallback to the heuristic text with the outcome recorded on every proposal; `GET /agents/reasoner`, evaluation harness `sdtf llm-eval`. HTTP contract verified with a mocked transport only, never against a live provider in this build | M |
-| P1 | Rule factory v2: learn mappings from approved rulesets across projects | M |
+| ✅ | Rule factory v2: mappings learned from the approved rule sets of the tenant's other projects (per field, agreement required, conflicts listed and never proposed, organisational fields excluded by default), proposed as learned lookups and rules with provenance in the description; API, CLI, Rules workbench switch | M |
 | ✅ | Migration factory portfolio KPIs (`GET /platform/portfolio/kpis`): per project the manifests, rule sets, runs, last reconciliation, extraction throughput, rehearsals and GO verdicts, open incidents, cleanup plans and a derived phase; totals by phase; cross-project benchmarks of the completed runs (extraction rec/s, run seconds), labelled as simulated on this build; Portfolio page tiles | S |

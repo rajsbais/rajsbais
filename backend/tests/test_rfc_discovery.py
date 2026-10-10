@@ -37,6 +37,7 @@ def test_rfc_discovery_equals_the_record_store_discovery(session, rfc_source):
     snap = discover_over_rfc(session, src, "test")  # full inventory: exact figures
     s = snap.summary
     assert snap.status == "COMPLETE" and s["read"]["path"] == "rfc" and s["read"]["complete"] is True and s["read"]["sample"] is None and s["read"]["transport"] == "SIMULATED_ADDON" and s["read"]["rfc_calls"] > 20 and s["read"]["unreadable"] == {}
+    assert set(s["read"]["lean"]) == {"FI.AccountingDocument", "MM.MaterialDocument"} and "BSEG not read" in s["read"]["lean"]["FI.AccountingDocument"] and "MSEG rows not read" in s["read"]["lean"]["MM.MaterialDocument"]
     assert s["org_units"] == ref_summary["org_units"]
     org = {(u.unit_type, u.code): (u.parent_code, u.attributes.get("KOKRS")) for u in session.query(OrgUnit).filter(OrgUnit.system_id == src.id).all()}
     assert org == ref_org

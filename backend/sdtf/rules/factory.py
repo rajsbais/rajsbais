@@ -7,7 +7,7 @@ import yaml
 from ..scope.models import ScopeDefinition
 
 
-def generate_candidate_ruleset(defn: ScopeDefinition, target_product: str = "S4HANA", name: str | None = None, coa_map: dict[str, str] | None = None, source_index: int = 0, dedup: dict | None = None) -> str:
+def generate_candidate_ruleset(defn: ScopeDefinition, target_product: str = "S4HANA", name: str | None = None, coa_map: dict[str, str] | None = None, source_index: int = 0, dedup: dict | None = None, learned: dict | None = None) -> str:
     """source_index selects disjoint number ranges and key prefixes per source system in a merger.
     dedup = {"customers": {src_key: survivor_target_key}, "vendors": {...}, "materials": {...}} maps duplicate master
     records of this source onto the survivor already loaded from another source; the duplicate master record itself is
@@ -54,6 +54,15 @@ def generate_candidate_ruleset(defn: ScopeDefinition, target_product: str = "S4H
             {"id": "ledger-default", "type": "default", "description": "Universal Journal leading ledger", "tables": ["BKPF"], "set": {"RLDNR": "0L"}},
             {"id": "reject-stat-docs", "type": "reject", "description": "Statistical / noted items are not migrated", "tables": ["BKPF"], "when": {"field": "BSTAT", "in": ["S", "V"]}, "message": "statistical or parked document not migrated"},
         ]
+    if learned:
+        # rule factory v2: mappings the approved rule sets of other projects agree on, for fields no rule above covers
+        from .engine import _rule_fields
+        from .learning import learned_rules
+
+        covered = {f for r in rules for f in _rule_fields(r)}
+        l_rules, l_lookups, _review = learned_rules(learned, covered)
+        rules += l_rules
+        lookups.update(l_lookups)
     doc = {
         "ruleset": name or f"{defn.name}-rules",
         "version": 1,

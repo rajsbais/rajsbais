@@ -179,9 +179,15 @@ def instance_status(bo_type: BusinessObjectType, row: dict, store: RecordStore) 
     if t == "MM.InvoiceReceipt":
         return "CLOSED" if row.get("RBSTAT") == "5" else "OPEN"
     if t == "FI.AccountingDocument":
-        lines = [l for l in store.lookup("BSEG", "BELNR", row["BELNR"]) if l["BUKRS"] == row["BUKRS"] and str(l["GJAHR"]) == str(row["GJAHR"])]
-        open_items = [l for l in lines if l["KOART"] in ("D", "K") and not l.get("AUGBL")]
-        return "OPEN" if open_items else "CLOSED"
+        if store.count("BSEG"):
+            lines = [l for l in store.lookup("BSEG", "BELNR", row["BELNR"]) if l["BUKRS"] == row["BUKRS"] and str(l["GJAHR"]) == str(row["GJAHR"])]
+            open_items = [l for l in lines if l["KOART"] in ("D", "K") and not l.get("AUGBL")]
+            return "OPEN" if open_items else "CLOSED"
+        # without the line items: the open-item tables (BSID customers, BSIK vendors) answer the same question
+        for oi in ("BSID", "BSIK"):
+            if any(l["BUKRS"] == row["BUKRS"] and str(l["GJAHR"]) == str(row["GJAHR"]) and not l.get("AUGBL") for l in store.lookup(oi, "BELNR", row["BELNR"])):
+                return "OPEN"
+        return "CLOSED"
     if t == "PP.ProductionOrder":
         item = store.get("AFPO", AUFNR=row["AUFNR"], POSNR=1)
         return "CLOSED" if item and item["WEMNG"] >= item["PSMNG"] else "OPEN"

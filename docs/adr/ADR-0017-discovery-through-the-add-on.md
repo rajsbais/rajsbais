@@ -37,9 +37,13 @@ catalogue and the store's custom tables, so the DDIC reads are exercised on the 
 system the technical user needs `S_TABU_NAM` for the DD* tables as well.
 
 ## Consequences
-* A full discovery of a live source transfers the header rows of every business object plus their dependent rows
-  (the line items of the documents among them): this is the instance index the carve-out is scoped from, and the
-  read metrics (`read.rows_read`, `read.rfc_calls`) say what it cost. Reading the open-item status from BSID / BSIK
-  instead of BSEG, and the document company codes from aggregates, is the next reduction (backlog).
+* A full discovery of a live source transfers the header rows of every business object plus the dependent rows
+  the classification needs (items, company-code segments, document flow): this is the instance index the
+  carve-out is scoped from, and the read metrics (`read.rows_read`, `read.rfc_calls`) say what it cost. The
+  line-item tables are not read for it: the open-item status of accounting documents comes from the open-item
+  tables BSID / BSIK (compatibility views over ACDOCA on S/4HANA) instead of BSEG, and the company codes a
+  material document touches from MSEG aggregated by document and company code instead of its rows
+  (`read.lean` names both). The synthetic landscape marks the invoice item and the payment's partner item with
+  the same clearing document, as SAP does, so both paths agree on the open count.
 * A sampled discovery is a quick look only; its estimates are labelled and the scope engine refuses it.
 * The record-store discovery stays for synthetic systems and API targets (their copies are the platform's own).

@@ -444,7 +444,7 @@ class GenerateOptions(BaseModel):
 
 
 @router.post("/projects/{project_id}/rulesets/generate", tags=["rules"])
-def ruleset_generate(project_id: str, manifest_id: str, opts: GenerateOptions | None = None, db: Session = Depends(get_db), p: Principal = Depends(require("rules:write"))):
+def ruleset_generate(project_id: str, manifest_id: str, opts: GenerateOptions | None = None, learn: bool = Query(False, description="add the mappings learned from approved rule sets of the tenant's other projects (provenance in each rule)"), db: Session = Depends(get_db), p: Principal = Depends(require("rules:write"))):
     assert_project_access(db, p, project_id)
     m = db.get(ScopeManifest, manifest_id)
     if m is None or m.project_id != project_id:
@@ -452,7 +452,28 @@ def ruleset_generate(project_id: str, manifest_id: str, opts: GenerateOptions | 
     defn = ScopeDefinition(**m.definition)
     tgt = db.get(SapSystem, defn.target_system_id)
     opts = opts or GenerateOptions()
-    return {"source_yaml": generate_candidate_ruleset(defn, tgt.product if tgt else "S4HANA", source_index=opts.source_index, dedup=opts.dedup or None, coa_map=opts.coa_map or None)}
+    learned = None
+    out: dict = {}
+    if learn:
+        from ..rules.learning import learn_mappings, learned_rules
+
+        learned = learn_mappings(db, p.tenant_id, exclude_project=project_id)
+    out["source_yaml"] = generate_candidate_ruleset(defn, tgt.product if tgt else "S4HANA", source_index=opts.source_index, dedup=opts.dedup or None, coa_map=opts.coa_map or None, learned=learned)
+    if learned is not None:
+        rs = parse_ruleset(out["source_yaml"])
+        proposed = [r["id"] for r in rs.rules if r.get("learned")]
+        _r, _l, review = learned_rules(learned, {f for r in rs.rules if not r.get("learned") for f in __import__("sdtf.rules.engine", fromlist=["_rule_fields"])._rule_fields(r)})
+        out["learning"] = {"approved_rulesets": learned["approved_rulesets"], "fields": sorted(learned["fields"]), "proposed": proposed, "review": review, "note": learned["note"]}
+    return out
+
+
+@router.get("/projects/{project_id}/rulesets/learned", tags=["rules"])
+def ruleset_learned(include_org: bool = False, project_id: str = "", db: Session = Depends(get_db), p: Principal = Depends(require("project:read"))):
+    """The mappings approved rule sets of the tenant's other projects agree on, per field, with provenance and conflicts."""
+    from ..rules.learning import learn_mappings
+
+    assert_project_access(db, p, project_id)
+    return learn_mappings(db, p.tenant_id, exclude_project=project_id, include_org=include_org)
 
 
 @router.post("/rulesets/validate", tags=["rules"])

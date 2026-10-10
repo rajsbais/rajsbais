@@ -201,6 +201,10 @@ def main(argv=None):
     lk.add_argument("--key-column", default=None)
     lk.add_argument("--value-column", default=None)
     lk.add_argument("--json", action="store_true", help="print the parse report instead of the YAML")
+    rl = sub.add_parser("rules-learn", help="the mappings approved rule sets of the tenant's other projects agree on, per field, with provenance and conflicts (rule factory v2)")
+    rl.add_argument("--project", required=True, help="the project the candidate rules are for (its own rule sets are excluded)")
+    rl.add_argument("--include-org", action="store_true", help="also learn organisational fields (company code, plant, organisations, controlling area)")
+    rl.add_argument("--json", action="store_true")
     le = sub.add_parser("llm-eval", help="run the reasoner evaluation cases through the configured reasoner (heuristic unless SDTF_LLM_PROVIDER is set) and report which explanations cite the facts, leak nothing and mention no foreign value")
     le.add_argument("--json", action="store_true")
     le.add_argument("--out", default=None, help="write the Markdown report here")
@@ -546,6 +550,23 @@ def main(argv=None):
                 print(f"  {d['object']:<24} {d['steps']:>9} steps ({d['write_steps']} write) · documents in DB {d['documents_in_db'] if d['documents_in_db'] is not None else '-'} · {', '.join(f'{k} {v}' for k, v in list(d['transactions'].items())[:3])}")
             if u["unmapped_top"]:
                 print("  not mapped: " + ", ".join(f"{x['tcode']} ({x['steps']})" for x in u["unmapped_top"][:8]))
+        return 0
+    if a.cmd == "rules-learn":
+        from .models import Project
+        from .rules.learning import learn_mappings
+
+        with session_scope() as s_:
+            proj = s_.get(Project, a.project)
+            if proj is None:
+                print(f"project {a.project} not found", file=sys.stderr)
+                return 2
+            L = learn_mappings(s_, proj.tenant_id, exclude_project=proj.id, include_org=a.include_org)
+        if a.json:
+            print(json.dumps(L, indent=2))
+        else:
+            print(f"{L['approved_rulesets']} approved rule set(s) of other projects; {len(L['fields'])} field(s) with learned mappings")
+            for f, d in L["fields"].items():
+                print(f"  {f}: {len(d['entries'])} value(s) agreed on from {len(d['sources'])} rule set(s)" + (f"; conflicts: {', '.join(d['conflicts'])}" if d["conflicts"] else "") + f"; tables {', '.join(d['tables'][:6])}")
         return 0
     if a.cmd == "llm-eval":
         from .agents.framework import default_reasoner

@@ -298,8 +298,8 @@ class EccLandscapeGenerator:
         clearing = self._post_fi(bukrs, year, "ZP" if koart == "D" else "KZ", posting, lines)
         # mark original open item as cleared
         oi_table = "BSID" if koart == "D" else "BSIK"
-        for row in self.tables[oi_table]:
-            if row["BUKRS"] == bukrs and row["BELNR"] == open_belnr:
+        for row in self.tables[oi_table]:  # the invoice item and the payment's partner item clear each other: both carry the clearing document
+            if row["BUKRS"] == bukrs and row["BELNR"] in (open_belnr, clearing):
                 row["AUGBL"] = clearing
                 row["AUGDT"] = self._ds(posting)
         for row in self.tables["BSEG"]:
