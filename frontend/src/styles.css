@@ -76,3 +76,8 @@ textarea.code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; fon
 .legend { display: flex; gap: 10px; flex-wrap: wrap; font-size: 11px; color: var(--muted); margin-top: 8px; }
 .legend span::before { content: ""; display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 4px; background: var(--c); vertical-align: middle; }
 .chk { display: inline-flex; align-items: center; gap: 6px; }
+.rc-form label { display: block; margin: 6px 0 8px; font-size: 12.5px; color: var(--muted); }
+.rc-form label input, .rc-form label select { display: block; width: 100%; box-sizing: border-box; margin-top: 3px; color: inherit; }
+.rc-form h4 { margin: 10px 0 4px; }
+.rc-form .row { display: flex; gap: 10px; }
+.rc-form .row label { flex: 1; }

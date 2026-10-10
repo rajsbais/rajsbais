@@ -324,6 +324,30 @@ def test_connector(s: SapSystem = Depends(get_system), db: Session = Depends(get
     return out
 
 
+@router.get("/systems/{system_id}/read-config", tags=["systems"])
+def get_read_config(s: SapSystem = Depends(get_system), p: Principal = Depends(require("project:read"))):
+    """How the reconciliation reads this system over RFC: journal table and ledger, asset and inventory chains
+    (stored subset, effective values with defaults, options for the form)."""
+    from ..reconciliation import read_config as rc
+
+    return rc.describe(s)
+
+
+@router.put("/systems/{system_id}/read-config", tags=["systems"])
+def put_read_config(payload: dict, s: SapSystem = Depends(get_system), db: Session = Depends(get_db), p: Principal = Depends(require("project:write"))):
+    """Replace the read configuration (validated; only the four read keys of meta.rfc change, transport and
+    destination are never touched; an empty object resets to the defaults). Audited."""
+    from ..reconciliation import read_config as rc
+
+    try:
+        out = rc.apply(s, payload or {})
+    except rc.ReadConfigError as e:
+        raise HTTPException(400, str(e)) from None
+    db.flush()
+    record_event(db, p.username, "READ_CONFIG_CHANGED", "SYSTEM", s.id, {"configured": out["configured"]})
+    return out
+
+
 class SimulateChanges(BaseModel):
     seed: int = 1
     count: int = Field(10, ge=1, le=500)

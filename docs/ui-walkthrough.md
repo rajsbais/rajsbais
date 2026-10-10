@@ -50,6 +50,13 @@ operator, auditor, viewer; passwords equal the names), select the demo project a
 11. **Cutover rehearsal checklist** (`cutover-14-rehearsal-checklist.png`, Cutover Command Center): a mock cutover
     created from the runbook; automatic items evaluated from the platform state, manual items ticked by hand, task
     timings and the approver's GO / NO-GO.
+12. **Read configuration** (`landscape-15-read-configuration.png`, Landscape page, RFC sources and API targets): how
+    the reconciliation reads the selected system over the add-on: journal table and ledger, the asset chain (FAAV_ANLC,
+    APC line items by movement category, net postings) and the inventory chain (MBEW through the Material Ledger proxy
+    view, CKMLCR period totals with period and currency type, inventory accounts). Saved through
+    `PUT /systems/{id}/read-config` (validated, audited; transport and destination untouched, no secret passes); the
+    effective values with their defaults are shown above the form, and the Reconciliation page's *Read path* card shows
+    the measures the last reconciliation used.
 
 The full-page capture of the cockpit card is `cockpit-04-cockpit-export.png`; the other images are viewport
 captures at 1440x900.

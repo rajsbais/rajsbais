@@ -1,7 +1,8 @@
 import { useState } from "react";
-import { api, fmtBytes, fmtNum } from "../api";
+import { api, currentUser, fmtBytes, fmtNum } from "../api";
 import { useApi, useProjectDetails } from "../hooks";
 import { Banner, Card, ErrorBox, KV, Pill, Pre, Stat, Table, Tabs } from "../components/ui";
+import { ReadConfig } from "../components/ReadConfig";
 
 export default function Landscape() {
   const { project, source, target, reload } = useProjectDetails();
@@ -37,6 +38,7 @@ export default function Landscape() {
           <Card title="Destination (secrets masked)"><KV obj={conn.destination || {}} /></Card>
         </div>}
       </Card>
+      {sysId && (system?.connector === "RFC" || system?.connector === "API") && <ReadConfig systemId={sysId} canWrite={!!(currentUser()?.roles || []).some((r: string) => ["architect", "admin"].includes(r))} />}
       {disc.error && <Banner>No discovery snapshot for {system?.sid}. Run discovery to collect release, organisational, table and object information.</Banner>}
       {s && <>
         <div className="stats"><Stat label="Tables" value={s.tables.count} sub={`${s.tables.custom} custom (Z/Y)`} /><Stat label="Rows" value={fmtNum(s.tables.total_rows)} sub={fmtBytes(s.tables.est_bytes)} /><Stat label="Company codes" value={s.org_units.COMPANY_CODE} sub={`${s.org_units.PLANT} plants, ${s.org_units.CONTROLLING_AREA} controlling areas`} /><Stat label="Interfaces" value={s.interfaces.length} sub={`${s.jobs.length} background jobs`} /><Stat label="S/4 impact items" value={s.s4_impacts.length} /><Stat label="Complexity" value={<Pill value={s.complexity.band} />} sub={`score ${s.complexity.score}`} /></div>

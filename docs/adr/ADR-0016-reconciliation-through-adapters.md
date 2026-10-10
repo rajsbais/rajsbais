@@ -92,3 +92,7 @@ NPL / A4H test, docs/connect-real-systems.md).
   rows read back through the add-on are then compared on prices only (LBKUM/SALK3 excluded) and the totals come from
   the chain. Verified on the simulated add-on with Material Ledger records derived from the classic rows
   (`material_ledger_from_mbew`); the proxy-view behaviour of A4H is a public-reference claim to confirm on the VM.
+  All of it (journal table, ledger, asset chain, inventory chain) is managed per system through
+  `GET/PUT /systems/{id}/read-config` (`reconciliation/read_config.py`: validated, audited, only the four read keys
+  of `meta.rfc` change, transport and destination untouched) and the *Read configuration* card of the Landscape page;
+  the Reconciliation page's *Read path* card shows the measures the last reconciliation used.

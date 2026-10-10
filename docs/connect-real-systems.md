@@ -48,7 +48,8 @@ switch VMs and *Resume from checkpoint*: completed stages and completed extracti
 > compatibility view `FAAV_ANLC` when the technical user may read it (`S_TABU_NAM`), else from the APC line items of
 > `ACDOCA` / `FAAT_DOC_IT` once `meta.rfc.assets.apc_movement_categories` names the FAA_MOVCAT values of your system
 > (look them up in the domain), else the net postings, which the check reports as a different measure. Inventory values
-> on A4H come from `MBEW` read through the add-on (the Material Ledger proxy view `MBV_MBEW` serves LBKUM/SALK3 to Open
+> on A4H come from `MBEW` read through the add-on (configure all of this on the Landscape page, *Read configuration*,
+> instead of editing `meta.rfc` by hand) (the Material Ledger proxy view `MBV_MBEW` serves LBKUM/SALK3 to Open
 > SQL; confirm on A4H that the dynamic SELECT returns non-zero SALK3), else from the Material Ledger period totals
 > `CKMLCR` / `CKMLHD` (`meta.rfc.inventory.period` = `{"year", "poper"}` of the cutover period, `currency_type` 10;
 > the technical user needs `S_TABU_NAM` for them), else from the inventory accounts named in

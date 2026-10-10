@@ -34,7 +34,8 @@ migrations, deployment) for the Phase 1 foundation and the first vertical slice.
 * OpenTelemetry traces, metrics and trace-correlated JSON logs across API and workers.
 * RBAC/ABAC, tenant segregation, masking, four-eyes approvals, tamper detection, OIDC single sign-on with a
   browser PKCE login (authorization code flow, API-mediated exchange, refresh, provider logout).
-* 19 frontend applications wired to the API; Docker/compose/Kubernetes/CI.
+* 19 frontend applications wired to the API (including the per-system read configuration of the reconciliation on
+  the Landscape page); Docker/compose/Kubernetes/CI.
 
 ## Quick start
 ```bash

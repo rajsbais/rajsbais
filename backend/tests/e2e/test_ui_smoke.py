@@ -1,7 +1,7 @@
 """UI end-to-end smoke (Playwright). Runs only when SDTF_E2E=1 and the UI + API are up:
    SDTF_E2E=1 SDTF_E2E_URL=http://localhost:5173 pytest tests/e2e -q
 It signs in, opens all 18 applications, asserts no page errors and no failed API calls apart from
-role-restricted audit endpoints, and exercises graph traversal, scope preview, the cockpit staging-file export with a registered template, cutover risk and the cutover rehearsal checklist."""
+role-restricted audit endpoints, and exercises graph traversal, scope preview, the cockpit staging-file export with a registered template, cutover risk, the cutover rehearsal checklist and the per-system read configuration."""
 import os
 import re
 
@@ -70,6 +70,25 @@ def test_all_screens_render_against_live_api():
         pg.wait_for_timeout(2500)
         txt = pg.inner_text("main")
         assert "Read path" in txt and "Reconcile again through the adapters" in txt
+        # read configuration of the source (RFC or synthetic-over-RFC systems show the card): save a ledger, reset
+        pg.goto(base + "/landscape")
+        pg.wait_for_timeout(2000)
+        sel = pg.query_selector("select")
+        if sel is not None:
+            opts = [o for o in sel.query_selector_all("option") if "RFC" in (o.inner_text() or "") or "API" in (o.inner_text() or "")]
+            if opts:
+                sel.select_option(opts[0].get_attribute("value"))
+                pg.wait_for_timeout(2000)
+                txt = pg.inner_text("main")
+                if "Read configuration" in txt and "Save read configuration" in txt:
+                    pg.fill("input[placeholder='0L']", "2L")
+                    pg.click("button:has-text('Save read configuration')")
+                    pg.wait_for_timeout(1500)
+                    txt = pg.inner_text("main")
+                    assert "ledger 2L" in txt and ("Saved" in txt or "CONFIGURED" in txt), txt[:400]
+                    pg.click("button:has-text('Reset to defaults')")
+                    pg.wait_for_timeout(1500)
+                    assert "Reset to the defaults" in pg.inner_text("main")
         pg.goto(base + "/cutover")
         pg.wait_for_timeout(1000)
         pg.click("text=Assess cutover risk")
