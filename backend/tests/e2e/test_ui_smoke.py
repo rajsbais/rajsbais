@@ -1,6 +1,6 @@
 """UI end-to-end smoke (Playwright). Runs only when SDTF_E2E=1 and the UI + API are up:
    SDTF_E2E=1 SDTF_E2E_URL=http://localhost:5173 pytest tests/e2e -q
-It signs in, opens all 18 applications, asserts no page errors and no failed API calls apart from
+It signs in, opens all 22 pages of the Transform Factory shell, asserts no page errors and no failed API calls apart from
 role-restricted audit endpoints, and exercises graph traversal, scope preview, the cockpit staging-file export with a registered template, cutover risk, the cutover rehearsal checklist and the per-system read configuration."""
 import os
 import re
@@ -8,7 +8,7 @@ import re
 import pytest
 
 pytestmark = pytest.mark.skipif(os.getenv("SDTF_E2E") != "1", reason="set SDTF_E2E=1 with a running UI/API")
-PAGES = ["/", "/portfolio", "/landscape", "/analyzer", "/org", "/catalog", "/graph", "/scope", "/carveout", "/bluefield", "/merger", "/rules", "/quality", "/runs", "/delta", "/reconciliation", "/cutover", "/copilot", "/compliance"]
+PAGES = ["/", "/portfolio", "/landscape", "/analyzer", "/org", "/catalog", "/graph", "/scope", "/carveout", "/bluefield", "/merger", "/connect", "/extract", "/rules", "/quality", "/runs", "/delta", "/reconciliation", "/cutover", "/copilot", "/audit", "/compliance"]
 ALLOWED_403 = ("/audit/events", "/audit/verify")
 
 
@@ -70,10 +70,10 @@ def test_all_screens_render_against_live_api():
         pg.wait_for_timeout(2500)
         txt = pg.inner_text("main")
         assert "Read path" in txt and "Reconcile again through the adapters" in txt
-        # read configuration of the source (RFC or synthetic-over-RFC systems show the card): save a ledger, reset
-        pg.goto(base + "/landscape")
-        pg.wait_for_timeout(2000)
-        sel = pg.query_selector("select")
+        # read configuration of the source (Connect page; RFC or synthetic-over-RFC systems show the card): save a ledger, reset
+        pg.goto(base + "/connect")
+        pg.wait_for_timeout(2500)
+        sel = pg.query_selector("main .card-h select")
         if sel is not None:
             opts = [o for o in sel.query_selector_all("option") if "RFC" in (o.inner_text() or "") or "API" in (o.inner_text() or "")]
             if opts:

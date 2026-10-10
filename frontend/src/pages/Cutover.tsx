@@ -37,6 +37,21 @@ export default function Cutover() {
   const timings = reh?.timings || {};
   return (
     <div>
+      {reh ? <>
+        <div className="gates">
+          {reh.items.filter((it: any) => it.kind === "AUTO").map((it: any) => <div key={it.id} className={`gate ${it.status === "PASS" ? "passed" : it.status === "FAIL" ? "failed" : it.status === "NOT_APPLICABLE" ? "" : "blocked"}`}><span>{it.status === "PASS" ? "Passed" : it.status === "FAIL" ? "Failed" : it.status === "NOT_APPLICABLE" ? "Waived" : "Blocked"} · {it.title}</span><span className="meta">{it.detail || ""}</span></div>)}
+        </div>
+        <div className="gates" style={{ marginTop: 12 }}>
+          {reh.items.filter((it: any) => it.kind === "MANUAL").map((it: any) => <div key={it.id} className={`gate ${it.status === "PASS" ? "passed" : it.status === "FAIL" ? "failed" : ""}`}><span>{it.title}{it.blocking ? " · irreversible" : ""}{it.status === "PASS" ? " · done" : ""}</span>{active && it.status !== "PASS" && <button onClick={() => markItem(it, "PASS")}>Mark done</button>}</div>)}
+        </div>
+        <div className="row" style={{ marginTop: 14 }}>
+          {reh.status === "PLANNED" && <button className="secondary" onClick={() => { const note = window.prompt("Start the rehearsal: note (optional)", ""); if (note !== null) post("/start", { note }); }}>Start the rehearsal</button>}
+          {active && <button className="secondary" onClick={() => post("/refresh")}>Refresh gates</button>}
+          <button disabled={!active || !s.ready_for_go} title={!active ? "start a rehearsal or go-live checklist first" : s.ready_for_go ? "" : "blocking gates still open"} onClick={() => complete("GO")}>Authorize production handover</button>
+          {reh.verdict && <Pill value={reh.verdict} />}
+        </div>
+        <p className="muted">Gates come from the {reh.kind === "FINAL" ? "go-live checklist" : reh.kind === "DRESS" ? "dress rehearsal" : "mock cutover"} "{reh.name}": the automatic ones are evaluated from the platform's state, the manual ones are ticked by hand; the handover is refused while a blocking gate is open.</p>
+      </> : <p className="muted">No rehearsal or go-live checklist yet for this manifest: create one below to see the gates.</p>}
       <Banner kind="warn">Cutover Command Center is <b>PARTIAL</b>: runbook generation, dependency-aware scheduling, critical path, downtime forecast, rollback gates, go/no-go criteria and the <b>cutover rehearsal checklist</b> (mock cutovers, dress rehearsals, go-live checklist with automatic readiness items, manual items, task timings and an approver verdict) are implemented; live execution tracking of the production cutover, incident escalation and resource assignment are planned. Forecasts are template-based unless a rehearsal timed the task; nothing here touches an SAP system.</Banner>
       <div className="row"><Select value={id} onChange={setMid} options={(manifests.data || []).map((m) => ({ value: m.id, label: `${m.name} v${m.version}` }))} /><button className="secondary" onClick={assess}>Assess cutover risk (agent)</button></div>
       <ErrorBox error={err || rb.error} />

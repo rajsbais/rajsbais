@@ -348,6 +348,79 @@ def put_read_config(payload: dict, s: SapSystem = Depends(get_system), db: Sessi
     return out
 
 
+RFC_DEST_KEYS = ("ashost", "sysnr", "client", "user", "lang", "saprouter", "mshost", "msserv", "group", "sysid", "trace")
+API_DEST_KEYS = ("base_url", "client", "user", "verify_tls", "timeout")
+
+
+class DestinationIn(BaseModel):
+    transport: str | None = Field(None, description="RFC: simulated | pyrfc; API: simulated | https")
+    dest: dict = Field(default_factory=dict, description="connection parameters without secrets; passwd may only be an 'env:NAME' reference")
+
+
+def _destination_out(s: SapSystem) -> dict:
+    from ..runtime import rfc as rfcmod
+    from ..runtime import target_api as tapi
+
+    rfc = (s.meta or {}).get("rfc") or {}
+    api = (s.meta or {}).get("api") or {}
+    out = {"system_id": s.id, "sid": s.sid, "role": s.role, "connector": s.connector, "connector_status": s.connector_status}
+    if s.connector == "RFC" or rfc:
+        out["rfc"] = {"transport": rfc.get("transport") or ("pyrfc" if s.connector == "RFC" else None), "dest": rfcmod.mask_destination(dict(rfc.get("dest") or {})), "resolved": rfcmod.mask_destination(rfcmod.resolve_destination(s.sid, s.meta)), "password_env": f"SDTF_RFC_DEST_{s.sid.upper()}_PASSWD", "keys": list(RFC_DEST_KEYS)}
+    if s.connector == "API":
+        out["api"] = {"transport": api.get("transport") or "https", "dest": tapi.mask_api_destination(dict(api.get("dest") or {})), "resolved": tapi.mask_api_destination(tapi.resolve_api_destination(s.sid, s.meta)), "password_env": f"SDTF_S4_API_{s.sid.upper()}_PASSWD", "keys": list(API_DEST_KEYS)}
+    return out
+
+
+@router.get("/systems/{system_id}/destination", tags=["systems"])
+def get_destination(s: SapSystem = Depends(get_system), p: Principal = Depends(require("project:read"))):
+    """The connection parameters of a system with secrets masked, as stored and as resolved from the environment."""
+    return _destination_out(s)
+
+
+@router.put("/systems/{system_id}/destination", tags=["systems"])
+def put_destination(req: DestinationIn, kind: str = Query("rfc", pattern="^(rfc|api)$"), s: SapSystem = Depends(get_system), db: Session = Depends(get_db), p: Principal = Depends(require("project:write"))):
+    """Set the RFC destination (`kind=rfc`) or the API destination (`kind=api`) of a system and optionally its
+    transport. Secrets are refused: a password is referenced as 'env:NAME' or set through the environment
+    variable the response names. Only the known connection keys are stored; the read configuration and the
+    other metadata stay untouched. Audited."""
+    from ..runtime.rfc import SECRET_KEYS
+    from ..runtime.target_api import SECRET_KEYS as API_SECRET_KEYS
+
+    if kind == "api" and s.connector != "API":
+        raise HTTPException(409, "the API destination is only defined for API targets")
+    if kind == "rfc" and s.connector not in ("RFC", "API"):
+        raise HTTPException(409, "the RFC destination is only defined for RFC sources and API targets hosting the read-only add-on")
+    secrets = SECRET_KEYS if kind == "rfc" else API_SECRET_KEYS
+    allowed = RFC_DEST_KEYS if kind == "rfc" else API_DEST_KEYS
+    dest = {}
+    for k, v in (req.dest or {}).items():
+        k = str(k).lower()
+        if k in secrets:
+            if isinstance(v, str) and v.startswith("env:") and len(v) > 4:
+                dest[k] = v
+                continue
+            raise HTTPException(400, f"{k} is never stored: reference it as 'env:NAME' or set the environment variable the destination document names")
+        if k not in allowed:
+            raise HTTPException(400, f"unknown connection key {k}; allowed: {', '.join(allowed)}")
+        if v is None or v == "":
+            continue
+        dest[k] = v if isinstance(v, (bool, int)) else str(v).strip()
+    transports = ("simulated", "pyrfc") if kind == "rfc" else ("simulated", "https")
+    if req.transport is not None and req.transport not in transports:
+        raise HTTPException(400, f"transport must be one of {', '.join(transports)}")
+    meta = dict(s.meta or {})
+    section = dict(meta.get(kind) or {})
+    section["dest"] = dest
+    if req.transport is not None:
+        section["transport"] = req.transport
+    meta[kind] = section
+    s.meta = meta
+    s.connector_status = _connector_status(s.connector, meta)
+    db.flush()
+    record_event(db, p.username, "DESTINATION_CHANGED", "SYSTEM", s.id, {"kind": kind, "transport": section.get("transport"), "keys": sorted(dest)})
+    return _destination_out(s)
+
+
 class SimulateChanges(BaseModel):
     seed: int = 1
     count: int = Field(10, ge=1, le=500)

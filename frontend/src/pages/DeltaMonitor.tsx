@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { api, fmtNum } from "../api";
 import { useApi, useProjectDetails } from "../hooks";
-import { Banner, Card, ErrorBox, KV, Pill, Select, Stat, Table } from "../components/ui";
+import { Banner, Card, ErrorBox, KV, Pill, Select, Stat, Table, Tile } from "../components/ui";
 
 export default function DeltaMonitor() {
   const { projectId, source } = useProjectDetails();
@@ -28,8 +28,44 @@ export default function DeltaMonitor() {
   const freeze = () => call(() => api(`/runs/${baseId}/delta/freeze`, { body: { note: "declared from Delta Synchronization Monitor" } }));
   if (!projectId) return <Banner>Select a project.</Banner>;
   const s = state.data;
+  const base = baselines.find((r) => r.id === baseId);
+  const stageOf = (name: string) => (base?.stages || []).find((x: any) => x.name === name)?.status === "COMPLETED";
+  const cycles: any[] = s?.cycles || [];
+  const nonFinal = cycles.filter((c) => !c.final);
+  const STAGES = [
+    { n: "Initial extraction", done: stageOf("EXTRACT") },
+    { n: "Initial transformation", done: stageOf("TRANSFORM") },
+    { n: "Initial target load", done: stageOf("LOAD") },
+    { n: "Delta capture", done: nonFinal.some((c) => c.status === "COMPLETED" && Number(c.captured) > 0) },
+    { n: "Delta transformation", done: nonFinal.some((c) => c.status === "COMPLETED" && Number(c.applied) > 0) },
+    { n: "Continuous synchronization", done: nonFinal.filter((c) => c.status === "COMPLETED").length >= 2 || !!s?.freeze },
+    { n: "Final delta synchronization", done: !!s?.final_delta },
+    { n: "Final reconciliation", done: !!s?.final_delta && cycles.some((c) => c.final && c.final_reconciliation === "PASS") },
+    { n: "Cutover authorization", done: !!s?.cutover_ready },
+  ];
+  const current = STAGES.findIndex((x) => !x.done);
+  const stageNo = current < 0 ? STAGES.length : current + 1;
+  const deltaDocs = cycles.reduce((a, c) => a + (Number(c.captured) || 0), 0);
+  const backlog = s?.backlog?.events;
+  const advance = () => {
+    if (!base) return;
+    if (current <= 2) { window.location.assign("/extract"); return; }
+    if (current <= 5) { cycle(false); return; }
+    if (current === 6) { if (!s?.freeze) { freeze(); } else { cycle(true); } return; }
+    if (current === 7) { cycle(true); return; }
+    window.location.assign("/cutover");
+  };
+  const advanceLabel = !base ? "Run the initial load first" : current < 0 ? "All stages complete" : current <= 2 ? "Open the extraction" : current <= 5 ? "Advance stage: run a delta cycle" : current === 6 ? (s?.freeze ? "Advance stage: final delta" : "Advance stage: declare the business freeze") : current === 7 ? "Advance stage: final delta and reconciliation" : "Open the cutover";
   return (
     <div>
+      <div className="tiles" style={{ marginTop: 0, marginBottom: 16 }}>
+        <Tile label="Delta documents" value={fmtNum(deltaDocs)} />
+        <Tile label="Backlog amount" value={s?.backlog?.error ? "n/a" : fmtNum(backlog ?? 0)} />
+        <Tile label="Stage" value={`${stageNo}/${STAGES.length}`} />
+      </div>
+      {base ? <p className="muted">{current < 0 ? "Every stage is complete for this baseline." : current === 0 ? "Initial load is not on the target yet." : `Next: ${STAGES[current].n.toLowerCase()}.`}</p> : <p className="muted">Initial load is not on the target yet.</p>}
+      <div className="steps">{STAGES.map((x, i) => <div key={x.n} className={`step ${i === current ? "current" : x.done ? "done" : ""}`}>{i + 1}. {x.n}{x.done ? " ✓" : ""}</div>)}</div>
+      <div className="row" style={{ marginTop: 14 }}><button disabled={busy || (!!base && current >= 3 && current <= 7 && !s?.cdc_supported)} onClick={advance}>{busy ? "Working…" : advanceLabel}</button></div>
       <Banner kind="warn">Delta synchronisation is <b>SIMULATED</b>: change events come from the SAP add-on contract (<code>Z_SDTF_CDC_POLL</code>) served by the simulated add-on over the RFC adapter, and are loaded through the released S/4HANA APIs (business partner, product, sales order, purchase order, journal entry) on the simulated gateway. The engine's ordering, idempotency, conflict detection, API operations, freeze handling and final reconciliation are real; neither system is. No downtime figure is derived from these cycles.</Banner>
       <Card title="Baseline (initial load) run" actions={<Select value={baseId || ""} onChange={setSel} options={baselines.map((r) => ({ value: r.id, label: `${r.id.slice(0, 8)} · ${String(r.started_at || "").slice(0, 16)} · recon ${r.reconciliation || "-"}` }))} placeholder="completed baseline run" />}>
         {!baselines.length && <p className="muted">Complete an initial simulated run first (Extraction &amp; Load Monitor). Delta capture needs a source registered with the RFC connector; create the demo project with “RFC (simulated SAP add-on)” in Portfolio.</p>}

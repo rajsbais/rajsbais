@@ -1,7 +1,7 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { api } from "../api";
 import { useApi, useProjectDetails } from "../hooks";
-import { Banner, Card, ErrorBox, Pill, Table } from "../components/ui";
+import { Banner, Card, ErrorBox, List, Pill, Table } from "../components/ui";
 
 const COLORS: Record<string, string> = { "SD.SalesOrder": "#4f8cff", "SD.Delivery": "#58a6ff", "SD.BillingDocument": "#79c0ff", "FI.AccountingDocument": "#3fb950", "MM.PurchaseOrder": "#d29922", "MM.MaterialDocument": "#e3b341", "MM.InvoiceReceipt": "#f0c674", "MD.Customer": "#bc8cff", "MD.Vendor": "#d2a8ff", "MD.Material": "#ff7b72", "CFG.Plant": "#8b98a5", "CFG.CompanyCode": "#c9d1d9", "FI.GLAccount": "#56d364", "CO.CostCenter": "#7ee787", "CO.ProfitCenter": "#a5d6ff", "PP.ProductionOrder": "#ffa657" };
 
@@ -38,9 +38,21 @@ export default function GraphExplorer() {
   const nb = useApi<any>(source && node ? `/systems/${source.id}/graph/neighbourhood` : null, { node, depth }, [node, depth]);
   const build = async () => { setBusy(true); setErr(null); try { await api(`/systems/${source.id}/graph/build`, { method: "POST" }); stats.reload(); search.reload(); } catch (e: any) { setErr(e.message); } finally { setBusy(false); } };
   const traverse = async () => { if (!node) return; try { setTrav(await api(`/systems/${source.id}/graph/traverse`, { body: { seeds: [node], max_depth: 6 } })); } catch (e: any) { setErr(e.message); } };
+  const org = useApi<any>(source ? `/systems/${source.id}/org-structure` : null, undefined, [source?.id]);
+  const ccs: any[] = (org.data?.units || []).filter((u: any) => u.type === "COMPANY_CODE");
+  const [cc, setCc] = useState("");
+  useEffect(() => { if (!cc && ccs.length) setCc(ccs.find((u) => u.code !== ccs[0].code)?.code || ccs[0].code); }, [ccs.length]);
+  const ccNb = useApi<any>(source && cc && stats.data?.nodes ? `/systems/${source.id}/graph/neighbourhood` : null, { node: `CFG.CompanyCode:${cc}`, depth: 2 }, [cc, stats.data?.nodes]);
+  const related: any[] = (ccNb.data?.nodes || []).filter((n: any) => n.id !== `CFG.CompanyCode:${cc}` && !n.id.startsWith("CFG."));
+  const flagged = related.filter((n) => n.attributes?.shared || n.attributes?.cross_company);
   if (!source) return <Banner>Select a project with a source system.</Banner>;
   return (
     <div>
+      <div className="grid2">
+        <Card><label className="field">Company code<select value={cc} onChange={(e) => setCc(e.target.value)} disabled={!ccs.length}>{ccs.map((u) => <option key={u.code} value={u.code}>{u.code} — {u.name}</option>)}{!ccs.length && <option value="">run discovery first</option>}</select></label><p style={{ margin: 0 }}>Related nodes: <b>{ccNb.data ? related.length : stats.data && !stats.data.nodes ? "graph not built" : "…"}</b>{ccNb.data?.truncated ? " (truncated)" : ""}</p></Card>
+        <Card title="Shared and cross-company"><List items={flagged.slice(0, 12).map((n) => ({ id: n.id, k: n.id, d: [n.attributes?.shared ? "shared" : "", n.attributes?.cross_company ? "cross-company" : ""].filter(Boolean).join(" · ") }))} empty={ccNb.data ? "Nothing shared or cross-company within two hops of this company code" : "…"} onPick={setNode} /></Card>
+      </div>
+      <Card title="Related objects"><List items={related.slice(0, 20).map((n) => ({ id: n.id, k: n.id, d: n.attributes?.company_codes?.length ? `company codes ${n.attributes.company_codes.join(", ")}` : undefined }))} empty={ccNb.data ? "No objects within two hops of this company code" : stats.data && !stats.data.nodes ? "Build the graph first" : "…"} onPick={setNode} />{related.length > 20 && <p className="muted">{related.length - 20} more; pick one to open its neighbourhood below.</p>}</Card>
       <Card title="Dependency graph" actions={<button disabled={busy} onClick={build}>{busy ? "Building…" : "Build / rebuild graph"}</button>}>
         <ErrorBox error={err || stats.error} />
         {stats.data && <p>{stats.data.nodes.toLocaleString()} nodes · {stats.data.edges.toLocaleString()} edges · {Object.entries(stats.data.edges_by_type).map(([t, n]) => `${t}: ${n}`).join(" · ")}</p>}

@@ -34,8 +34,9 @@ migrations, deployment) for the Phase 1 foundation and the first vertical slice.
 * OpenTelemetry traces, metrics and trace-correlated JSON logs across API and workers.
 * RBAC/ABAC, tenant segregation, masking, four-eyes approvals, tamper detection, OIDC single sign-on with a
   browser PKCE login (authorization code flow, API-mediated exchange, refresh, provider logout).
-* 19 frontend applications wired to the API (including the per-system read configuration of the reconciliation on
-  the Landscape page); Docker/compose/Kubernetes/CI.
+* Transform Factory front end: eleven sections (Dashboard, Landscape, Carve-out, Dependencies, Connect, Extract,
+  Rules, CDC, Finance, Cutover, Audit) over the 22 pages wired to the API, with the per-system connections and read
+  configuration managed in the UI (docs/ui-walkthrough.md); Docker/compose/Kubernetes/CI.
 
 ## Quick start
 ```bash

@@ -60,3 +60,31 @@ operator, auditor, viewer; passwords equal the names), select the demo project a
 
 The full-page capture of the cockpit card is `cockpit-04-cockpit-export.png`; the other images are viewport
 captures at 1440x900.
+
+## The Transform Factory shell (eleven sections)
+
+The front end follows the Transform Factory requirement screens: a dark navy sidebar on wide screens (eyebrow
+*TRANSFORM FACTORY*, the project name, eleven primary sections with icons, the project picker and the signed-in user at
+the bottom), a top bar with a horizontally scrolling section row below 1000 px (`factory-27-narrow.png`), a warm light
+workspace, an honesty banner on every page that says what the project's systems really are (synthetic landscape and
+simulated gateway, or the connected hosts), big monospace figures in the stat tiles, pill-shaped segmented controls and
+full-width primary actions. Sections with several applications show them as a second row of pills.
+
+| Section | Page (`factory-*.png`) | What it shows | Built on |
+|---|---|---|---|
+| Dashboard | Executive dashboard (16) | company codes, plants, sample objects and database size of the source; *Quick carve-out* per company code with related objects, shared risk and cross-company documents evaluated by the scope engine; recent runs; capability status | discovery snapshot, `POST /projects/{id}/scopes/evaluate` |
+| Landscape | Landscape explorer (17) | company codes (name, country, currency, parent / spin role), plants (company code, valuation area), business objects with instance counts; the analyzer, organisational structure and catalog as sub-pages | org structure, business-object inventory |
+| Carve-out | Carve-out studio (18) | company code and shared-object policy, *Generate scope and analyze* writes a versioned, hashed manifest; the immutable manifest card; dispositions, detections, classification, completeness and residual exposure below; scope designer, Bluefield and merger as sub-pages | manifests, carve-out services |
+| Dependencies | Dependency graph (19) | related objects and the shared / cross-company ones within two hops of a company code; the neighbourhood explorer, traversal and relationship model below | graph neighbourhood and traversal |
+| Connect | System connections (20) | source RFC destination (host, system number, client, user, transport), target OData destination (base URL, client, user, TLS), password only as an environment-variable reference, *Test ECC / S/4HANA handshake*; discovery, metadata check and the read configuration | `GET/PUT /systems/{id}/destination`, connector test |
+| Extract | ABAP extraction (21) | *Run extraction agents* (needs an approved manifest and ruleset), the tables the latest run extracted with rows and the agent that read them, the checkpoint; run monitor and data quality as sub-pages | runs, EXTRACT stage metrics |
+| Rules | Transformation rules (22) | the rules of the current set as one line each, dry-run on a source sample with *Source lines* and *Preview*, approval; the YAML editor, validation and lineage below | rule sets, dry run |
+| CDC | Near-zero downtime (23) | delta documents, backlog, stage k/9 and the nine ordered stages derived from the baseline run and the delta cycles; *Advance stage* runs the next real action (delta cycle, freeze, final delta) | delta state and cycles |
+| Finance | Financial reconciliation (24) | the reconciliation center with the read path and the measures used on S/4HANA | reconciliation |
+| Cutover | Production cutover (25) | gates from the selected rehearsal: automatic items as Blocked / Passed / Failed rows, manual items with *Mark done*, *Authorize production handover* refused while a blocking gate is open; runbook, risk and the full rehearsal below | cutover rehearsals |
+| Audit | Audit report (26) | the verified vertical slice of a run: verdict, timestamp, company code, related objects, manifest hash, shared exposure, source / target / matched record counts, reconciliation status, evidence files and approvals; compliance and evidence as a sub-page | run report, reconciliation, evidence |
+
+Shared risk and shared exposure are the share of a scope's objects that are shared, referenced or need a manual
+disposition (LOW below 10 %, MEDIUM below 30 %, HIGH above; `frontend/src/lib.ts`, unit-tested). The verdict
+`VERTICAL_SLICE_COMPLETE` means the run completed and no reconciliation check failed; it does not claim a production
+migration.
