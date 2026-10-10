@@ -1,0 +1,12 @@
+__pycache__/
+*.pyc
+.pytest_cache/
+node_modules/
+refresh-factory/frontend/dist/
+*.egg-info/
+.venv/
+refresh-factory/frontend/test-results/
+refresh-factory/frontend/playwright-report/
+
+# local runs of start.py
+.rfactory/

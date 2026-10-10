@@ -1,0 +1,22 @@
+# NEVER RUN by the authors. Production-shaped defaults: OIDC only, durable encrypted state on a named volume, keys from the environment,
+# a read-only root filesystem, no extra capabilities, and a port published on the loopback interface only (put TLS in front of it).
+services:
+  refresh-factory:
+    build: .
+    env_file: .env            # copy .env.example to .env and fill it in; never commit .env
+    environment:
+      RFACTORY_ENV: production
+      RFACTORY_DATA_DIR: /data
+    ports:
+      - "127.0.0.1:8088:8088"
+    volumes:
+      - rf-data:/data
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    restart: unless-stopped
+volumes:
+  rf-data:
