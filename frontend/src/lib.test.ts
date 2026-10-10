@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { auditVerdict, crossCompany, dbSize, groupFor, NAV, pageFor, reconciliationStatus, sharedRisk, terabytes } from "./lib";
+import { APPROACHES, auditVerdict, crossCompany, dbSize, groupFor, journeyPhases, NAV, pageFor, phaseStatus, reconciliationStatus, sharedRisk, terabytes } from "./lib";
 
 describe("transform factory helpers", () => {
   it("bands the shared-data exposure of a classification", () => {
@@ -33,5 +33,20 @@ describe("transform factory helpers", () => {
     expect(groupFor("/runs").id).toBe("extract");
     expect(groupFor("/unknown").id).toBe("dashboard");
     expect(pageFor("/audit")?.title).toBe("Audit report");
+  });
+  it("derives the journey phases from the platform state", () => {
+    const empty = journeyPhases({ discovery: false, graph: false, manifests: [], rulesets: [], runs: [], completeness: null, rehearsals: [], delta: null, evidence: null, approvals: [], auditChain: null });
+    expect(empty.map((p) => p.status)).toEqual(["PENDING", "PENDING", "PENDING", "PENDING", "PENDING"]);
+    expect(empty.map((p) => p.id)).toEqual(["discover", "design", "simulate", "execute", "govern"]);
+    const mid = journeyPhases({ discovery: true, graph: true, manifests: [{ status: "DRAFT", name: "m", version: 1 }], rulesets: [{ validation: { ok: true }, name: "r", version: 1, rule_count: 3 }], runs: [], completeness: { pending_approvals: { count: 2 } }, rehearsals: [], delta: null, evidence: null, approvals: [], auditChain: null });
+    expect(mid[0].status).toBe("DONE");
+    expect(mid[1].status).toBe("IN_PROGRESS");
+    expect(mid[1].deliverables.map((d) => d.status)).toEqual(["IN_PROGRESS", "IN_PROGRESS", "DONE"]);
+    expect(mid[2].status).toBe("IN_PROGRESS");
+    const done = journeyPhases({ discovery: true, graph: true, manifests: [{ status: "APPROVED", name: "m", version: 2, approved_by: "approver" }], rulesets: [{ validation: { ok: true }, status: "APPROVED", approved_by: "approver", name: "r", version: 1, rule_count: 3 }], runs: [{ status: "COMPLETED", reconciliation: "PASS", metrics: {} }], completeness: { pending_approvals: { count: 0 } }, rehearsals: [{ verdict: "GO", name: "Go-live" }], delta: { cycles: [{ status: "COMPLETED" }], cutover_ready: true, freeze: {} }, evidence: { evidence: { files: { "report.json": {} } } }, approvals: [{ kind: "BUSINESS", decision: "APPROVED" }, { kind: "TECHNICAL", decision: "APPROVED" }], auditChain: true });
+    expect(done.every((p) => p.status === "DONE")).toBe(true);
+    expect(phaseStatus([])).toBe("PENDING");
+    expect(APPROACHES.map((a) => a.id)).toEqual(["conversion", "new", "selective"]);
+    expect(APPROACHES.find((a) => a.scenarios.includes("BLUEFIELD"))?.id).toBe("selective");
   });
 });

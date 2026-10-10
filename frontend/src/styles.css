@@ -152,3 +152,28 @@ textarea.code { font-family: var(--mono); font-size: 12.5px; width: 100%; min-he
 .field.inline { grid-template-columns: 1fr 1fr; gap: 12px; }
 .field .mono { font-family: var(--mono); }
 .note-danger { color: var(--bad); font-size: 14px; margin: 8px 0; }
+/* ---- transformation journey */
+.jstrip { display: grid; grid-template-columns: repeat(5, 1fr); gap: 10px; margin-bottom: 16px; }
+.jchip { display: flex; align-items: center; gap: 8px; padding: 12px 14px; border-radius: 14px; border: 1px solid var(--border); background: var(--panel); color: var(--text); font-weight: 600; font-size: 13.5px; }
+.jchip .n, .phase .n { display: inline-flex; width: 24px; height: 24px; border-radius: 50%; background: var(--accent); color: #fff; align-items: center; justify-content: center; font-family: var(--mono); font-size: 12px; flex: none; }
+.jchip.done, .phase.done { border-color: #C5E0CF; }
+.jchip.done .n, .phase.done .n { background: var(--ok); }
+.jchip.pending .n, .phase.pending .n { background: #9AA7B6; }
+.jchip .pill { margin-left: auto; }
+.phases { display: grid; grid-template-columns: repeat(5, 1fr); gap: 12px; margin-bottom: 16px; }
+.phase { background: var(--panel); border: 1px solid var(--border); border-radius: 18px; padding: 16px; position: relative; }
+.phase + .phase::before { content: "→"; position: absolute; left: -14px; top: 22px; color: var(--muted); font-size: 16px; }
+.phase header { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 6px; }
+.phase h3 { margin: 0; font-size: 15px; flex: 1; }
+.phase ul { list-style: none; padding: 0; margin: 10px 0 0; display: grid; gap: 8px; }
+.deliv { display: grid; grid-template-columns: 10px 1fr; gap: 2px 8px; font-size: 13.5px; }
+.deliv .dot { width: 10px; height: 10px; border-radius: 50%; margin-top: 5px; background: #C9C3B8; }
+.deliv.done .dot { background: var(--ok); } .deliv.in_progress .dot { background: var(--warn); }
+.deliv .muted { grid-column: 2; font-size: 12px; }
+.outputs { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin: 0 0 18px; }
+.approaches { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
+.approach { border: 1px solid var(--border); border-radius: 14px; padding: 14px; }
+.approach.on { border-color: var(--accent); box-shadow: inset 0 3px 0 var(--accent); }
+.approach h4 { margin: 0 0 6px; font-size: 15px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.approach ul { margin: 8px 0 0; padding-left: 18px; font-size: 13.5px; }
+@media (max-width: 1000px) { .phases, .jstrip { grid-template-columns: 1fr; } .phase + .phase::before { content: "↓"; left: 18px; top: -16px; } .approaches { grid-template-columns: 1fr; } }

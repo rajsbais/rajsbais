@@ -3,6 +3,7 @@ import { api, fmtNum } from "../api";
 import { useApi, useProjectDetails } from "../hooks";
 import { Banner, Card, ErrorBox, Hero, Pill, Stat, Table, Tile, isSimulated } from "../components/ui";
 import { crossCompany, dbSize, sharedRisk } from "../lib";
+import { JourneyStrip } from "./Journey";
 
 /** Executive dashboard: the landscape in four figures, a quick carve-out assessment per company code, the
  *  recent runs and the capability status. Every figure comes from the discovery snapshot and the scope engine. */
@@ -37,6 +38,7 @@ export default function Dashboard() {
     <div>
       <Hero title="Executive dashboard" subtitle={s ? `${s.system.product} ${s.system.release} · ${size.value} ${size.unit} ${isSimulated(source) ? "illustrative" : "discovered"} source` : `${project.name} · run discovery on the source to size the landscape`} />
       <ErrorBox error={runs.error || disc.error} />
+      <JourneyStrip />
       <div className="stats two">
         <Stat label="Company codes" value={s?.org_units?.COMPANY_CODE ?? ccs.length ?? "-"} />
         <Stat label="Plants" value={s?.org_units?.PLANT ?? "-"} />

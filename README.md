@@ -35,8 +35,8 @@ migrations, deployment) for the Phase 1 foundation and the first vertical slice.
 * RBAC/ABAC, tenant segregation, masking, four-eyes approvals, tamper detection, OIDC single sign-on with a
   browser PKCE login (authorization code flow, API-mediated exchange, refresh, provider logout).
 * Transform Factory front end: eleven sections (Dashboard, Landscape, Carve-out, Dependencies, Connect, Extract,
-  Rules, CDC, Finance, Cutover, Audit) over the 22 pages wired to the API, with the per-system connections and read
-  configuration managed in the UI (docs/ui-walkthrough.md); Docker/compose/Kubernetes/CI.
+  Rules, CDC, Finance, Cutover, Audit) over the 22 pages wired to the API, with the transformation journey (phase and deliverable status derived from the
+  platform state), the per-system connections and the read configuration managed in the UI (docs/ui-walkthrough.md); Docker/compose/Kubernetes/CI.
 
 ## Quick start
 ```bash

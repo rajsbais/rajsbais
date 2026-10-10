@@ -1,6 +1,6 @@
 """UI end-to-end smoke (Playwright). Runs only when SDTF_E2E=1 and the UI + API are up:
    SDTF_E2E=1 SDTF_E2E_URL=http://localhost:5173 pytest tests/e2e -q
-It signs in, opens all 22 pages of the Transform Factory shell, asserts no page errors and no failed API calls apart from
+It signs in, opens all 23 pages of the Transform Factory shell, asserts no page errors and no failed API calls apart from
 role-restricted audit endpoints, and exercises graph traversal, scope preview, the cockpit staging-file export with a registered template, cutover risk, the cutover rehearsal checklist and the per-system read configuration."""
 import os
 import re
@@ -8,7 +8,7 @@ import re
 import pytest
 
 pytestmark = pytest.mark.skipif(os.getenv("SDTF_E2E") != "1", reason="set SDTF_E2E=1 with a running UI/API")
-PAGES = ["/", "/portfolio", "/landscape", "/analyzer", "/org", "/catalog", "/graph", "/scope", "/carveout", "/bluefield", "/merger", "/connect", "/extract", "/rules", "/quality", "/runs", "/delta", "/reconciliation", "/cutover", "/copilot", "/audit", "/compliance"]
+PAGES = ["/", "/journey", "/portfolio", "/landscape", "/analyzer", "/org", "/catalog", "/graph", "/scope", "/carveout", "/bluefield", "/merger", "/connect", "/extract", "/rules", "/quality", "/runs", "/delta", "/reconciliation", "/cutover", "/copilot", "/audit", "/compliance"]
 ALLOWED_403 = ("/audit/events", "/audit/verify")
 
 

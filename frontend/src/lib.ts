@@ -49,6 +49,7 @@ export function reconciliationStatus(overall: string | null | undefined): { labe
 export const NAV: { id: string; label: string; icon: string; items: { to: string; label: string; title: string; subtitle: string }[] }[] = [
   { id: "dashboard", label: "Dashboard", icon: "grid", items: [
     { to: "/", label: "Executive dashboard", title: "Executive dashboard", subtitle: "" },
+    { to: "/journey", label: "Transformation journey", title: "Transformation journey", subtitle: "" },
     { to: "/portfolio", label: "Portfolio", title: "Migration factory portfolio", subtitle: "Every project, its systems and runs" },
     { to: "/copilot", label: "Copilot", title: "AI transformation copilot", subtitle: "Bounded agents that propose; humans decide" },
   ] },
@@ -100,3 +101,66 @@ export function groupFor(pathname: string) {
 export function pageFor(pathname: string) {
   return NAV.flatMap((g) => g.items).find((i) => i.to === pathname);
 }
+
+// ---- transformation journey (original phase model; statuses derived from the platform state)
+export type DeliverableStatus = "DONE" | "IN_PROGRESS" | "PENDING";
+export type Deliverable = { label: string; status: DeliverableStatus; detail?: string; to?: string };
+export type Phase = { id: string; title: string; lead: string; status: DeliverableStatus; deliverables: Deliverable[] };
+
+export function phaseStatus(items: { status: DeliverableStatus }[]): DeliverableStatus {
+  if (!items.length) return "PENDING";
+  if (items.every((d) => d.status === "DONE")) return "DONE";
+  if (items.some((d) => d.status !== "PENDING")) return "IN_PROGRESS";
+  return "PENDING";
+}
+
+export type JourneyInput = { discovery: boolean; graph: boolean; manifests: any[]; rulesets: any[]; runs: any[]; completeness: any; rehearsals: any[]; delta: any; evidence: any; approvals: any[]; auditChain: boolean | null };
+
+export function journeyPhases(i: JourneyInput): Phase[] {
+  const approvedM = i.manifests.find((m) => m.status === "APPROVED");
+  const validR = i.rulesets.find((r) => r.validation?.ok);
+  const approvedR = i.rulesets.find((r) => r.status === "APPROVED");
+  const completed = i.runs.filter((r) => r.status === "COMPLETED" && r.metrics?.kind !== "DELTA");
+  const latestRun = completed[0];
+  const recon = latestRun?.reconciliation;
+  const pendingDisp = i.completeness?.pending_approvals?.count;
+  const cycles: any[] = i.delta?.cycles || [];
+  const go = i.rehearsals.find((r) => r.verdict === "GO");
+  const businessSignoff = i.approvals.find((a) => a.kind === "BUSINESS" && a.decision === "APPROVED");
+  const technicalSignoff = i.approvals.find((a) => a.kind === "TECHNICAL" && a.decision === "APPROVED");
+  const s = (done: boolean, progress = false): DeliverableStatus => (done ? "DONE" : progress ? "IN_PROGRESS" : "PENDING");
+  const mk = (id: string, title: string, lead: string, deliverables: Deliverable[]): Phase => ({ id, title, lead, status: phaseStatus(deliverables), deliverables });
+  return [
+    mk("discover", "Discover and scope", "Know the landscape before deciding what moves.", [
+      { label: "Landscape snapshot", status: s(i.discovery), detail: i.discovery ? "discovery run on the source" : "run discovery (Connect)", to: "/landscape" },
+      { label: "Dependency graph", status: s(i.graph), detail: i.graph ? "built from the discovered objects" : "build it (Dependencies)", to: "/graph" },
+      { label: "Scope manifest", status: s(!!i.manifests.length), detail: i.manifests.length ? `${i.manifests.length} version(s), hashed` : "generate one (Carve-out)", to: "/carveout" },
+    ]),
+    mk("design", "Analyse and design", "Decide the ownership of every shared object and the rules that rewrite the data.", [
+      { label: "Business dispositions", status: s(!!i.manifests.length && pendingDisp === 0, !!i.manifests.length && pendingDisp > 0), detail: pendingDisp === undefined ? "" : pendingDisp === 0 ? "none pending" : `${pendingDisp} pending`, to: "/carveout" },
+      { label: "Manifest approved (four-eyes)", status: s(!!approvedM, !!i.manifests.length), detail: approvedM ? `${approvedM.name} v${approvedM.version} by ${approvedM.approved_by}` : "approver decision outstanding", to: "/carveout" },
+      { label: "Rule set validated", status: s(!!validR, !!i.rulesets.length), detail: validR ? `${validR.name} v${validR.version}: ${validR.rule_count} rules, tests pass` : "generate and validate (Rules)", to: "/rules" },
+    ]),
+    mk("simulate", "Transform and simulate", "Run the whole pipeline against the simulators until the checks agree.", [
+      { label: "Rule set approved", status: s(!!approvedR, !!validR), detail: approvedR ? `by ${approvedR.approved_by}` : "", to: "/rules" },
+      { label: "Simulated run completed", status: s(!!latestRun, i.runs.some((r) => r.status === "RUNNING")), detail: latestRun ? `${completed.length} completed run(s)` : "run the extraction agents (Extract)", to: "/extract" },
+      { label: "Consistency checks", status: s(recon === "PASS", recon === "WARN"), detail: recon ? `reconciliation ${recon}` : "", to: "/reconciliation" },
+    ]),
+    mk("execute", "Execute and cut over", "Keep the target in sync and rehearse until the gates are green.", [
+      { label: "Delta cycles", status: s(cycles.some((c) => c.status === "COMPLETED"), !!latestRun), detail: cycles.length ? `${cycles.length} cycle(s)` : "", to: "/delta" },
+      { label: "Final delta and reconciliation", status: s(!!i.delta?.cutover_ready, !!i.delta?.freeze), detail: i.delta?.cutover_ready ? "cutover ready" : i.delta?.freeze ? "freeze declared" : "", to: "/delta" },
+      { label: "Go-live gates", status: s(!!go, i.rehearsals.length > 0), detail: go ? `GO on ${go.name}` : i.rehearsals.length ? `${i.rehearsals.length} rehearsal(s)` : "create a rehearsal (Cutover)", to: "/cutover" },
+    ]),
+    mk("govern", "Govern and sign off", "Prove what happened and let the business accept it.", [
+      { label: "Evidence package", status: s(!!i.evidence?.evidence?.files && Object.keys(i.evidence.evidence.files).length > 0, !!latestRun), detail: i.evidence?.evidence?.files ? `${Object.keys(i.evidence.evidence.files).length} files, SHA-256` : "", to: "/audit" },
+      { label: "Audit chain verified", status: s(i.auditChain === true, i.auditChain === null && !!latestRun), detail: i.auditChain === true ? "hash chain intact" : i.auditChain === false ? "CHAIN BROKEN" : "auditor role sees the chain", to: "/compliance" },
+      { label: "Technical and business sign-off", status: s(!!businessSignoff && !!technicalSignoff, !!businessSignoff || !!technicalSignoff), detail: [technicalSignoff && "technical", businessSignoff && "business"].filter(Boolean).join(" + ") || "sign off the run (Finance)", to: "/reconciliation" },
+    ]),
+  ];
+}
+
+export const APPROACHES: { id: string; title: string; summary: string; scenarios: string[]; platform: string[] }[] = [
+  { id: "conversion", title: "System conversion", summary: "The production system is converted in place; data stays where it is and is simplified by the conversion.", scenarios: [], platform: ["Discovery with the S/4HANA data-model impacts per table (compatibility views, replaced tables, Material Ledger)", "Custom-table and interface inventory for the pre-conversion checks", "Reconciliation of the converted system against the snapshot taken before"] },
+  { id: "new", title: "New implementation", summary: "A newly configured S/4HANA system; only selected master and open data move into it.", scenarios: ["CARVE_OUT", "MERGER"], platform: ["Selective scope with classification and business dispositions", "Transformation rules and the load through the released APIs or the migration cockpit packages", "Three-layer reconciliation and the evidence package"] },
+  { id: "selective", title: "Selective data transition", summary: "A copy of the system is emptied of its transactional data and used as the target; the selected history and open data are moved into it.", scenarios: ["SDT", "BLUEFIELD"], platform: ["Historical policy per scope (full history, open items and balances, fiscal years)", "Carve-out of company codes with the shared objects duplicated, referenced or excluded", "Delta cycles and the final delta for a near-zero-downtime window"] },
+];

@@ -28,6 +28,7 @@ import Merger from "./pages/Merger";
 import Audit from "./pages/Audit";
 import Connect from "./pages/Connect";
 import Extract from "./pages/Extract";
+import Journey from "./pages/Journey";
 
 const ICONS: Record<string, JSX.Element> = {
   grid: <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="3" width="8" height="8" rx="1.5" /><rect x="13" y="3" width="8" height="8" rx="1.5" /><rect x="3" y="13" width="8" height="8" rx="1.5" /><rect x="13" y="13" width="8" height="8" rx="1.5" /></svg>,
@@ -174,6 +175,7 @@ function Shell() {
           <Route path="/copilot" element={<Copilot />} />
           <Route path="/audit" element={<Audit />} />
           <Route path="/connect" element={<Connect />} />
+          <Route path="/journey" element={<Journey />} />
           <Route path="/extract" element={<Extract />} />
           <Route path="/compliance" element={<Compliance />} />
         </Routes>

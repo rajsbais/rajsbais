@@ -72,6 +72,7 @@ full-width primary actions. Sections with several applications show them as a se
 
 | Section | Page (`factory-*.png`) | What it shows | Built on |
 |---|---|---|---|
+| Dashboard | Transformation journey (28) | the platform's own five phases (discover and scope, analyse and design, transform and simulate, execute and cut over, govern and sign off) with every deliverable's status read from the project's state, the validated outputs, and the three S/4HANA approaches (system conversion, new implementation, selective data transition) with what the platform does in each and which one the project uses; a phase strip on the executive dashboard links to it | discovery, graph, manifests, rule sets, runs, completeness, rehearsals, delta state, evidence, approvals, audit verify |
 | Dashboard | Executive dashboard (16) | company codes, plants, sample objects and database size of the source; *Quick carve-out* per company code with related objects, shared risk and cross-company documents evaluated by the scope engine; recent runs; capability status | discovery snapshot, `POST /projects/{id}/scopes/evaluate` |
 | Landscape | Landscape explorer (17) | company codes (name, country, currency, parent / spin role), plants (company code, valuation area), business objects with instance counts; the analyzer, organisational structure and catalog as sub-pages | org structure, business-object inventory |
 | Carve-out | Carve-out studio (18) | company code and shared-object policy, *Generate scope and analyze* writes a versioned, hashed manifest; the immutable manifest card; dispositions, detections, classification, completeness and residual exposure below; scope designer, Bluefield and merger as sub-pages | manifests, carve-out services |
@@ -84,7 +85,7 @@ full-width primary actions. Sections with several applications show them as a se
 | Cutover | Production cutover (25) | gates from the selected rehearsal: automatic items as Blocked / Passed / Failed rows, manual items with *Mark done*, *Authorize production handover* refused while a blocking gate is open; runbook, risk and the full rehearsal below | cutover rehearsals |
 | Audit | Audit report (26) | the verified vertical slice of a run: verdict, timestamp, company code, related objects, manifest hash, shared exposure, source / target / matched record counts, reconciliation status, evidence files and approvals; compliance and evidence as a sub-page | run report, reconciliation, evidence |
 
-Shared risk and shared exposure are the share of a scope's objects that are shared, referenced or need a manual
+The journey is an original phase model: nothing in it is asserted by hand, and the approach names are SAP's own. Shared risk and shared exposure are the share of a scope's objects that are shared, referenced or need a manual
 disposition (LOW below 10 %, MEDIUM below 30 %, HIGH above; `frontend/src/lib.ts`, unit-tested). The verdict
 `VERTICAL_SLICE_COMPLETE` means the run completed and no reconciliation check failed; it does not claim a production
 migration.
