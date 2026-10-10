@@ -100,7 +100,7 @@ export default function Designer() {
                   <p className="muted small">ROOT = selected · REQUIRED = master/upstream dependency · DOWNSTREAM = document-flow successor</p></div>
               </div>
               <h3>Customizing the target must already contain</h3>
-              <p>{Object.entries(plan.config_prerequisites).map(([k, v]) => <Badge key={k}>{k}: {(v as string[]).join(", ")}</Badge>)}</p>
+              <p>{Object.entries(plan.config_prerequisites).filter(([, v]) => (v as string[]).length > 0).map(([k, v]) => <Badge key={k}>{k}: {(v as string[]).join(", ")}</Badge>)}</p>
               <h3>Issues</h3>
               {plan.issues.length ? <ul className="checks">{plan.issues.map((i: J, n: number) => <li key={n}><StatusBadge s={i.severity} /> {i.message}</li>)}</ul> : <p className="muted">None</p>}
             </>)}

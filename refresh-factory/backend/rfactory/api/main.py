@@ -631,6 +631,12 @@ def create_app(data_dir: Path | None = None, persist: bool | None = None, auth: 
             raise HTTPException(422, "growth needs date_field")
         return svc.analyze(a, sid, kind, b.table, fields=b.fields, top=b.top, date_field=b.date_field, period=b.period)
 
+    @app.get("/api/roadmap")
+    def roadmap(_: Principal = Depends(need("view"))):
+        """What is still pending, who it waits on, and the plan to build it (the same list as docs/07-roadmap-tracker.md)."""
+        from .. import roadmap as rm
+        return rm.public()
+
     @app.get("/api/systems/{sid}/readiness")
     def readiness(sid: str, _: Principal = Depends(need("view"))):
         return svc.readiness(sid)

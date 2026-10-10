@@ -35,6 +35,7 @@ const RIGHT: Group[] = [
   { title: "Platform", tiles: [
     { id: "landscape", label: "Landscape", hint: "Systems, connections and write access" },
     { id: "benchmarks", label: "Benchmarks", hint: "Measured and predicted durations" },
+    { id: "roadmap", label: "Roadmap", hint: "What is still pending and the plan to build it" },
     { id: "agents", label: "AI agents", hint: "Advice only; they cannot approve or write" }] },
 ];
 

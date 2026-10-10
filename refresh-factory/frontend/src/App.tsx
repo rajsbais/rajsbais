@@ -23,11 +23,12 @@ import Benchmarks from "./views/Benchmarks";
 import Solutions from "./views/Solutions";
 import Analysis from "./views/Analysis";
 import Guided from "./views/Guided";
+import Roadmap from "./views/Roadmap";
 
 const GROUPS: { group: string; views: { id: string; label: string; el: () => JSX.Element; perm?: string }[] }[] = [
   { group: "Overview", views: [
     { id: "solutions", label: "Solutions", el: Solutions }, { id: "dashboard", label: "Control tower", el: ControlTower }, { id: "landscape", label: "Landscape", el: Landscape },
-    { id: "readiness", label: "Readiness", el: Readiness }] },
+    { id: "readiness", label: "Readiness", el: Readiness }, { id: "roadmap", label: "Roadmap", el: Roadmap }] },
   { group: "Refresh", views: [
     { id: "guided", label: "Guided refresh", el: Guided }, { id: "designer", label: "Selective designer", el: Designer }, { id: "delta", label: "Delta refresh", el: Delta },
     { id: "dependencies", label: "Dependencies", el: Dependencies },

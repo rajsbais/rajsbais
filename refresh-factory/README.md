@@ -10,7 +10,7 @@ Selective, business-consistent SAP non-production refresh with masking, conflict
 
 The individual steps, if you prefer them:
 ```bash
-cd backend && pip install -e '.[test]' && python -m pytest          # 681 tests
+cd backend && pip install -e '.[test]' && python -m pytest          # 696 tests
 cd ../frontend && npm install && npm run build                       # UI served by the API from frontend/dist
 cd ../backend && uvicorn rfactory.api.main:app --port 8088           # http://localhost:8088  (API docs at /docs). Not 8000: a local SAP system's HTTP port is 8000
 # several instances on one PostgreSQL database: RFACTORY_DATABASE_URL=postgresql://... plus the same RFACTORY_STATE_KEY and RFACTORY_AUDIT_KEY on each (docs/06-deployment.md)
