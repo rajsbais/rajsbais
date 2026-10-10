@@ -20,10 +20,11 @@ import Compliance from "./views/Compliance";
 import Agents from "./views/Agents";
 import Orchestration from "./views/Orchestration";
 import Benchmarks from "./views/Benchmarks";
+import Solutions from "./views/Solutions";
 
 const GROUPS: { group: string; views: { id: string; label: string; el: () => JSX.Element; perm?: string }[] }[] = [
   { group: "Overview", views: [
-    { id: "dashboard", label: "Control tower", el: ControlTower }, { id: "landscape", label: "Landscape", el: Landscape },
+    { id: "solutions", label: "Solutions", el: Solutions }, { id: "dashboard", label: "Control tower", el: ControlTower }, { id: "landscape", label: "Landscape", el: Landscape },
     { id: "readiness", label: "Readiness", el: Readiness }] },
   { group: "Refresh", views: [
     { id: "designer", label: "Selective designer", el: Designer }, { id: "delta", label: "Delta refresh", el: Delta },
