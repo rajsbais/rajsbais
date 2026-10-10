@@ -75,6 +75,27 @@ self-signed certificate must be in the machine's trust store.
 | Released OData/SOAP services activated in S/4HANA | the loaders use `API_BUSINESS_PARTNER`, `API_PRODUCT_SRV`, `API_SALES_ORDER_SRV`, `API_PURCHASEORDER_PROCESS_SRV`, `API_OUTBOUND_DELIVERY_SRV`, `API_COSTCENTER_SRV`, `API_PROFITCENTER_SRV`, `API_JOURNALENTRYITEMBASIC_SRV`, `API_FIXEDASSET` (read) and the SOAP service `JournalEntryBulkCreateRequestConfirmation_In` | `/IWFND/MAINT_SERVICE` (OData), SOAMANAGER (SOAP); a communication user with the services' authorisations; HTTPS reachable from your machine |
 | A **sandbox client** on S/4HANA for step 5 | the API loaders post real documents | never point step 5 at a productive client |
 
+## 0b. Preflight: let the platform check the prerequisites
+
+Before the first handshake, run the preflight for the registered system (Connect page, *Preflight*;
+`POST /api/v1/systems/<id>/preflight`; `sdtf preflight --system <id>`). It checks, in order and with a fix for
+every failure, reading only:
+
+| Source over RFC | Target over the released APIs |
+|---|---|
+| `pyrfc` imports and `SAPNWRFC_HOME` points at the SDK | the destination has a base URL |
+| no literal secret in the platform database; the password variable is set in the API process | no literal secret; the credential variable is set |
+| the host name resolves (hosts file for `vhcalnplci` / `vhcala4hci`) | the host name resolves |
+| the gateway port `33NN` answers (VM running, instance started) | the HTTPS port answers (ICM up) |
+| `RFC_PING` logs on | TLS verification fits a lab certificate (warning when it would fail) |
+| the five `Z_SDTF_*` modules exist (`RFC_FUNCTION_SEARCH`) | the gateway catalogue is readable and the bound services are activated and verified |
+| the add-on handshake on `T001` (snapshot, metadata, package, checksum, aggregate) | |
+| the core tables are readable by the RFC user (`S_TABU_NAM`) | |
+
+The first failure is the next thing to fix; later checks are skipped until it passes. On the simulated transports
+every SAP-side check runs against the simulators and the report says so. Nothing is written on any system and
+no secret is shown.
+
 ## 1. Start the platform locally
 
 ```bash

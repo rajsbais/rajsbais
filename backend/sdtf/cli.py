@@ -213,6 +213,10 @@ def main(argv=None):
     wl.add_argument("--file", required=True, help="the export (tab, semicolon, comma or pipe delimited, with a header)")
     wl.add_argument("--period", default="", help="the period the profile covers")
     wl.add_argument("--json", action="store_true")
+    pfp = sub.add_parser("preflight", help="check everything the first live test needs for a registered system (SDK, destination and secret, DNS, port, logon, add-on modules, handshake, authorisations; API: destination, TLS, catalogue, services), with a fix per failure; reads only")
+    pfp.add_argument("--system", required=True, help="registered system id")
+    pfp.add_argument("--json", action="store_true")
+    pfp.add_argument("--out", default=None, help="write the Markdown report here")
     mdp = sub.add_parser("metadata", help="verify the API bindings against a service's $metadata: from a downloaded EDMX file or fetched from a registered API target")
     mdsub = mdp.add_subparsers(dest="mdcmd", required=True)
     mdc = mdsub.add_parser("check", help="check one service against an EDMX file, or every bound service against a target")
@@ -524,6 +528,29 @@ def main(argv=None):
         elif not a.out:
             print(md)
         return 0
+    if a.cmd == "preflight":
+        from .models import SapSystem
+        from .runtime import preflight as pf
+
+        with session_scope() as s_:
+            system = s_.get(SapSystem, a.system)
+            if system is None:
+                print(f"system {a.system} not found", file=sys.stderr)
+                return 2
+            res = pf.preflight(s_, system)
+        if a.out:
+            with open(a.out, "w", encoding="utf-8") as fh:
+                fh.write(pf.preflight_markdown(res))
+            print(f"written {a.out}")
+        if a.json:
+            print(json.dumps(res, indent=2, default=str))
+        elif not a.out:
+            sysd = res["system"]
+            print(f"preflight {sysd['sid']}/{sysd['client']} ({sysd['connector']}): {'READY' if res['summary']['ready'] else 'NOT READY'} -- {res['summary']['PASS']} pass, {res['summary']['WARN']} warn, {res['summary']['FAIL']} fail, {res['summary']['SKIP']} skipped")
+            for c in res["checks"]:
+                print(f"  {c['status']:<5} {c['id']:<12} {c['title']}: {c['detail']}" + (f"\n        fix: {c['fix']}" if c["fix"] else ""))
+            print(f"next: {res['next']}")
+        return 0 if res["summary"]["ready"] else 1
     if a.cmd == "workload-import":
         from .discovery.workload import import_workload, table_rows, usage_section
         from .models import SapSystem

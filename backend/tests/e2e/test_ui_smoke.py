@@ -124,6 +124,13 @@ def test_all_screens_render_against_live_api():
         pg.wait_for_timeout(2500)
         txt = pg.inner_text("main")
         assert "Live execution" in txt and "Downtime clock" in txt and "Raise incident" in txt and "history: run" in txt
+        # preflight from the Connect page: the simulated transports answer every check
+        pg.goto(base + "/connect")
+        pg.wait_for_timeout(3000)
+        pg.click("button:has-text('Preflight') >> nth=0")
+        pg.wait_for_timeout(4000)
+        txt = pg.inner_text("main")
+        assert "READY" in txt and "skipped" in txt and "Next:" in txt
         # read configuration of the source (Connect page; RFC or synthetic-over-RFC systems show the card): save a ledger, reset
         pg.goto(base + "/connect")
         pg.wait_for_timeout(2500)

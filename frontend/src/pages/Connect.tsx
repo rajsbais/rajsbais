@@ -13,6 +13,11 @@ function ConnectionCard({ system, kind, title, lead, onTested }: { system: any; 
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [result, setResult] = useState<any>(null);
+  const [pre, setPre] = useState<any>(null);
+  const preflight = async () => {
+    setBusy(true); setErr(null); setPre(null);
+    try { if (canWrite) await save(); setPre(await api(`/systems/${system.id}/preflight`, { method: "POST" })); } catch (e: any) { setErr(e.message); } finally { setBusy(false); }
+  };
   const canWrite = !!(currentUser()?.roles || []).some((r: string) => ["architect", "admin"].includes(r));
   useEffect(() => {
     const d = doc.data?.[kind];
@@ -22,7 +27,6 @@ function ConnectionCard({ system, kind, title, lead, onTested }: { system: any; 
   }, [doc.data, kind]);
   if (!doc.data) return <Card title={title}>{doc.error ? <ErrorBox error={doc.error} /> : <p className="muted">Loading…</p>}</Card>;
   const d = doc.data[kind];
-  if (!d) return <Card title={title}><p className="muted">{lead}</p><p className="muted">This system has no {kind.toUpperCase()} path: {system.connector === "SYNTHETIC" ? "it is the platform's synthetic landscape (record store)." : `its connector is ${system.connector}.`}</p></Card>;
   const set = (k: string, v: any) => setForm({ ...form, [k]: v });
   const save = async () => {
     if (!form) return;
@@ -40,6 +44,12 @@ function ConnectionCard({ system, kind, title, lead, onTested }: { system: any; 
       setResult(t); onTested();
     } catch (e: any) { setErr(e.message); } finally { setBusy(false); }
   };
+  const preflightBlock = pre && <div style={{ marginTop: 14 }}>
+    <p className="status-line"><Pill value={pre.summary.ready ? "READY" : "NOT_READY"} /> <span className="muted">{pre.summary.PASS} pass · {pre.summary.WARN} warn · {pre.summary.FAIL} fail · {pre.summary.SKIP} skipped · {pre.duration_ms} ms{pre.simulated ? " · simulated transport" : ""}</span></p>
+    <div className="gates">{pre.checks.map((c: any) => <div key={c.id} className={`gate ${c.status === "PASS" ? "passed" : c.status === "FAIL" ? "failed" : c.status === "WARN" ? "blocked" : ""}`}><span>{c.status} · {c.title}<div className="meta">{c.detail}{c.fix ? <><br />fix: {c.fix}</> : null}</div></span></div>)}</div>
+    <p className="muted">Next: {pre.next}</p>
+  </div>;
+  if (!d) return <Card title={title}><p className="muted">{lead}</p><p className="muted">This system has no {kind.toUpperCase()} path: {system.connector === "SYNTHETIC" ? "it is the platform's synthetic landscape (record store)." : `its connector is ${system.connector}.`}</p><div className="row"><button className="secondary" disabled={busy} onClick={preflight}>{busy ? "Checking…" : "Preflight"}</button></div><ErrorBox error={err} />{preflightBlock}</Card>;
   const simulated = form?.transport === "simulated";
   const ok = result?.ok;
   return (
@@ -58,10 +68,12 @@ function ConnectionCard({ system, kind, title, lead, onTested }: { system: any; 
         </>}
         <label className="field">Password: environment variable<input className="mono" value={form.passwd} onChange={(e) => set("passwd", e.target.value)} placeholder={`leave empty to use ${d.password_env}`} disabled={!canWrite} /></label>
         <p className="muted">Passwords never enter the platform's database: name the environment variable that holds it on the machine running the platform, or set <code>{d.password_env}</code>. Resolved destination: <code>{JSON.stringify(d.resolved)}</code>.</p>
+        <div className="row" style={{ marginBottom: 8 }}><button className="secondary" disabled={busy} onClick={preflight}>{busy ? "Checking…" : "Preflight"}</button><span className="muted">the prerequisite checklist with a fix per failure: SDK, destination, secret, DNS, port, logon, add-on, handshake, authorisations</span></div>
         <button className="block" disabled={busy} onClick={handshake}>{busy ? "Testing…" : kind === "rfc" ? "Test ECC handshake" : "Test S/4HANA handshake"}</button>
         {!canWrite && <p className="muted">Architects save the destination; other roles can only run the handshake with the stored one.</p>}
       </>}
       <ErrorBox error={err} />
+      {preflightBlock}
       {result && <div style={{ marginTop: 14 }}>
         <p className="status-line"><Pill value={ok ? "HANDSHAKE_OK" : "HANDSHAKE_FAILED"} /> <span className="muted">{result.transport} · {result.duration_ms} ms</span></p>
         <KV obj={ok ? (result.connector === "API" ? { csrf_token: result.csrf_token ? "fetched" : "none", services: (result.services || []).join(", "), journal_entry_numbering: result.numbering?.JournalEntry, company_code: result.probe?.company_code } : { snapshot: result.snapshot, valid_until: result.valid_until, table: result.table?.table, rows_in_table: result.table?.rows, sample_rows: result.sample_rows, checksum_verified: result.checksum_verified ? "yes" : "no", aggregate_module: result.aggregate?.available ? "available" : `missing (${result.aggregate?.error || ""})` }) : { error: result.error, detail: result.detail }} />

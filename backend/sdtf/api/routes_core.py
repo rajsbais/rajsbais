@@ -324,6 +324,21 @@ def test_connector(s: SapSystem = Depends(get_system), db: Session = Depends(get
     return out
 
 
+@router.post("/systems/{system_id}/preflight", tags=["systems"])
+def system_preflight(markdown: bool = False, s: SapSystem = Depends(get_system), db: Session = Depends(get_db), p: Principal = Depends(require("project:read"))):
+    """Everything that has to be true before the first live test, checked in order with a fix per failure: the
+    SDK on this machine, the destination and its secret in the environment, DNS and the port, logon, the add-on
+    modules, the handshake, table authorisations (RFC); destination, TLS, the gateway catalogue and the bound
+    services (API). Reads only."""
+    from ..runtime import preflight as pf
+
+    res = pf.preflight(db, s)
+    if markdown:
+        res["markdown"] = pf.preflight_markdown(res)
+    record_event(db, p.username, "PREFLIGHT_RUN", "SYSTEM", s.id, {"ready": res["summary"]["ready"], "first_failure": res["summary"]["first_failure"], "simulated": res["simulated"]})
+    return res
+
+
 @router.get("/systems/{system_id}/read-config", tags=["systems"])
 def get_read_config(s: SapSystem = Depends(get_system), p: Principal = Depends(require("project:read"))):
     """How the reconciliation reads this system over RFC: journal table and ledger, asset and inventory chains
