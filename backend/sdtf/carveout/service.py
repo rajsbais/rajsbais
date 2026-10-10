@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 from ..catalog.business_objects import BUSINESS_OBJECTS
 from ..catalog.store import RecordStore
 from ..models import ScopeManifest
+from .deals import deal_assessment
 
 DETECTIONS = [
     ("cross_company_postings", "Cross-company postings", "FI.AccountingDocument", lambda c: len(c["company_codes"]) > 1),
@@ -94,15 +95,14 @@ def completeness_report(session: Session, m: ScopeManifest, store: RecordStore |
     }
 
 
-def residual_exposure_report(session: Session, m: ScopeManifest, store: RecordStore | None = None) -> dict:
-    """What stays behind in the source after the carve-out and what SpinCo data remains visible to ParentCo."""
+def cleanup_candidates(session: Session, m: ScopeManifest, store: RecordStore | None = None) -> list[dict]:
+    """Every row of the source that still shows the carved-out company codes after the transfer: the company-code
+    views of shared masters (customer, vendor, material) in scope; each with the action it would take, which is
+    never executed without an approved cleanup plan."""
     defn = m.definition
     scope_ccs = set(defn["company_codes"])
     cls = m.selection.get("classification", {})
-    store = store or RecordStore.load(session, defn["source_system_id"], tables=["KNB1", "LFB1", "MARC", "T001K", "ZSD_EXPORT_CTRL", "ZFI_TSA_SCOPE"])
-    # SpinCo data retained in the source by policy
-    retained = [{"node": n, "type": c["type"], "reason": c["reason"]} for n, c in cls.items() if c["classification"] == "RETAINED_BY_SELLER" and c["company_codes"] and c["company_codes"][0] in scope_ccs]
-    # shared masters left in the source with SpinCo views -> cleanup candidates after approval
+    store = store or RecordStore.load(session, defn["source_system_id"], tables=["KNB1", "LFB1", "MARC", "T001K"])
     cleanup = []
     for table, fld, t in (("KNB1", "KUNNR", "MD.Customer"), ("LFB1", "LIFNR", "MD.Vendor")):
         for r in store.rows(table):
@@ -115,13 +115,27 @@ def residual_exposure_report(session: Session, m: ScopeManifest, store: RecordSt
         k = store.get("T001K", BWKEY=r["WERKS"])
         if k and k["BUKRS"] in scope_ccs:
             cleanup.append({"table": "MARC", "key": f"{r['MATNR']}|{r['WERKS']}", "object": f"MD.Material:{r['MATNR']}", "action": "DELETE_VIEW_AFTER_APPROVAL"})
+    return cleanup
+
+
+def residual_exposure_report(session: Session, m: ScopeManifest, store: RecordStore | None = None) -> dict:
+    """What stays behind in the source after the carve-out and what SpinCo data remains visible to ParentCo."""
+    defn = m.definition
+    scope_ccs = set(defn["company_codes"])
+    cls = m.selection.get("classification", {})
+    store = store or RecordStore.load(session, defn["source_system_id"], tables=["KNB1", "LFB1", "MARC", "T001K", "ZSD_EXPORT_CTRL", "ZFI_TSA_SCOPE"])
+    # SpinCo data retained in the source by policy
+    retained = [{"node": n, "type": c["type"], "reason": c["reason"]} for n, c in cls.items() if c["classification"] == "RETAINED_BY_SELLER" and c["company_codes"] and c["company_codes"][0] in scope_ccs]
+    cleanup = cleanup_candidates(session, m, store)
     tsa = [r for r in store.rows("ZFI_TSA_SCOPE") if r["BUKRS"] in scope_ccs]
     excluded = Counter(c["type"] for c in cls.values() if c["classification"] == "EXCLUDED")
+    deal = deal_assessment(defn)
     return {
         "manifest_id": m.id,
         "retained_spinco_history": {"count": len(retained), "samples": retained[:50]},
-        "residual_cleanup_candidates": {"count": len(cleanup), "samples": cleanup[:50], "note": "Cleanup is never executed automatically; each action requires approved residual-data disposition"},
+        "residual_cleanup_candidates": {"count": len(cleanup), "samples": cleanup[:50], "note": "Cleanup is never executed automatically; each action requires an approved residual cleanup plan (asset deal: the seller keeps its legal record, nothing is deleted)"},
         "excluded_by_policy": dict(excluded),
         "tsa_services": tsa,
         "export_control_flags": sum(1 for c in cls.values() if "Export-controlled" in c["reason"]),
+        "deal": {"deal_type": deal.get("deal_type"), "residual_rule": deal.get("residual_rule"), "residual_note": deal.get("residual_note"), "obligations": deal.get("obligations", [])},
     }

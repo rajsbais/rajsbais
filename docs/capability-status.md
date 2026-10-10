@@ -9,7 +9,7 @@
 | Dependency graph + explainable traversal | IMPLEMENTED | relational store by default; Neo4j property-graph adapter with server-side frontier traversal, verified at Cypher level (policy parity) and via opt-in integration test |
 | Scope designer, impact preview, what-if compare, scenario matrix across up to eight manifests | IMPLEMENTED | |
 | Versioned immutable manifest, dispositions, four-eyes approval | IMPLEMENTED | |
-| Carve-out classification, completeness, residual exposure, IC balances | IMPLEMENTED | cleanup never executed automatically |
+| Carve-out classification, completeness, residual exposure, IC balances, deal templates, residual cleanup plans | IMPLEMENTED | cleanup only through an approved plan, executed on the simulated source or exported as a work package; never on an SAP system |
 | Transformation rule DSL, validation, tests, dry run, rule factory, grid editor with lookup CSV upload and per-rule decisions | IMPLEMENTED | |
 | Extraction | IMPLEMENTED (RFC client) / SIMULATED (source) | synthetic store adapter; RFC adapter against the ABAP add-on contract (pyrfc or simulated add-on) verified end-to-end on the simulated add-on only; ABAP reference sources not compiled; OData/CDS/File planned |
 | Distributed stage workers: extraction, transformation and load as per-partition pipelined jobs, reconciliation as per-table/functional/financial jobs (claim/lease, crash re-queue, atomic stage closing, idle self-healing) | IMPLEMENTED | tested with in-process and separate worker processes; only report rendering runs in the closing worker |

@@ -142,6 +142,39 @@ def main(argv=None):
     crin.add_argument("--incident", default="", help="escalate / resolve: the incident id")
     crin.add_argument("--to", default="", help="escalate: a named person or role (default: next level of the owner's path)")
     crin.add_argument("--note", default="", help="escalate: note; resolve: the resolution")
+    rc = sub.add_parser("residual-cleanup", help="residual cleanup plans of a carve-out manifest: create from the cleanup candidates, decide items, approve (four eyes), export the work package, execute on the simulated source, report")
+    rcsub = rc.add_subparsers(dest="rccmd", required=True)
+    rcc = rcsub.add_parser("create", help="a plan from the manifest's cleanup candidates")
+    rcc.add_argument("--manifest", required=True)
+    rcc.add_argument("--json", action="store_true")
+    rcl = rcsub.add_parser("list", help="plans of a manifest")
+    rcl.add_argument("--manifest", required=True)
+    rcl.add_argument("--json", action="store_true")
+    rcs = rcsub.add_parser("show", help="items, summary, package and execution of a plan")
+    rcs.add_argument("--id", required=True)
+    rcs.add_argument("--json", action="store_true")
+    rci = rcsub.add_parser("item", help="include or exclude an item (excluding needs a note)")
+    rci.add_argument("--id", required=True)
+    rci.add_argument("--item", required=True)
+    rci.add_argument("--decision", required=True, choices=["INCLUDE", "EXCLUDE"])
+    rci.add_argument("--note", default="")
+    rca = rcsub.add_parser("approve", help="business approval (not by the plan's creator; the manifest must be approved and a run reconciled)")
+    rca.add_argument("--id", required=True)
+    rca.add_argument("--comment", default="")
+    rcr = rcsub.add_parser("reject", help="reject the plan")
+    rcr.add_argument("--id", required=True)
+    rcr.add_argument("--comment", default="")
+    rce = rcsub.add_parser("export", help="write the work package (CSV per table, JSON index, zip)")
+    rce.add_argument("--id", required=True)
+    rce.add_argument("--out", default=None)
+    rcx = rcsub.add_parser("execute", help="execute the approved plan on the simulated source (refused for a source reached through the add-on)")
+    rcx.add_argument("--id", required=True)
+    rcx.add_argument("--out", default=None)
+    rcp = rcsub.add_parser("report", help="the plan as Markdown")
+    rcp.add_argument("--id", required=True)
+    rcp.add_argument("--out", default=None)
+    dlt = sub.add_parser("deal-templates", help="the carve-out deal templates: policies, residual rule, obligations, approvals")
+    dlt.add_argument("--json", action="store_true")
     bch = sub.add_parser("bench", help="benchmark harness: run the vertical slice at the given scales on the simulators, time every step and rewrite the measured section of docs/benchmarks.md")
     bch.add_argument("--scales", default="1", help="comma-separated scales, e.g. 1,2,3")
     bch.add_argument("--seed", type=int, default=42)
@@ -604,6 +637,79 @@ def main(argv=None):
                 print(f"  {side}: {v.get('origin', 'record_store')}" + (f" via {v['transport']}" if v.get("transport") else "") + (f" [{v['mode']}: {v.get('mode_decision', {}).get('reason', '')}]" if v.get("mode") else "") + (f", {v['rows']} rows read" if v.get("rows") is not None else "") + (f" ({v['rows_avoided']} line items not transferred)" if v.get("rows_avoided") else "") + (f", not readable: {', '.join(v['unreadable'])}" if v.get("unreadable") else ""))
             if summ.get("not_verified"):
                 print(f"  not verified (no read path): {', '.join(summ['not_verified'])}")
+        return 0
+    if a.cmd == "deal-templates":
+        from .carveout.deals import deal_templates
+
+        if a.json:
+            print(json.dumps(deal_templates(), indent=2))
+        else:
+            for d in deal_templates():
+                print(f"{d['id']}: {d['name']} -- {d['summary']}")
+                print("  policies: " + ", ".join(f"{k}={v}" for k, v in d["policies"].items()))
+                print(f"  residual rule: {d['residual_rule']}; approvals: {', '.join(d['approvals'])}")
+        return 0
+    if a.cmd == "residual-cleanup":
+        from .carveout import cleanup as cu
+        from .models import ResidualCleanupPlan, ScopeManifest
+
+        with session_scope() as session:
+            try:
+                if a.rccmd in ("create", "list"):
+                    m = session.get(ScopeManifest, a.manifest)
+                    if m is None:
+                        print(f"manifest {a.manifest} not found", file=sys.stderr)
+                        return 2
+                    rows = [cu.create_plan(session, m, "cli")] if a.rccmd == "create" else cu.plans(session, m.id)
+                    session.commit()
+                    if a.json:
+                        print(json.dumps([cu.plan_out(x, full=(a.rccmd == "create")) for x in rows], indent=2, default=str))
+                    else:
+                        for x in rows:
+                            s_ = x.summary or {}
+                            print(f"plan {x.sequence} {x.id}: {x.status}; {s_.get('included', 0)} included / {s_.get('excluded', 0)} excluded; {s_.get('deletes', 0)} would change the source; rule {x.residual_rule or 'as reported'}")
+                    return 0
+                r = session.get(ResidualCleanupPlan, a.id)
+                if r is None:
+                    print(f"plan {a.id} not found", file=sys.stderr)
+                    return 2
+                if a.rccmd == "item":
+                    it = cu.decide_item(session, r, a.item, a.decision, "cli", a.note)
+                    print(f"{it['id']} {it['table']} {it['key']}: {it['decision']}")
+                elif a.rccmd == "approve":
+                    cu.approve_plan(session, r, "cli-approver", a.comment)
+                    print(f"plan {r.sequence} approved")
+                elif a.rccmd == "reject":
+                    cu.reject_plan(session, r, "cli-approver", a.comment)
+                    print(f"plan {r.sequence} rejected")
+                elif a.rccmd == "export":
+                    pkg = cu.export_package(session, r, a.out, "cli")
+                    print(f"package written: {pkg['zip']} ({len(pkg['files'])} files, {len(pkg['missing_in_source'])} item(s) missing in the source)")
+                elif a.rccmd == "execute":
+                    cu.execute_plan(session, r, "cli", a.out)
+                    ex = r.execution
+                    print(f"plan {r.sequence} executed on the simulated source: removed rows {ex['removed_rows']}; results {ex['results']}")
+                elif a.rccmd == "report":
+                    md = cu.plan_markdown(r)
+                    if a.out:
+                        with open(a.out, "w", encoding="utf-8") as fh:
+                            fh.write(md)
+                        print(f"report written to {a.out}")
+                    else:
+                        print(md)
+                    return 0
+                session.commit()
+                if a.rccmd == "show":
+                    if a.json:
+                        print(json.dumps(cu.plan_out(r), indent=2, default=str))
+                    else:
+                        s_ = r.summary or {}
+                        print(f"plan {r.sequence} [{r.deal_type or 'no deal type'}] {r.status}: {s_.get('included', 0)} included / {s_.get('excluded', 0)} excluded; by action {s_.get('by_action')}; executed {s_.get('executed', 0)}")
+                        for it in (r.items or [])[:50]:
+                            print(f"  {it['id']} {it['table']:<5} {it['key']:<24} {it['action']:<28} {it['decision']:<8} {it.get('result') or ''}")
+            except (ValueError, LookupError, PermissionError) as e:
+                print(str(e), file=sys.stderr)
+                return 2
         return 0
     if a.cmd == "cutover-rehearsal":
         from .cutover import rehearsal as reh

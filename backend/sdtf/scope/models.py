@@ -16,6 +16,7 @@ class ScopeDefinition(BaseModel):
     description: str = ""
     scenario_type: Literal["CARVE_OUT", "SDT", "MERGER", "BLUEFIELD"] = "CARVE_OUT"
     carve_out_direction: Literal["FORWARD", "REVERSE"] = "FORWARD"
+    deal_type: Literal["ASSET_DEAL", "SHARE_DEAL", "HIVE_DOWN"] | None = Field(None, description="the deal template the policies follow (docs/06-carve-out-scenario-model.md); deviations are reported, never refused")
     source_system_id: str
     target_system_id: str
     company_codes: list[str] = Field(min_length=1)

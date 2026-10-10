@@ -35,6 +35,39 @@ Cross-company postings · shared customers/vendors/materials · cross-company sa
 · open sales/purchase/accounting documents · shared controlling structures · export-controlled records ·
 intercompany balances per counterpart · TSA services · residual cleanup candidates (never executed automatically).
 
+## Deal templates
+`carveout/deals.py`, `GET /carveout/deal-templates`, `POST /projects/{id}/manifests/from-deal`, `GET /manifests/{id}/carveout/deal`,
+`sdtf deal-templates`. A template fills the policies a business has not set and names what the deal implies; a
+policy set explicitly is kept and listed as a deviation with its consequence, never refused.
+
+| Template | Legal entity | Policies | Residual rule | Approvals |
+|---|---|---|---|---|
+| ASSET_DEAL | stays with the seller | OPEN_ITEMS_AND_BALANCES, OPEN_ONLY, DUPLICATE, REFERENCE | RETAIN_AS_LEGAL_RECORD: the seller keeps every record; the cleanup plan deletes nothing | BUSINESS, LEGAL |
+| SHARE_DEAL | transfers | FULL, ALL, DUPLICATE, INCLUDE_FLAG | CLEANUP_AFTER_TSA: the entity's data leaves the seller after the TSA | BUSINESS, LEGAL, FINANCE |
+| HIVE_DOWN | new entity in the target, then sold | as SHARE_DEAL, company codes renumbered to the new one | CLEANUP_AFTER_TSA | BUSINESS, LEGAL, FINANCE |
+
+The templates are the platform's policies for which history moves, what stays behind and who signs; they are not
+legal advice. `deal_type` on the scope definition records the template; the residual exposure report carries the
+deal's residual rule and obligations.
+
+## Residual cleanup plans
+`carveout/cleanup.py`, `POST /manifests/{id}/carveout/cleanup-plans` and `/carveout/cleanup-plans/{id}/...`,
+`sdtf residual-cleanup`, Carve-out studio (Residual exposure tab).
+
+A plan takes every cleanup candidate of the manifest (company-code views of shared customers, vendors and
+materials that still show the carved-out company codes) as an item with its action: DELETE_VIEW_AFTER_APPROVAL,
+ARCHIVE_AFTER_APPROVAL, or under an asset deal FLAG_TRANSFERRED_KEEP for every item (nothing would change the
+source). Items are included by default and excluded with a note while the plan is a draft. **Approval** is a
+business approval under four eyes (not the plan's creator) and is refused until the manifest is approved and a
+completed run on it has reconciled PASS or WARN: the source is cleaned only after the data has demonstrably
+arrived. **Export** writes the work package: one CSV per table with the affected rows (full payload) and the
+action, a JSON index with hashes, zipped under the evidence directory. **Execution** is possible on the
+platform's simulated source only: the package is written first (the archive copy), then the record-store rows of
+the included DELETE and ARCHIVE items are removed and every item carries its result; the next residual report and
+the next plan show what is left. For a source reached through the read-only add-on the execution is refused with
+the reason and the exported package is the deliverable for the SAP-side archiving / deletion run. Every step is an
+audit event; the Markdown report lists items, decisions, results and the package files.
+
 ## Ownership safeguards
 * ParentCo data is never loaded into SpinCo: partial documents are split at the company-code boundary during
   extraction, verified by the `organizational_assignment` reconciliation check.

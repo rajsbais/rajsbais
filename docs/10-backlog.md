@@ -20,7 +20,7 @@ Legend: P0 next increment · P1 following · P2 later. Sizes are relative (S/M/L
 | ✅ | Server-side policy traversal in Neo4j (frontier traversal with identical policy semantics); scope evaluation no longer loads edges | M |
 | ✅ | Rule editor: grid of the rules in words with inline editing, reordering and removal, lookup tables from CSV exports (duplicates and conflicts reported), structured document composed into the canonical YAML and back, per-rule approval / rejection under four eyes with decisions carried into the next version for unchanged rules; set approval refused while a rule is rejected (migration 0012) | M |
 | ✅ | Scope designer: scenario matrix across up to eight manifests of a project (classification counts side by side, identical / differing objects with the objects that differ, pairwise deltas; `GET /projects/{id}/manifests/matrix`, Scope designer card with the manifests ticked) | S |
-| P1 | Carve-out: asset vs share deal templates, residual cleanup execution with approval workflow | M |
+| ✅ | Carve-out deal templates (asset deal, share deal, hive-down: policies, residual rule, obligations, approvals; deviations assessed, never refused) and residual cleanup plans (items from the candidates, decisions with notes, four-eyes business approval refused until the manifest is approved and a run reconciled, work package export, execution on the simulated source with the package written first; refused on an add-on source; migration 0014) | M |
 
 ## Phase 4 — SAP connectivity
 | P | Item | Size |

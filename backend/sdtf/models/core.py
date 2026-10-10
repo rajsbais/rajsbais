@@ -513,3 +513,26 @@ class CutoverRehearsal(IdMixin, Base):
     incidents: Mapped[list | None] = mapped_column(JSON, nullable=True)  # live execution: incidents with their escalation path
     assignments: Mapped[dict | None] = mapped_column(JSON, nullable=True)  # {task_id: {assignee, backup, contact, by, at}}
     __table_args__ = (UniqueConstraint("manifest_id", "sequence", name="uq_cutover_rehearsal"),)
+
+
+class ResidualCleanupPlan(IdMixin, Base):
+    """What stays behind in the seller's system after a carve-out, decided item by item, approved under four
+    eyes, then executed on the simulated source or handed over as a work package (docs/06-carve-out-scenario-model.md)."""
+
+    __tablename__ = "residual_cleanup_plans"
+    project_id: Mapped[str] = mapped_column(ForeignKey("projects.id"), nullable=False, index=True)
+    manifest_id: Mapped[str] = mapped_column(ForeignKey("scope_manifests.id"), nullable=False, index=True)
+    sequence: Mapped[int] = mapped_column(Integer, nullable=False)
+    status: Mapped[str] = mapped_column(String(12), default="DRAFT")  # DRAFT | APPROVED | EXECUTED | REJECTED
+    deal_type: Mapped[str] = mapped_column(String(16), default="")
+    residual_rule: Mapped[str] = mapped_column(String(32), default="")
+    items: Mapped[list] = mapped_column(JSON, default=list)
+    summary: Mapped[dict] = mapped_column(JSON, default=dict)
+    package: Mapped[dict] = mapped_column(JSON, default=dict)
+    created_by: Mapped[str] = mapped_column(String(64), default="")
+    approved_by: Mapped[str] = mapped_column(String(64), default="")
+    approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    approval_comment: Mapped[str] = mapped_column(String(400), default="")
+    executed_by: Mapped[str] = mapped_column(String(64), default="")
+    executed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    execution: Mapped[dict] = mapped_column(JSON, default=dict)

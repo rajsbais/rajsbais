@@ -89,6 +89,18 @@ def test_all_screens_render_against_live_api():
         pg.click("button:has-text('Add lookup')")
         pg.wait_for_timeout(500)
         assert "coa_map" in pg.inner_text("main")
+        # carve-out studio: the deal template card, a cleanup plan created from the residual tab
+        pg.goto(base + "/carveout")
+        pg.wait_for_timeout(3000)
+        txt = pg.inner_text("main")
+        assert "Deal template" in txt and "Immutable manifest" in txt
+        pg.click("text=Residual exposure")
+        pg.wait_for_timeout(2500)
+        assert "Residual cleanup plans" in pg.inner_text("main")
+        pg.click("button:has-text('Create cleanup plan')")
+        pg.wait_for_timeout(3000)
+        txt = pg.inner_text("main")
+        assert "Would change the source" in txt and "Export work package" in txt and "C00001" in txt
         # cutover: a rehearsal created and started from the page (prompts accepted), the live execution view appears
         pg.goto(base + "/cutover")
         pg.wait_for_timeout(2500)

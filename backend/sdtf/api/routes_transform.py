@@ -1,6 +1,8 @@
 """Scope, manifests, carve-out, rules, runs, audit, agents, cutover, platform."""
 from __future__ import annotations
 
+import os
+
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import FileResponse, Response
 from pydantic import BaseModel, Field
@@ -192,6 +194,149 @@ def carveout_completeness(m: ScopeManifest = Depends(get_manifest), db: Session 
 @router.get("/manifests/{manifest_id}/carveout/residual", tags=["carveout"])
 def carveout_residual(m: ScopeManifest = Depends(get_manifest), db: Session = Depends(get_db), p: Principal = Depends(require("project:read"))):
     return residual_exposure_report(db, m)
+
+
+class FromDealRequest(BaseModel):
+    deal: str = Field(..., pattern="^(ASSET_DEAL|SHARE_DEAL|HIVE_DOWN)$")
+    new_company_code: str | None = Field(None, max_length=4, description="hive-down: the new company code in the target")
+    definition: dict = Field(..., description="scope definition fields; the template fills the policies that are not given")
+
+
+@router.get("/carveout/deal-templates", tags=["carveout"])
+def carveout_deal_templates(p: Principal = Depends(current_principal)):
+    """Asset deal, share deal and hive-down: the policies, residual rule, obligations and approvals each implies."""
+    from ..carveout.deals import deal_templates
+
+    return deal_templates()
+
+
+@router.post("/projects/{project_id}/manifests/from-deal", tags=["carveout"], status_code=201)
+def manifest_from_deal(project_id: str, req: FromDealRequest, db: Session = Depends(get_db), p: Principal = Depends(require("scope:write"))):
+    """A manifest whose policies follow a deal template (values given explicitly are kept and reported as deviations)."""
+    from ..carveout.deals import apply_deal
+
+    assert_project_access(db, p, project_id)
+    try:
+        defn = ScopeDefinition(**apply_deal(req.definition, req.deal, req.new_company_code))
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from None
+    _require_complete_discovery(db, defn.source_system_id)
+    m = create_manifest(db, project_id, defn, p.username)
+    record_event(db, p.username, "MANIFEST_CREATED", "MANIFEST", m.id, {"version": m.version, "hash": m.content_hash, "deal": req.deal})
+    return manifest_out(m)
+
+
+@router.get("/manifests/{manifest_id}/carveout/deal", tags=["carveout"])
+def carveout_deal(m: ScopeManifest = Depends(get_manifest), p: Principal = Depends(require("project:read"))):
+    """How the manifest relates to its deal template: deviations with their consequence, obligations, residual rule."""
+    from ..carveout.deals import deal_assessment
+
+    return deal_assessment(m.definition)
+
+
+def _get_plan(plan_id: str, db: Session = Depends(get_db), p: Principal = Depends(current_principal)):
+    from ..models import ResidualCleanupPlan
+
+    r = db.get(ResidualCleanupPlan, plan_id)
+    if r is None:
+        raise HTTPException(404, "cleanup plan not found")
+    assert_project_access(db, p, r.project_id)
+    return r
+
+
+def _plan_call(fn, *args, **kwargs):
+    try:
+        return fn(*args, **kwargs)
+    except LookupError as e:
+        raise HTTPException(404, str(e)) from None
+    except ValueError as e:
+        raise HTTPException(409, str(e)) from None
+
+
+class PlanItemDecision(BaseModel):
+    decision: str = Field(..., pattern="^(INCLUDE|EXCLUDE)$")
+    note: str = Field("", max_length=400)
+
+
+class PlanComment(BaseModel):
+    comment: str = Field("", max_length=400)
+
+
+@router.post("/manifests/{manifest_id}/carveout/cleanup-plans", tags=["carveout"], status_code=201)
+def cleanup_plan_create(m: ScopeManifest = Depends(get_manifest), db: Session = Depends(get_db), p: Principal = Depends(require("scope:write"))):
+    """A residual cleanup plan from the manifest's cleanup candidates (under an asset deal every item is a flag)."""
+    from ..carveout.cleanup import create_plan, plan_out
+
+    return plan_out(create_plan(db, m, p.username))
+
+
+@router.get("/manifests/{manifest_id}/carveout/cleanup-plans", tags=["carveout"])
+def cleanup_plan_list(m: ScopeManifest = Depends(get_manifest), db: Session = Depends(get_db), p: Principal = Depends(require("project:read"))):
+    from ..carveout.cleanup import plan_out, plans
+
+    return [plan_out(x, full=False) for x in plans(db, m.id)]
+
+
+@router.get("/carveout/cleanup-plans/{plan_id}", tags=["carveout"])
+def cleanup_plan_get(r=Depends(_get_plan), p: Principal = Depends(require("project:read"))):
+    from ..carveout.cleanup import plan_out
+
+    return plan_out(r)
+
+
+@router.get("/carveout/cleanup-plans/{plan_id}/report", tags=["carveout"])
+def cleanup_plan_report(r=Depends(_get_plan), p: Principal = Depends(require("project:read"))):
+    from ..carveout.cleanup import plan_markdown, plan_out
+
+    return {"markdown": plan_markdown(r), "plan": plan_out(r, full=False)}
+
+
+@router.post("/carveout/cleanup-plans/{plan_id}/items/{item_id}", tags=["carveout"])
+def cleanup_plan_item(item_id: str, req: PlanItemDecision, r=Depends(_get_plan), db: Session = Depends(get_db), p: Principal = Depends(require("scope:write"))):
+    from ..carveout.cleanup import decide_item
+
+    return {"item": _plan_call(decide_item, db, r, item_id, req.decision, p.username, req.note), "summary": r.summary}
+
+
+@router.post("/carveout/cleanup-plans/{plan_id}/approve", tags=["carveout"])
+def cleanup_plan_approve(req: PlanComment | None = None, r=Depends(_get_plan), db: Session = Depends(get_db), p: Principal = Depends(require("approve:manifest"))):
+    """Four-eyes business approval; refused until the manifest is approved and a completed run reconciled."""
+    from ..carveout.cleanup import approve_plan, plan_out
+
+    return plan_out(_plan_call(approve_plan, db, r, p.username, (req or PlanComment()).comment))
+
+
+@router.post("/carveout/cleanup-plans/{plan_id}/reject", tags=["carveout"])
+def cleanup_plan_reject(req: PlanComment | None = None, r=Depends(_get_plan), db: Session = Depends(get_db), p: Principal = Depends(require("approve:manifest"))):
+    from ..carveout.cleanup import plan_out, reject_plan
+
+    return plan_out(_plan_call(reject_plan, db, r, p.username, (req or PlanComment()).comment))
+
+
+@router.post("/carveout/cleanup-plans/{plan_id}/export", tags=["carveout"])
+def cleanup_plan_export(r=Depends(_get_plan), db: Session = Depends(get_db), p: Principal = Depends(require("scope:write"))):
+    """The work package (CSV per table with the affected rows, JSON index, zip) for the SAP-side run."""
+    from ..carveout.cleanup import export_package
+
+    pkg = _plan_call(export_package, db, r, None, p.username)
+    return {k: v for k, v in pkg.items() if k != "dir"}
+
+
+@router.get("/carveout/cleanup-plans/{plan_id}/package", tags=["carveout"])
+def cleanup_plan_package(r=Depends(_get_plan), p: Principal = Depends(require("project:read"))):
+    z = (r.package or {}).get("zip")
+    if not z or not os.path.exists(z):
+        raise HTTPException(404, "no package exported yet")
+    return FileResponse(z, media_type="application/zip", filename=os.path.basename(z))
+
+
+@router.post("/carveout/cleanup-plans/{plan_id}/execute", tags=["carveout"])
+def cleanup_plan_execute(r=Depends(_get_plan), db: Session = Depends(get_db), p: Principal = Depends(require("run:start"))):
+    """Execute the approved plan on the platform's simulated source (record store); refused for a source reached
+    through the read-only add-on, where the exported package is the deliverable."""
+    from ..carveout.cleanup import execute_plan, plan_out
+
+    return plan_out(_plan_call(execute_plan, db, r, p.username))
 
 
 # --------------------------------------------------------------------------------------------- rules
@@ -1211,7 +1356,7 @@ CAPABILITIES = [
     {"area": "Landscape discovery", "status": "IMPLEMENTED", "note": "Runs against the record store; SAP connectors are planned"},
     {"area": "Business object dependency graph", "status": "IMPLEMENTED", "note": "Relational store by default; Neo4j property-graph adapter (SDTF_GRAPH_BACKEND=neo4j) verified at Cypher level, not against a live server here"},
     {"area": "Selective scope designer + manifest", "status": "IMPLEMENTED", "note": "Versioned, hashed, four-eyes approval"},
-    {"area": "Carve-out classification & reports", "status": "IMPLEMENTED", "note": "Completeness, residual exposure, intercompany balances"},
+    {"area": "Carve-out classification & reports", "status": "IMPLEMENTED", "note": "Completeness, residual exposure, intercompany balances; deal templates (asset deal, share deal, hive-down) with deviations; residual cleanup plans decided item by item, approved under four eyes, executed on the simulated source or exported as a work package for the SAP-side run"},
     {"area": "Transformation rule DSL", "status": "IMPLEMENTED", "note": "YAML DSL, validation, embedded tests, dry run"},
     {"area": "Extraction", "status": "IMPLEMENTED", "note": "Synthetic store extractor and RFC adapter against the ABAP add-on contract (pushdown, snapshot token, checksums); RFC verified on the simulated add-on only, not on a live SAP system; OData/CDS adapters planned"},
     {"area": "Distributed extraction workers", "status": "IMPLEMENTED", "note": "Claim-based partition jobs with leases, crash re-queue, last-worker finalisation; `sdtf worker` processes / pods"},
