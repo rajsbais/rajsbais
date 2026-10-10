@@ -290,6 +290,8 @@ def test_kind_check_holds_even_for_a_service_principal_that_has_the_permission(s
 def test_performance_agent_reports_estimate_calibration(svc):
     r = run(svc, "performance-optimization")
     assert any("placeholder" in f["text"] for f in r["findings"]) and r["artifacts"]["estimate_calibration"]["models"] == 0
-    svc.bench.run_benchmark(ALICE, svc.src_id, windows=(15, 30, 60, 90, 120, 180), repeats=2)
+    from .test_benchmark import feed  # samples that follow a known law: a real benchmark's fit depends on the speed and noise of the machine it runs on
+    for phase, env in (("extract", "simulated"), ("mask_stage", "platform"), ("load", "simulated"), ("reconcile", "simulated")):
+        feed(svc.bench, phase, env, a=0.0, slope=0.00001)
     r = run(svc, "performance-optimization")
     assert not any("placeholder" in f["text"] for f in r["findings"]) and r["artifacts"]["estimate_calibration"]["models"] >= 3
