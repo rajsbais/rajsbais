@@ -1,6 +1,6 @@
 import { expect, test } from "./fixtures";
 
-const ALL_VIEWS = ["Solutions", "Control tower", "Landscape", "Readiness", "Selective designer", "Delta refresh", "Dependencies", "Conflicts", "Masking", "Execution",
+const ALL_VIEWS = ["Solutions", "Data analysis", "Control tower", "Landscape", "Readiness", "Selective designer", "Delta refresh", "Dependencies", "Conflicts", "Masking", "Execution",
   "Reconciliation", "Lean client", "Full refresh", "Post-copy", "Orchestration", "Benchmarks", "Test catalog", "Audit", "AI agents"];
 
 test("the app says it is simulated and every view opens without console or page errors", async ({ app }) => {

@@ -782,3 +782,44 @@ class RefreshService:
         pol = p.masking_policy.fields() if p.masking_policy else set()
         return advisors.masking_recommendation(self.required_sensitive.get(pid, []), pol,
                                                self.system(p.target_id).role.value)
+
+    # ---------------- data analysis (read-only) ----------------
+    def _analysis_rows(self, actor: Principal, sid: str, table: str) -> list:
+        from .sap.connectors.rfc import RemoteError
+        s = self.system(sid)
+        if not authz.system_ok(actor, s):
+            raise Forbidden(f"outside your scope: you may not use system {s.label}")
+        try:
+            return self.adapters[s.id].select(table)
+        except RemoteError as e:
+            raise Conflict(f"the read of {table} failed: {e}")
+
+    def analyze(self, actor: Principal, sid: str, kind: str, table: str, **kw) -> dict:
+        """Distribution, selectivity or growth of one table of a source system. Read-only; the audit entry records what was asked, never values."""
+        from .analysis import profiler
+        allow_hr = actor.can("hr:copy")
+        try:
+            if kind not in ("distribution", "selectivity", "growth"):
+                raise profiler.AnalysisError(f"unknown analysis {kind}")
+            rows = self._analysis_rows(actor, sid, table) if table in profiler.TABLES else []
+            if kind == "distribution":
+                out = profiler.distribution(table, rows, kw["fields"], kw.get("top", 20), allow_hr)
+            elif kind == "selectivity":
+                out = profiler.selectivity(table, rows, kw["fields"], allow_hr)
+            else:
+                out = profiler.growth(table, rows, kw["date_field"], kw.get("period", "month"), allow_hr)
+        except profiler.AnalysisError as e:
+            raise Conflict(str(e))
+        self.audit.append(actor.id, "analysis.run", self.system(sid).label, {"kind": kind, "table": table, "fields": kw.get("fields") or [kw.get("date_field")], "rows_read": out["rows_read"]})
+        out["system"] = self.system(sid).label
+        out["bounded"] = not self.is_local(sid)
+        return out
+
+    def analysis_catalog(self, sid: str) -> dict:
+        from .analysis import profiler
+        s = self.system(sid)
+        reg = self.registries["S4" if family_is_s4(s) else "ECC"]
+        tabs = profiler.table_objects(reg)
+        names = {t["table"] for t in tabs}
+        return {"system": s.label, "profiles": profiler.profiles(names), "tables": tabs, "date_fields": list(profiler.DATE_FIELDS), "not_available": profiler.NOT_AVAILABLE,
+                "max_fields": profiler.MAX_FIELDS}

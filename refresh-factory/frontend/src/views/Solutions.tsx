@@ -20,6 +20,7 @@ const MIDDLE: Group[] = [
   { title: "Selective data", tiles: [
     { id: "designer", label: "Selective designer", hint: "Choose objects, scope and plan" },
     { id: "delta", label: "Delta refresh", hint: "Move only what changed" },
+    { id: "analysis", label: "Data analysis", hint: "Distribution, selectivity and growth of tables" },
     { id: "dependencies", label: "Dependencies", hint: "What a business object needs" },
     { id: "catalog", label: "Test catalog", hint: "Datasets and test data on request" },
     { id: "execution", label: "Execution", hint: "Run, resume, roll back" },

@@ -216,7 +216,8 @@ def test_accuracy_tracks_predicted_against_actual_once_calibrated(svc):
     assert shown["basis"] == "calibrated"
     run = svc.execute(ALICE, p.id)
     a = b.accuracy[-1]
-    assert a["run_id"] == run.id and a["predicted"] > 0 and a["actual"] > 0 and a["error"] is not None
+    assert a["run_id"] == run.id and a["predicted"] > 0 and a["actual"] >= 0
+    assert (a["error"] is not None) == (a["actual"] > 0)  # a run too fast for the clock to register has no relative error (seen once under load)
     assert b.summary()["accuracy"]["runs"] == 1
 
 

@@ -26,6 +26,14 @@ from ..service import Conflict, NotFound, Project, RefreshService
 STATIC = Path(__file__).resolve().parents[3] / "frontend" / "dist"
 
 
+class AnalysisIn(BaseModel):
+    table: str
+    fields: list[str] = []
+    top: int = 20
+    date_field: str | None = None
+    period: str = "month"
+
+
 class ManifestIn(BaseModel):
     scope: Scope
     include_downstream: list[str] = Field(default_factory=list)
@@ -587,6 +595,19 @@ def create_app(data_dir: Path | None = None, persist: bool | None = None, auth: 
     @app.get("/api/systems/{sid}/discovery")
     def discovery(sid: str, a: Principal = Depends(need("view"))):
         return authz.filter_discovery(a, svc.discover(sid))
+
+    @app.get("/api/systems/{sid}/analysis")
+    def analysis_catalog(sid: str, a: Principal = Depends(need("view"))):
+        authz.require_systems(svc, a, sid)
+        return svc.analysis_catalog(sid)
+
+    @app.post("/api/systems/{sid}/analysis/{kind}")
+    def analysis_run(sid: str, kind: str, b: AnalysisIn, a: Principal = Depends(need("view"))):
+        """Read-only data analysis of one table: distribution (TAANA style), selectivity (DB05 style) or growth by creation period."""
+        authz.require_systems(svc, a, sid)
+        if kind == "growth" and not b.date_field:
+            raise HTTPException(422, "growth needs date_field")
+        return svc.analyze(a, sid, kind, b.table, fields=b.fields, top=b.top, date_field=b.date_field, period=b.period)
 
     @app.get("/api/systems/{sid}/readiness")
     def readiness(sid: str, _: Principal = Depends(need("view"))):
