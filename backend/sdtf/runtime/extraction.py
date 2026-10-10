@@ -271,6 +271,9 @@ class RfcExtractor(ManifestExtractor):
         if owner != "*" and htd.org_field and htd.org_field.startswith("BUKRS"):
             base.append(predicate(htd.org_field, "EQ", owner))
             self.pushdown["org_predicate"] += 1
+        for f, v in (bo.header_filter or {}).items():  # shared header table: only this type's headers are read
+            base.append(predicate(f, "EQ", v))
+            self.pushdown["header_filter"] = self.pushdown.get("header_filter", 0) + 1
         # push the document/master number down; tables keyed only by an organisational field (T001, ...) push that key
         push_field = next((k for k in htd.key_fields if k not in (htd.org_field, htd.year_field)), htd.key_fields[0] if htd.key_fields else None)
         if push_field and len(keys) <= self.key_pushdown_limit:

@@ -113,7 +113,8 @@ def test_source_drift_is_visible_before_delta_and_cycle_captures_only_scope(delt
     assert cap["watermark_from"] == "0" and cap["watermark_to"] == w["activity"]["watermark"] and cap["lag_seconds"] is not None
     assert tr["rejected"] == 0 and tr["transformed"] + tr["deletes_resolved"] + tr["deletes_unresolved"] == cap["in_scope"] and tr["by_rule"]["cc-reassign"] > 0
     applied = sum(ap[k] for k in ("inserted", "updated", "deleted", "reversed", "reposted", "blocked", "derived"))
-    assert ap["inserted"] > 0 and ap["updated"] > 0 and ap["deleted"] > 0 and ap["conflicts"] == 0 and applied == ap["events"] and ap["events"] + tr["deletes_unresolved"] == cap["in_scope"]
+    # an update of the retained item of a partially transferred document is skipped as never loaded (SKIPPED_MISSING)
+    assert ap["inserted"] > 0 and ap["updated"] > 0 and ap["deleted"] > 0 and ap["conflicts"] == 0 and applied + ap["skipped_missing"] == ap["events"] and ap["events"] + tr["deletes_unresolved"] == cap["in_scope"]
     assert ap["api"]["transport"] == "SIMULATED_S4" and ap["api"]["failures"] == 0 and ap["api"]["by_service"]["API_SALES_ORDER_SRV"] > 0 and ap["by_load_method"] == {"API": ap["events"]}
     assert rec["overall"] == "PASS" and rec["by_layer"]["TECHNICAL"]["PASS"] >= 1
     statuses = Counter(e[3] for e in w["c1_events"])

@@ -38,7 +38,7 @@ from ..catalog.tables import TABLES
 from ..models import CockpitFeedback, MigrationRun, SapSystem, TransformationException
 from ..staging import get_backend
 from .cockpit_templates import SS, templates_for
-from .loaders import EventView, object_of, plan_cockpit
+from .loaders import EventView, object_of, plan_cockpit, regroup_by_header
 from .migration_objects import project_registry
 
 SEVERITIES = {"E": "E", "ERROR": "E", "A": "E", "ABORT": "E", "X": "E", "W": "W", "WARNING": "W", "S": "S", "SUCCESS": "S", "I": "I", "INFO": "I", "INFORMATION": "I"}
@@ -177,6 +177,7 @@ def _instances(session: Session, run: MigrationRun) -> dict[str, dict[str, dict]
         if rec.load_status in ("STAGED", "SKIPPED", "MATCHED") or not rec.target_payload:
             continue
         groups[object_of(rec.table_name, rec.target_key or rec.record_key, rec.target_payload)].append(rec)
+    groups, _ = regroup_by_header(groups)
     out: dict[str, dict[str, dict]] = defaultdict(dict)
     for (bo_id, okey), members in groups.items():
         bo = BUSINESS_OBJECTS.get(bo_id)

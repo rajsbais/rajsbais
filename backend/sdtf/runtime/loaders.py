@@ -15,7 +15,7 @@ from collections import defaultdict
 from dataclasses import dataclass, field
 
 from ..catalog.api_bindings import ApiBinding, EntityBinding, binding_for
-from ..catalog.business_objects import BUSINESS_OBJECTS, load_methods_for
+from ..catalog.business_objects import BUSINESS_OBJECTS, header_siblings, load_methods_for, matches_header
 from ..catalog.tables import TABLES, record_key
 from .target_api import ApiError, TargetApiClient
 
@@ -28,10 +28,14 @@ for _bo in BUSINESS_OBJECTS.values():
 
 def object_of(table: str, record_key: str, payload: dict | None = None) -> tuple[str, str]:
     """(business object type, instance key) of a row. Item tables whose primary key does not start with the
-    object's key (open items BSID/BSIK) need the row image; without one the positional prefix is used."""
+    object's key (open items BSID/BSIK) need the row image; without one the positional prefix is used. A header
+    table shared by several types (EKKO) is typed by the header image; its item rows carry no category and get
+    the first type, which `regroup_by_header` corrects once the header of the same key is known."""
     bo_id = _TABLE_BO.get(table, "")
     if not bo_id:
         return "", record_key
+    if payload and BUSINESS_OBJECTS[bo_id].header_table == table and len(header_siblings(bo_id)) > 1:
+        bo_id = next((sib for sib in header_siblings(bo_id) if matches_header(BUSINESS_OBJECTS[sib], payload)), bo_id)
     bo = BUSINESS_OBJECTS[bo_id]
     td = TABLES.get(table)
     if td is not None and tuple(td.key_fields[: len(bo.key_fields)]) == tuple(bo.key_fields):
@@ -39,6 +43,29 @@ def object_of(table: str, record_key: str, payload: dict | None = None) -> tuple
     if payload and all(k in payload for k in bo.key_fields):
         return bo_id, "|".join(str(payload[k]) for k in bo.key_fields)
     return bo_id, "|".join(record_key.split("|")[: len(bo.key_fields)])
+
+
+def regroup_by_header(groups: dict, order: list | None = None) -> tuple[dict, list | None]:
+    """Groups keyed `(object type, instance key)` of staged rows: rows of a shared header table resolve to their
+    type by the header image, their item rows land on the first type of the table; every group without a header
+    row moves to the sibling type whose group of the same key holds the header. Members need `.table_name`."""
+    def has_header(g) -> bool:
+        return any(r.table_name == BUSINESS_OBJECTS[g[0]].header_table for r in groups[g])
+
+    moved: dict = {}
+    for g in list(groups):
+        if g[0] not in BUSINESS_OBJECTS:
+            continue
+        sibs = header_siblings(g[0])
+        if len(sibs) <= 1 or has_header(g):
+            continue
+        target = next((s for s in sibs if s != g[0] and (s, g[1]) in groups and has_header((s, g[1]))), None)
+        if target is not None:
+            groups[(target, g[1])].extend(groups.pop(g))
+            moved[g] = (target, g[1])
+    if order is not None and moved:
+        order = [g for g in order if g not in moved]
+    return groups, order
 
 
 def plan_cockpit(object_type: str, events: list, product: str = "S4HANA") -> tuple[list[tuple[list, str]], list]:

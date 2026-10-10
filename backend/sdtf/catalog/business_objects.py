@@ -36,6 +36,7 @@ class BusinessObjectType:
     load_methods: tuple[LoadMethod, ...] = ()
     s4_simplification: str = ""
     description: str = ""
+    header_filter: dict[str, str] | None = None  # header rows of this type when the header table is shared (EKKO: BSTYP)
 
     def key_of(self, row: dict) -> str:
         return "|".join(str(row.get(k, "")) for k in (self.key_fields or ()))
@@ -70,7 +71,9 @@ BUSINESS_OBJECTS: dict[str, BusinessObjectType] = {
         BusinessObjectType("SD.SalesOrder", "Sales order", "SD", "TRANSACTIONAL", "VBAK", ("VBAP",), ("VBELN",), "COMPANY_CODE", "BUKRS_VF", "AUDAT", load_methods=(_S4_API_SO,), s4_simplification="Credit management (FSCM) and condition technique changes"),
         BusinessObjectType("SD.Delivery", "Outbound delivery", "SD", "TRANSACTIONAL", "LIKP", ("LIPS",), ("VBELN",), "COMPANY_CODE", "BUKRS", "WADAT_IST", load_methods=(LoadMethod("S4HANA", "API", "API_OUTBOUND_DELIVERY_SRV", "Only open deliveries are re-created; closed ones are history"),)),
         BusinessObjectType("SD.BillingDocument", "Billing document", "SD", "TRANSACTIONAL", "VBRK", ("VBRP",), ("VBELN",), "COMPANY_CODE", "BUKRS", "GJAHR", load_methods=(LoadMethod("S4HANA", "MIGRATION_COCKPIT", "Historical billing as archive-like history (planned)", "Billing documents are not re-posted; FI effects migrate via journal entries"),)),
-        BusinessObjectType("MM.PurchaseOrder", "Purchase order", "MM", "TRANSACTIONAL", "EKKO", ("EKPO", "EKBE"), ("EBELN",), "COMPANY_CODE", "BUKRS", "GJAHR", load_methods=(_S4_API_PO,)),
+        BusinessObjectType("MM.PurchaseOrder", "Purchase order", "MM", "TRANSACTIONAL", "EKKO", ("EKPO", "EKBE"), ("EBELN",), "COMPANY_CODE", "BUKRS", "GJAHR", load_methods=(_S4_API_PO,), header_filter={"BSTYP": "F"}, description="purchasing document of category F with its items and history; release orders reference their contract through KONNR"),
+        BusinessObjectType("MM.SchedulingAgreement", "Scheduling agreement", "MM", "TRANSACTIONAL", "EKKO", ("EKPO", "EKET", "EKBE"), ("EBELN",), "COMPANY_CODE", "BUKRS", "GJAHR", load_methods=(LoadMethod("S4HANA", "MIGRATION_COCKPIT", "Purchase scheduling agreement (migration object)", "open schedule lines; receipts against the agreement (EKBE) stay history"),), header_filter={"BSTYP": "L"}, description="purchasing document of category L with its items and delivery schedule lines; open while an item not marked deleted has a schedule line not fully received"),
+        BusinessObjectType("MM.Contract", "Purchase contract", "MM", "TRANSACTIONAL", "EKKO", ("EKPO",), ("EBELN",), "COMPANY_CODE", "BUKRS", "GJAHR", load_methods=(LoadMethod("S4HANA", "MIGRATION_COCKPIT", "Purchase contract (migration object)", "contract header and items; release orders are purchase orders"),), header_filter={"BSTYP": "K"}, description="purchasing document of category K (outline agreement) with its items; open while an item is not marked deleted"),
         BusinessObjectType("MM.MaterialDocument", "Material document (goods movement)", "MM", "TRANSACTIONAL", "MKPF", ("MSEG",), ("MBLNR", "MJAHR"), "COMPANY_CODE", "BUKRS", "MJAHR", load_methods=(LoadMethod("S4HANA", "MIGRATION_COCKPIT", "Stock balances via migration object; historical movements as history", "MATDOC is leading in S/4HANA"),), s4_simplification="MATDOC replaces MKPF/MSEG as leading table"),
         BusinessObjectType("MM.InvoiceReceipt", "Logistics invoice", "MM", "TRANSACTIONAL", "RBKP", ("RSEG",), ("BELNR", "GJAHR"), "COMPANY_CODE", "BUKRS", "GJAHR", load_methods=(_S4_MC,)),
         BusinessObjectType("FI.AccountingDocument", "Accounting document", "FI", "TRANSACTIONAL", "BKPF", ("BSEG", "BSID", "BSIK"), ("BUKRS", "BELNR", "GJAHR"), "COMPANY_CODE", "BUKRS", "GJAHR", load_methods=(_S4_JOURNAL, _S4_MC), s4_simplification="Universal Journal (ACDOCA); open items via migration objects, history via journal entry API"),
@@ -94,6 +97,34 @@ def bo(id_: str) -> BusinessObjectType:
 
 
 # ------------------------------------------------------------------------- instance derivation
+
+def matches_header(bo: BusinessObjectType, row: dict) -> bool:
+    """Whether a row of the header table is an instance of this type (header filter on shared header tables)."""
+    return all(str(row.get(f, "")) == v for f, v in (bo.header_filter or {}).items())
+
+
+def header_rows(store: RecordStore, bo: BusinessObjectType) -> list[dict]:
+    """The header rows of a type: every row of its header table, or the rows its header filter selects."""
+    rows = store.rows(bo.header_table)
+    return rows if not bo.header_filter else [r for r in rows if matches_header(bo, r)]
+
+
+def header_siblings(bo_id: str) -> list[str]:
+    """Object types sharing the header table of a type, in catalogue order (the type itself included)."""
+    ht = BUSINESS_OBJECTS[bo_id].header_table
+    return [b.id for b in BUSINESS_OBJECTS.values() if b.header_table == ht]
+
+
+def retype_by_header(bo_id: str, header_row: dict | None) -> str:
+    """The sibling type whose header filter the header row satisfies; the given type when none does or the
+    header is unknown."""
+    if header_row is None:
+        return bo_id
+    for sib in header_siblings(bo_id):
+        if matches_header(BUSINESS_OBJECTS[sib], header_row):
+            return sib
+    return bo_id
+
 
 def _plants_of(t: str, row: dict, store: RecordStore) -> list[str]:
     """Plants a BOM, routing or batch is assigned in (MAST / MAPL / MCHA), owner first, duplicates removed."""
@@ -148,7 +179,7 @@ def instance_company_codes(bo_type: BusinessObjectType, row: dict, store: Record
         for it in store.lookup("VBRP", "VBELN", row["VBELN"]):
             k = store.get("T001K", BWKEY=it["WERKS"])
             add(k["BUKRS"] if k else None)
-    elif t == "MM.PurchaseOrder":
+    elif t in ("MM.PurchaseOrder", "MM.SchedulingAgreement", "MM.Contract"):
         add(row.get("BUKRS"))
         for it in store.lookup("EKPO", "EBELN", row["EBELN"]):
             k = store.get("T001K", BWKEY=it["WERKS"])
@@ -198,6 +229,13 @@ def instance_status(bo_type: BusinessObjectType, row: dict, store: RecordStore) 
         items = store.lookup("EKPO", "EBELN", row["EBELN"])
         invoiced = {h["EBELP"] for h in store.lookup("EKBE", "EBELN", row["EBELN"]) if h["VGABE"] == "2"}
         return "CLOSED" if items and all(i["ELIKZ"] == "X" and i["EBELP"] in invoiced for i in items) else "OPEN"
+    if t == "MM.SchedulingAgreement":
+        items = {i["EBELP"] for i in store.lookup("EKPO", "EBELN", row["EBELN"]) if i.get("LOEKZ") != "L"}
+        lines = [l for l in store.lookup("EKET", "EBELN", row["EBELN"]) if l["EBELP"] in items]
+        return "OPEN" if items and (not lines or any(float(l["WEMNG"]) < float(l["MENGE"]) for l in lines)) else "CLOSED"
+    if t == "MM.Contract":
+        items = store.lookup("EKPO", "EBELN", row["EBELN"])
+        return "CLOSED" if items and all(i.get("LOEKZ") == "L" for i in items) else "OPEN"
     if t == "MM.InvoiceReceipt":
         return "CLOSED" if row.get("RBSTAT") == "5" else "OPEN"
     if t == "FI.AccountingDocument":
@@ -314,6 +352,15 @@ RELATIONSHIPS: list[Relationship] = [
     Relationship("MM.PurchaseOrder", "MD.Vendor", "MASTER_REF", "PurchaseOrder→Vendor", lambda r, s: [r["LIFNR"]]),
     Relationship("MM.PurchaseOrder", "MD.Material", "MASTER_REF", "PurchaseOrder→Material", _items_field("EKPO", "EBELN", "MATNR")),
     Relationship("MM.PurchaseOrder", "CFG.Plant", "ORG_OWNERSHIP", "PurchaseOrder→ReceivingPlant", _items_field("EKPO", "EBELN", "WERKS"), "Plant of items; a plant outside the ordering company code marks a cross-company PO"),
+    Relationship("MM.PurchaseOrder", "MM.Contract", "DOC_FLOW", "PurchaseOrder→Contract", _items_field("EKPO", "EBELN", "KONNR"), "Release order against a contract (EKPO.KONNR)"),
+    # --- outline agreements (same header table as the purchase order, decided by BSTYP)
+    Relationship("MM.SchedulingAgreement", "MM.MaterialDocument", "DOC_FLOW", "SchedulingAgreement→GoodsReceipt", lambda r, s: sorted({f"{h['BELNR']}|{h['GJAHR']}" for h in s.lookup("EKBE", "EBELN", r["EBELN"]) if h["VGABE"] == "1"}), "PO history (EKBE, goods receipts against the schedule lines)"),
+    Relationship("MM.SchedulingAgreement", "MD.Vendor", "MASTER_REF", "SchedulingAgreement→Vendor", lambda r, s: [r["LIFNR"]]),
+    Relationship("MM.SchedulingAgreement", "MD.Material", "MASTER_REF", "SchedulingAgreement→Material", _items_field("EKPO", "EBELN", "MATNR")),
+    Relationship("MM.SchedulingAgreement", "CFG.Plant", "ORG_OWNERSHIP", "SchedulingAgreement→ReceivingPlant", _items_field("EKPO", "EBELN", "WERKS")),
+    Relationship("MM.Contract", "MD.Vendor", "MASTER_REF", "Contract→Vendor", lambda r, s: [r["LIFNR"]]),
+    Relationship("MM.Contract", "MD.Material", "MASTER_REF", "Contract→Material", _items_field("EKPO", "EBELN", "MATNR")),
+    Relationship("MM.Contract", "CFG.Plant", "ORG_OWNERSHIP", "Contract→Plant", _items_field("EKPO", "EBELN", "WERKS")),
     Relationship("MM.MaterialDocument", "MD.Material", "MASTER_REF", "MaterialDocument→Material", lambda r, s: sorted({i["MATNR"] for i in s.lookup("MSEG", "MBLNR", r["MBLNR"]) if str(i["MJAHR"]) == str(r["MJAHR"])})),
     Relationship("MM.MaterialDocument", "CFG.Plant", "ORG_OWNERSHIP", "MaterialDocument→Plant", lambda r, s: sorted({i["WERKS"] for i in s.lookup("MSEG", "MBLNR", r["MBLNR"]) if str(i["MJAHR"]) == str(r["MJAHR"])}), "Two plants in different company codes mark a cross-company stock transfer"),
     # --- make to stock

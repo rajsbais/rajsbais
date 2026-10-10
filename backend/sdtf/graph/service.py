@@ -12,7 +12,7 @@ from dataclasses import dataclass, field
 
 from sqlalchemy.orm import Session
 
-from ..catalog.business_objects import BUSINESS_OBJECTS, RELATIONSHIPS, instance_company_codes
+from ..catalog.business_objects import BUSINESS_OBJECTS, RELATIONSHIPS, header_rows, instance_company_codes
 from ..catalog.store import RecordStore
 
 
@@ -57,13 +57,13 @@ def build_graph(store: RecordStore, system_id: str) -> Graph:
     g = Graph()
     g.add_node(f"SYSTEM:{system_id}", "SYSTEM", system_id)
     for bo in BUSINESS_OBJECTS.values():
-        for r in store.rows(bo.header_table):
+        for r in header_rows(store, bo):
             key = bo.key_of(r)
             ccs = instance_company_codes(bo, r, store)
             g.add_node(node_id(bo.id, key), bo.id, f"{bo.name} {key}", company_codes=ccs, kind=bo.kind, domain=bo.domain)
     for rel in RELATIONSHIPS:
         bo = BUSINESS_OBJECTS[rel.from_type]
-        for r in store.rows(bo.header_table):
+        for r in header_rows(store, bo):
             frm = node_id(bo.id, bo.key_of(r))
             for tkey in rel.resolver(r, store):
                 to = node_id(rel.to_type, tkey)

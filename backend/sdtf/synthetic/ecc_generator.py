@@ -117,6 +117,7 @@ class EccLandscapeGenerator:
             "STLNR": Counter(1000), "PLNNR": Counter(50000000), "OBJID": Counter(10000000), "CHARG": Counter(1000000),
         }
         self.plant_work_centers: dict[str, list[str]] = {}
+        self.cc_contracts: dict[str, list[dict]] = {}
 
     # ---------------------------------------------------------------- helpers
     def add(self, table: str, row: dict) -> dict:
@@ -147,10 +148,12 @@ class EccLandscapeGenerator:
         self._materials()
         self._manufacturing_masters()
         self._assets()
+        self._contracts()
         for cc in self.spec.company_codes:
             for year in self.spec.fiscal_years:
                 self._sales_cycle(cc, year)
                 self._procurement_cycle(cc, year)
+                self._scheduling_agreements(cc, year)
                 self._production_cycle(cc, year)
                 self._manual_fi(cc, year)
         self._intercompany_postings()
@@ -446,12 +449,14 @@ class EccLandscapeGenerator:
             received = stage < 0.85
             invoiced = received and stage < 0.65
             paid = invoiced and stage < 0.40
-            self.add("EKKO", {"EBELN": po, "BUKRS": cc.bukrs, "BSTYP": "F", "BSART": "NB", "LIFNR": lifnr, "EKORG": cc.bukrs, "BEDAT": self._ds(d), "WAERS": cc.currency, "GJAHR": year})
+            self.add("EKKO", {"EBELN": po, "BUKRS": cc.bukrs, "BSTYP": "F", "BSART": "NB", "LIFNR": lifnr, "EKORG": cc.bukrs, "BEDAT": self._ds(d), "WAERS": cc.currency, "GJAHR": year, "KDATB": "", "KDATE": "", "KTWRT": 0})
+            contract = next((c for c in self.cc_contracts.get(cc.bukrs, []) if c["LIFNR"] == lifnr and c["open"]), None)
             items = []
             for pos in range(1, rng.randint(1, 3) + 1):
                 qty = rng.randint(10, 200)
                 price = self._amount(5, 150)
-                it = {"EBELN": po, "EBELP": pos * 10, "MATNR": rng.choice(mats), "WERKS": werks, "MENGE": qty, "NETPR": price, "NETWR": round(qty * price, 2), "ELIKZ": "X" if received else ""}
+                release = contract is not None and pos == 1  # the first item of a PO on a vendor with an open contract releases against it
+                it = {"EBELN": po, "EBELP": pos * 10, "MATNR": contract["items"][0]["MATNR"] if release else rng.choice(mats), "WERKS": werks, "MENGE": qty, "NETPR": price, "NETWR": round(qty * price, 2), "ELIKZ": "X" if received else "", "KONNR": contract["EBELN"] if release else "", "KTPNR": contract["items"][0]["EBELP"] if release else "", "LOEKZ": ""}
                 self.add("EKPO", it)
                 items.append(it)
             total = round(sum(i["NETWR"] for i in items), 2)
@@ -476,6 +481,59 @@ class EccLandscapeGenerator:
             fi = self._post_fi(cc.bukrs, year, "RE", idt, [{"HKONT": "191100", "amount": total}, {"HKONT": "160000", "amount": -total, "KOART": "K", "LIFNR": lifnr}], awtyp="RMRP", awkey=f"{ir}{year}")
             if paid:
                 self._clear(cc.bukrs, year, idt + timedelta(days=rng.randint(5, 45)), "K", lifnr, total, fi)
+
+    def _contracts(self):
+        """Purchase contracts per company code (one per scale step): valid over the fiscal years, every third one
+        (counted across company codes) ended with its items marked deleted; release orders of the procurement cycle reference the open ones."""
+        rng = self.rng
+        years = sorted(self.spec.fiscal_years)
+        for ci, cc in enumerate(self.spec.company_codes):
+            for n in range(max(1, self.spec.scale)):
+                lifnr = rng.choice(self.cc_vendors.get(cc.bukrs) or [next(iter(self.cc_vendors.values()))[0]])
+                ebeln = self.counters["EBELN"].next()
+                ended = (ci + n) % 3 == 2
+                werks = rng.choice(cc.plants)
+                mats = self.plant_materials.get(werks) or [self.tables["MARA"][0]["MATNR"]]
+                items = []
+                for pos in range(1, rng.randint(1, 2) + 1):
+                    qty = rng.randint(500, 2000)
+                    price = self._amount(5, 150)
+                    it = {"EBELN": ebeln, "EBELP": pos * 10, "MATNR": rng.choice(mats), "WERKS": werks, "MENGE": qty, "NETPR": price, "NETWR": round(qty * price, 2), "ELIKZ": "", "KONNR": "", "KTPNR": "", "LOEKZ": "L" if ended else ""}
+                    self.add("EKPO", it)
+                    items.append(it)
+                self.add("EKKO", {"EBELN": ebeln, "BUKRS": cc.bukrs, "BSTYP": "K", "BSART": "MK", "LIFNR": lifnr, "EKORG": cc.bukrs, "BEDAT": f"{years[0]}0101", "WAERS": cc.currency, "GJAHR": years[0], "KDATB": f"{years[0]}0101", "KDATE": f"{years[0]}1231" if ended else f"{years[-1] + 1}1231", "KTWRT": round(sum(i["NETWR"] for i in items), 2)})
+                self.cc_contracts.setdefault(cc.bukrs, []).append({"EBELN": ebeln, "LIFNR": lifnr, "items": items, "open": not ended})
+
+    def _scheduling_agreements(self, cc: CompanyCodeSpec, year: int):
+        """Scheduling agreements (two per scale step and year) with one item and three delivery schedule lines;
+        the first lines are received (goods receipt, PO history, GR/IR posting) so the agreements are open and
+        fully received alike."""
+        rng = self.rng
+        for n in range(2 * self.spec.scale):
+            lifnr = rng.choice(self.cc_vendors.get(cc.bukrs) or [next(iter(self.cc_vendors.values()))[0]])
+            werks = rng.choice(cc.plants)
+            mats = self.plant_materials.get(werks) or [self.tables["MARA"][0]["MATNR"]]
+            sa = self.counters["EBELN"].next()
+            d = date(year, 1, 1) + timedelta(days=rng.randint(0, 60))
+            line_qty = rng.randint(20, 100)
+            price = self._amount(5, 150)
+            matnr = rng.choice(mats)
+            self.add("EKKO", {"EBELN": sa, "BUKRS": cc.bukrs, "BSTYP": "L", "BSART": "LP", "LIFNR": lifnr, "EKORG": cc.bukrs, "BEDAT": self._ds(d), "WAERS": cc.currency, "GJAHR": year, "KDATB": self._ds(d), "KDATE": f"{year + 1}1231", "KTWRT": 0})
+            self.add("EKPO", {"EBELN": sa, "EBELP": 10, "MATNR": matnr, "WERKS": werks, "MENGE": line_qty * 3, "NETPR": price, "NETWR": round(line_qty * 3 * price, 2), "ELIKZ": "", "KONNR": "", "KTPNR": "", "LOEKZ": ""})
+            received = (3 * n + year) % 4  # 0..3 schedule lines received; all three received = closed
+            for k in range(1, 4):
+                due = d + timedelta(days=30 * k)
+                got = k <= received
+                self.add("EKET", {"EBELN": sa, "EBELP": 10, "ETENR": k, "EINDT": self._ds(due), "MENGE": line_qty, "WEMNG": line_qty if got else 0})
+                if not got:
+                    continue
+                gr = self.counters["MBLNR"].next()
+                gd = min(due + timedelta(days=rng.randint(0, 5)), date(year, 12, 28))
+                value = round(line_qty * price, 2)
+                self.add("MKPF", {"MBLNR": gr, "MJAHR": year, "BLDAT": self._ds(gd), "BUDAT": self._ds(gd), "TCODE2": "MIGO", "XBLNR": sa})
+                self.add("MSEG", {"MBLNR": gr, "MJAHR": year, "ZEILE": 1, "BWART": "101", "MATNR": matnr, "WERKS": werks, "LGORT": "0001", "MENGE": line_qty, "DMBTR": value, "BUKRS": self.plant_cc[werks], "EBELN": sa, "EBELP": 10, "AUFNR": "", "UMWRK": "", "SHKZG": "S"})
+                self.add("EKBE", {"EBELN": sa, "EBELP": 10, "ZEKKN": "00", "VGABE": "1", "GJAHR": year, "BELNR": gr, "BUZEI": 1, "BWART": "101", "MENGE": line_qty, "DMBTR": value, "BEWTP": "E"})
+                self._post_fi(self.plant_cc[werks], year, "WE", gd, [{"HKONT": "300000", "amount": value}, {"HKONT": "191100", "amount": -value}], awtyp="MKPF", awkey=f"{gr}{year}")
 
     def _production_cycle(self, cc: CompanyCodeSpec, year: int):
         rng = self.rng

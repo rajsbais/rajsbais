@@ -20,11 +20,22 @@ company codes are its selling company code **plus** the company codes of its del
 document's company codes include all BVORG counterparts. This is how cross-company and shared objects are detected
 without relying on DDIC foreign keys.
 
-## Implemented object types (30)
+## Implemented object types (32)
 CFG: CompanyCode, Plant, SalesOrg, PurchOrg, ControllingArea · FI: GLAccount, FixedAsset, AccountingDocument ·
 CO: CostCenter, ProfitCenter · MD: Customer, Vendor, Material, BillOfMaterial, Routing, WorkCenter, Batch ·
-SD: SalesOrder, Delivery, BillingDocument · MM: PurchaseOrder, MaterialDocument, InvoiceReceipt · PP: ProductionOrder ·
-BASIS: RfcDestination, IdocPartner, BackgroundJob · Z: ExportControl, TsaScope, SupplierExt.
+SD: SalesOrder, Delivery, BillingDocument · MM: PurchaseOrder, SchedulingAgreement, Contract, MaterialDocument,
+InvoiceReceipt · PP: ProductionOrder · BASIS: RfcDestination, IdocPartner, BackgroundJob · Z: ExportControl, TsaScope,
+SupplierExt.
+
+Three purchasing types share the purchasing document header (EKKO) and are told apart by the document category
+(BSTYP): purchase order F, scheduling agreement L, contract K. The object type carries a header filter, and every
+path that enumerates headers applies it: the discovery counts each type through the filter (pushed down as a
+predicate on the add-on), the graph builds nodes and relationships per type, the RFC extraction reads only the
+type's headers, the delta engine and the cockpit grouping type a row by its header image, and the item rows that
+carry no category (EKPO) are regrouped under the header of the same key. A scheduling agreement adds its delivery
+schedule lines (EKET) and is open while a schedule line is not fully received; a contract is open while an item is
+not marked deleted; a release order references its contract through EKPO.KONNR. Both load through the migration
+cockpit (Purchase contract from release 1709, Purchase scheduling agreement from 1809).
 
 The manufacturing masters keep SAP's own identities and are plant-scoped through their assignments: a bill of
 material is the BOM header and alternative (STKO, key STLNR / STLAL) with its items (STPO) and its material-plant-usage
@@ -44,8 +55,8 @@ operation) and the work center text into the header.
 |---|---|---|
 | Finance | GL accounts, accounting documents (incl. open items/clearing), fixed assets, cost/profit centers | SIMULATED end to end incl. reconciliation |
 | Sales | customers (BP), sales orders, deliveries, billing | SIMULATED |
-| Procurement/Inventory | vendors (BP), materials incl. plant/valuation/stock views, POs, goods movements, invoices | SIMULATED |
-| Manufacturing | production orders, component consumption, confirmations, settlement cost center; bills of material, routings, work centers, batches as plant-scoped masters | SIMULATED (serial numbers, scheduling agreements, contracts PLANNED) |
+| Procurement/Inventory | vendors (BP), materials incl. plant/valuation/stock views, POs, scheduling agreements with schedule lines, contracts with release orders, goods movements, invoices | SIMULATED |
+| Manufacturing | production orders, component consumption, confirmations, settlement cost center; bills of material, routings, work centers, batches as plant-scoped masters | SIMULATED (serial numbers PLANNED) |
 | QM, PM, PS, WM/EWM, TM, MDG, industry | — | PLANNED |
 Each package = object type + relationships + load methods + reconciliation checks + tests (`tests/`). Raw table copy
 is never treated as object migration: objects are extracted by instance, split at company-code boundaries, and

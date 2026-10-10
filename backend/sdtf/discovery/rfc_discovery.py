@@ -33,6 +33,8 @@ SAMPLE_DEPENDENCIES: dict[str, list[tuple[str, str, str]]] = {
     "SD.Delivery": [("LIPS", "VBELN", "VBELN"), ("VBFA", "VBELV", "VBELN")],
     "SD.BillingDocument": [("VBRP", "VBELN", "VBELN")],
     "MM.PurchaseOrder": [("EKPO", "EBELN", "EBELN"), ("EKBE", "EBELN", "EBELN")],
+    "MM.SchedulingAgreement": [("EKPO", "EBELN", "EBELN"), ("EKET", "EBELN", "EBELN"), ("EKBE", "EBELN", "EBELN")],
+    "MM.Contract": [("EKPO", "EBELN", "EBELN")],
     "FI.AccountingDocument": [("BSID", "BELNR", "BELNR"), ("BSIK", "BELNR", "BELNR"), ("BKPF", "BVORG", "BVORG")],
     "PP.ProductionOrder": [("AFPO", "AUFNR", "AUFNR")],
     "MD.BillOfMaterial": [("MAST", "STLNR", "STLNR")],
@@ -207,33 +209,44 @@ def discover_over_rfc(session: Session, system: SapSystem, actor: str, sample: i
         md = sized.get(bo.header_table)
         if not md or not md["rows"]:
             continue
-        inv = {"type": bo.id, "name": bo.name, "domain": bo.domain, "kind": bo.kind, "count": int(md["rows"]), "by_company_code": {}, "by_year": {}, "open": 0, "shared": 0, "sampled": 0}
+        # a shared header table (EKKO) is counted per object type through its header filter, pushed down
+        hpreds = [predicate(f, "EQ", v) for f, v in (bo.header_filter or {}).items()]
+        count = int(md["rows"])
+        if hpreds:
+            try:
+                count = client.count(bo.header_table, hpreds)
+            except RfcError as e:
+                read["notes"].append(f"{bo.id}: not counted ({e.key})")
+                continue
+            if not count:
+                continue
+        inv = {"type": bo.id, "name": bo.name, "domain": bo.domain, "kind": bo.kind, "count": count, "by_company_code": {}, "by_year": {}, "open": 0, "shared": 0, "sampled": 0}
         td = TABLES.get(bo.header_table)
         try:
             if bo.org_field and bo.org_field.startswith("BUKRS"):
-                inv["by_company_code"] = {str(a[bo.org_field]): int(a["COUNT"]) for a in client.aggregate(bo.header_table, [], [bo.org_field], []) if str(a.get(bo.org_field, ""))}
+                inv["by_company_code"] = {str(a[bo.org_field]): int(a["COUNT"]) for a in client.aggregate(bo.header_table, hpreds, [bo.org_field], []) if str(a.get(bo.org_field, ""))}
             elif bo.org_field in ("WERKS", "DWERK") or (td and td.org_field in ("WERKS", "DWERK")):
                 f = bo.org_field if bo.org_field in ("WERKS", "DWERK") else td.org_field
                 c: Counter = Counter()
-                for a in client.aggregate(bo.header_table, [], [f], []):
+                for a in client.aggregate(bo.header_table, hpreds, [f], []):
                     cc = plant_cc.get(str(a.get(f, "")))
                     if cc:
                         c[cc] += int(a["COUNT"])
                 inv["by_company_code"] = dict(c)
             if bo.year_field:
-                inv["by_year"] = {str(a[bo.year_field])[:4]: int(a["COUNT"]) for a in client.aggregate(bo.header_table, [], [bo.year_field], []) if str(a.get(bo.year_field, ""))}
+                inv["by_year"] = {str(a[bo.year_field])[:4]: int(a["COUNT"]) for a in client.aggregate(bo.header_table, hpreds, [bo.year_field], []) if str(a.get(bo.year_field, ""))}
         except RfcError as e:
             read["notes"].append(f"{bo.id}: distribution not counted ({e.key})")
         try:
             if sample is None:
                 rows = []
-                for r in client.read_all(bo.header_table, []):
+                for r in client.read_all(bo.header_table, hpreds):
                     rows.append(r)
                     if len(rows) % 5000 == 0:
                         _prefetch(client, store, bo.id, rows[-5000:], read)
                 _prefetch(client, store, bo.id, rows[-(len(rows) % 5000) :] if len(rows) % 5000 else [], read)
             else:
-                rows, _c, _eof = client.read_package(bo.header_table, [])
+                rows, _c, _eof = client.read_package(bo.header_table, hpreds)
                 _prefetch(client, store, bo.id, rows, read)
         except RfcError as e:
             read["notes"].append(f"{bo.id}: instances not read ({e.key})")

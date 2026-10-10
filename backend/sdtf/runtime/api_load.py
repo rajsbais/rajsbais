@@ -19,7 +19,7 @@ from ..catalog.business_objects import BUSINESS_OBJECTS
 from ..catalog.tables import TABLES
 from ..models import MigrationRun, SapSystem, TransformationException
 from ..staging import get_backend
-from .loaders import DeltaLoader, EventView, object_of
+from .loaders import DeltaLoader, EventView, object_of, regroup_by_header
 from .target_api import TargetApiClient, make_target_transport
 
 STATUS_MAP = {"APPLIED": "LOADED", "SKIPPED_DUPLICATE": "LOADED", "MATCHED": "MATCHED", "CONFIG_MISSING": "CONFIG_MISSING", "UNSUPPORTED": "UNSUPPORTED", "REJECTED_BY_TARGET": "REJECTED", "CONFLICT": "CONFLICT", "SKIPPED_MISSING": "REJECTED"}
@@ -55,6 +55,7 @@ class ApiTargetLoader:
             if g not in groups:
                 order.append(g)
             groups[g].append(rec)
+        groups, order = regroup_by_header(groups, order)
         exceptions = []
         for g in order:
             members = groups[g]

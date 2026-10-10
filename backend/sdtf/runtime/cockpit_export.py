@@ -46,7 +46,7 @@ from .cockpit_templates import (
     project_aliases,
     templates_for,
 )
-from .loaders import EventView, object_of, plan_cockpit
+from .loaders import EventView, object_of, plan_cockpit, regroup_by_header
 from .migration_objects import resolve_for_export
 
 EXPORTED_STATUSES = ("TRANSFORMED", "LOADED", "UNSUPPORTED", "CONFLICT", "REJECTED", "COCKPIT_ERROR")  # has a target image; STAGED/SKIPPED/MATCHED have none or are configuration
@@ -150,6 +150,7 @@ def export_cockpit_files(session: Session, run_id: str, out_dir: str | None = No
         if g not in groups:
             order.append(g)
         groups[g].append(rec)
+    groups, order = regroup_by_header(groups, order)
     # route exactly as the LOAD stage does
     per_object: dict[str, dict[str, list[dict]]] = defaultdict(lambda: defaultdict(list))
     instances: dict[str, list[dict[str, list[dict]]]] = defaultdict(list)  # per object: one {table: rows} per business object instance

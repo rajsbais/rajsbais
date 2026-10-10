@@ -5,7 +5,7 @@
 | Synthetic ECC landscape generator | IMPLEMENTED | deterministic, scalable, carve-out patterns, balanced FI |
 | Landscape discovery & Enterprise Analyzer | IMPLEMENTED | runs on record store; real DDIC/stat sources planned |
 | Org structure explorer | IMPLEMENTED | |
-| Business object catalog & S/4 compatibility registry | IMPLEMENTED | 30 object types (incl. BOM, routing, work center, batch), 9 compatibility items |
+| Business object catalog & S/4 compatibility registry | IMPLEMENTED | 32 object types (incl. BOM, routing, work center, batch, scheduling agreement, contract), 9 compatibility items |
 | Dependency graph + explainable traversal | IMPLEMENTED | relational store by default; Neo4j property-graph adapter with server-side frontier traversal, verified at Cypher level (policy parity) and via opt-in integration test |
 | Scope designer, impact preview, what-if compare, scenario matrix across up to eight manifests | IMPLEMENTED | |
 | Versioned immutable manifest, dispositions, four-eyes approval | IMPLEMENTED | |

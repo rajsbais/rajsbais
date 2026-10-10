@@ -24,16 +24,17 @@ Last updated: 2026-10-10 (branch `claude/clever-maxwell-ues8be`, PR #1).
 | 10 | Lean add-on discovery and rule factory v2 (learned mappings) | 3d7eeee | FI status from BSID / BSIK; rules learned from other projects |
 | 11 | Preflight before the first live test | 5b04050 | Connect page "Preflight" button, `sdtf preflight` |
 | 12 | Period-end reconciliation (trial balance per period, cut-off, foreign-currency items, valuation per area, price control) | 88c7c45 | Finance page, financial layer |
-| 13 | Manufacturing masters: BOM, routing, work center, batch | this push | Landscape and Carve-out pages list the four object types; cockpit export routes them to their migration objects |
+| 13 | Manufacturing masters: BOM, routing, work center, batch | f775762 | Landscape and Carve-out pages list the four object types; cockpit export routes them to their migration objects |
+| 14 | Scheduling agreements and purchase contracts (shared purchasing header typed by BSTYP) | this push | three purchasing types in discovery, graph, scope, run, reconciliation and cockpit export |
 
-Test suite at the last push: 237 tests, 234 passed, 3 skipped by default (UI e2e, OIDC e2e, Neo4j). CI green on
+Test suite at the last push: 244 tests, 241 passed, 3 skipped by default (UI e2e, OIDC e2e, Neo4j). CI green on
 every pushed head today.
 
 ## 2. In progress now
 
 | Item | Status | Where it stands |
 |---|---|---|
-| Manufacturing masters: bills of material, routings, work centers, batches as plant-scoped master data | DONE (this push) | tables, object types with SAP's own identities (STKO, PLKO, CRHD, MCH1), relationships, generator, migration objects, merger number ranges and batch prefix, plant-view filtering in the extraction; 4 tests; full suite green; benchmark regenerated (345 checks at scale 3). |
+| Manufacturing masters: bills of material, routings, work centers, batches as plant-scoped master data | DONE (f775762) | tables, object types with SAP's own identities (STKO, PLKO, CRHD, MCH1), relationships, generator, migration objects, merger number ranges and batch prefix, plant-view filtering in the extraction; 4 tests; full suite green; benchmark regenerated (345 checks at scale 3). |
 
 ## 3. Pending until the product build is complete
 
@@ -41,7 +42,7 @@ every pushed head today.
 
 | # | Item | Size | Build plan |
 |---|---|---|---|
-| O1 | Scheduling agreements and contracts | M | EKKO / EKPO rows with BSTYP L / K become `MM.SchedulingAgreement` and `MM.Contract`; the object key stays EBELN but the header filter on BSTYP keeps the three purchasing objects apart (today EKKO is the purchase order header only). Generator adds a few agreements with delivery schedules (EKET) and contracts with release orders; graph links release order → contract; open-document validity check extended; migration objects "Purchase scheduling agreement" / "Purchase contract" resolved. Tests: generator, discovery counts, scope, run, reconciliation. |
+| O1 | Scheduling agreements and contracts | M | DONE (this push): header filter on BSTYP applied by discovery, graph, RFC extraction, delta typing and cockpit grouping; generator adds agreements with schedule lines and receipts, contracts with release orders; open-document validity extended; migration objects resolved by release. 7 tests. |
 | O2 | Serial numbers | S | EQUI / SERI with the equipment master as header, batch-like plant scoping through the plant of the equipment; relationship material → serial number; cockpit object "Equipment". |
 | O3 | CDS / ODP extraction adapter for S/4HANA sources (simulated) and OData adapter for masters | L | a second source transport next to the RFC add-on: CDS views read through the ABAP CDS reader interface of the add-on or ODP extraction (`RODPS_REPL_*` contract), with the same partitioning, pushdown and count evidence as the RFC path; a simulator of the contract for the tests; OData reads of business partner / product masters for the discovery sample. Metadata check extended to the CDS views. |
 | O4 | Loader contracts: Business Partner API, Product API, Journal Entry SOAP, Migration Cockpit staging tables | XL | the simulated targets already accept the payloads; this item builds the real client code (OData batch with CSRF token, SOAP envelope for journal entries, staging-table inserts through the add-on) behind the existing load-method selection, with recorded fixtures from the public API documentation and the same idempotency keys. Verification against A4H is a BLOCKED-VM item (V4). |

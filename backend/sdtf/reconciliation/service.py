@@ -20,7 +20,7 @@ from ..models import MigrationRun, ReconciliationResult, SapSystem, ScopeManifes
 from ..staging import get_backend
 
 TRANSFER = ("FULLY_TRANSFERRED", "PARTIALLY_TRANSFERRED", "SHARED_DUPLICATED")
-STATUS_DEPENDS = {"SD.Delivery": ("VBFA",), "MM.PurchaseOrder": ("EKPO", "EKBE"), "FI.AccountingDocument": ("BSEG",), "PP.ProductionOrder": ("AFPO",)}  # tables instance_status reads on the target
+STATUS_DEPENDS = {"SD.Delivery": ("VBFA",), "MM.PurchaseOrder": ("EKPO", "EKBE"), "MM.SchedulingAgreement": ("EKPO", "EKET"), "MM.Contract": ("EKPO",), "FI.AccountingDocument": ("BSEG",), "PP.ProductionOrder": ("AFPO",)}  # tables instance_status reads on the target
 
 
 def _r(run_id, layer, name, status, subject="", src="", tgt="", variance="", explanation="", evidence=None):
@@ -139,7 +139,7 @@ def functional_checks(rid: str, manifest: ScopeManifest, hdr_map: dict, loaded_t
     ref_check("material_reference", "EKPO", "MATNR", "MARA", "MATNR")
     ref_check("material_reference", "MARC", "MATNR", "MARA", "MATNR")
     unreadable = _unreadable(target) | set(getattr(target, "aggregated_tables", None) or ())
-    for bo_id in ("SD.SalesOrder", "MM.PurchaseOrder", "FI.AccountingDocument"):
+    for bo_id in ("SD.SalesOrder", "MM.PurchaseOrder", "MM.SchedulingAgreement", "MM.Contract", "FI.AccountingDocument"):
         bo = BUSINESS_OBJECTS[bo_id]
         deps = [t for t in STATUS_DEPENDS.get(bo_id, ()) if t in unreadable]
         if deps:

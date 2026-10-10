@@ -8,7 +8,7 @@ from collections import Counter
 from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
-from ..catalog.business_objects import BUSINESS_OBJECTS, instance_company_codes, instance_status
+from ..catalog.business_objects import BUSINESS_OBJECTS, header_rows, instance_company_codes, instance_status
 from ..catalog.store import RecordStore
 from ..catalog.tables import TABLES, is_custom
 from ..models import BusinessObjectInstance, DiscoverySnapshot, OrgUnit, SapSystem, TableStatistic
@@ -82,7 +82,7 @@ def discover_system(session: Session, system: SapSystem, actor: str, store: Reco
     inventory: dict[str, dict] = {}
     buf = []
     for bo in BUSINESS_OBJECTS.values():
-        rows = store.rows(bo.header_table)
+        rows = header_rows(store, bo)
         if not rows:
             continue
         inv = {"type": bo.id, "name": bo.name, "domain": bo.domain, "kind": bo.kind, "count": 0, "by_company_code": Counter(), "by_year": Counter(), "open": 0, "shared": 0}

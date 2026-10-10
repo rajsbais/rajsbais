@@ -22,7 +22,13 @@ from sqlalchemy.orm import Session
 
 from .. import observability as obs
 from ..audit.service import record_event
-from ..catalog.business_objects import BUSINESS_OBJECTS, RELATIONSHIPS, instance_status
+from ..catalog.business_objects import (
+    BUSINESS_OBJECTS,
+    RELATIONSHIPS,
+    header_siblings,
+    instance_status,
+    retype_by_header,
+)
 from ..catalog.store import RecordStore
 from ..catalog.tables import TABLES
 from ..models import (
@@ -161,6 +167,15 @@ class DeltaEngine:
     def object_key(table: str, record_key: str, payload: dict | None = None) -> tuple[str, str]:
         return object_of(table, record_key, payload)
 
+    def _retype(self, bo_id: str, okey: str, batch_headers: dict[tuple[str, str], dict | None]) -> str:
+        """Rows of a shared header table's items (EKPO of a scheduling agreement) carry no category: the header
+        image of the same key, from the batch or the snapshot, decides the object type."""
+        if not bo_id or len(header_siblings(bo_id)) <= 1:
+            return bo_id
+        ht = BUSINESS_OBJECTS[bo_id].header_table
+        hdr = batch_headers.get((ht, okey)) or self.source_store.by_key(ht, okey)
+        return retype_by_header(bo_id, hdr)
+
     def _row_in_scope(self, table: str, row: dict | None) -> bool | None:
         """Organisational test on a header image: True/False, or None when the table is not company-code-owned."""
         td = TABLES.get(table)
@@ -205,6 +220,7 @@ class DeltaEngine:
                 m["duplicates_ignored"] += 1  # a cycle re-run after a crash: the ledger already knows this event
                 continue
             bo_id, okey = self.object_key(e["TABNAME"], e["KEY"], e.get("row"))
+            bo_id = self._retype(bo_id, okey, batch_headers)
             ok, reason = (self._header_in_scope(bo_id, okey, batch_headers) if bo_id else (False, "table_not_in_catalog"))
             de = DeltaEvent(run_id=self.run.id, baseline_run_id=self.base.id, seq=seq, changenr=e.get("CHANGENR", ""), object_type=bo_id, object_key=okey, table_name=e["TABNAME"], record_key=e["KEY"], op=e["OP"], changed_at=e.get("CHANGED_AT", ""), changed_by=e.get("CHANGED_BY", ""), source_payload=e.get("row"), status="CAPTURED" if ok else "FILTERED", message="" if ok else reason)
             rows.append(de)
@@ -563,6 +579,7 @@ def delta_state(session: Session, base: MigrationRun, with_backlog: bool = True)
             oldest = None
             for e in events:
                 bo_id, okey = eng.object_key(e["TABNAME"], e["KEY"], e.get("row"))
+                bo_id = eng._retype(bo_id, okey, batch_headers)
                 if bo_id and eng._header_in_scope(bo_id, okey, batch_headers)[0]:
                     in_scope += 1
                     oldest = min(oldest, e.get("CHANGED_AT") or "") if oldest else (e.get("CHANGED_AT") or None)

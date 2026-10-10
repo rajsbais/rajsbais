@@ -6,7 +6,7 @@
     "cpus": 4,
     "database": "sqlite",
     "staging": "relational",
-    "measured_at": "2026-10-10T18:32:49.014382+00:00"
+    "measured_at": "2026-10-10T18:50:53.069678+00:00"
   },
   "results": [
     {
@@ -17,56 +17,56 @@
       "load_mode": "api",
       "simulated": true,
       "steps": {
-        "generate_and_import_s": 0.266,
-        "discovery_add_on_s": 0.899,
-        "discovery_record_store_s": 0.073,
-        "graph_s": 0.161,
-        "scope_evaluate_s": 0.113,
-        "run_s": 1.943,
-        "end_to_end_s": 3.659
+        "generate_and_import_s": 0.291,
+        "discovery_add_on_s": 1.072,
+        "discovery_record_store_s": 0.086,
+        "graph_s": 0.173,
+        "scope_evaluate_s": 0.126,
+        "run_s": 2.065,
+        "end_to_end_s": 4.034
       },
       "landscape": {
-        "tables": 62,
-        "rows": 11319,
-        "business_objects": 3052
+        "tables": 63,
+        "rows": 11885,
+        "business_objects": 3299
       },
       "discovery_add_on": {
-        "rfc_calls": 301,
-        "rows_read": 7369,
-        "tables_sized": 62,
+        "rfc_calls": 321,
+        "rows_read": 7728,
+        "tables_sized": 63,
         "complete": true
       },
       "graph": {
-        "nodes": 3053,
-        "edges": 9024
+        "nodes": 3300,
+        "edges": 9768
       },
       "scope": {
-        "objects": 752,
-        "approvals_required": 35
+        "objects": 692,
+        "approvals_required": 22
       },
       "run": {
-        "id": "3ea5797768cf42b4887c6ed5c1edea45",
+        "id": "55f442b41bd040ed9a14d53d84d64c55",
         "status": "COMPLETED",
         "stages": {
           "PRECHECK": {
             "ms": 0.0
           },
           "EXTRACT": {
-            "ms": 360.8,
-            "records": 1834,
-            "records_per_second": 5916.1
+            "ms": 331.4,
+            "records": 1835,
+            "records_per_second": 6771.2
           },
           "TRANSFORM": {
-            "ms": 543.9,
-            "records": 1834
+            "ms": 568.9,
+            "records": 1835
           },
           "LOAD": {
-            "ms": 663.2,
-            "loaded": 1829
+            "ms": 759.4,
+            "loaded": 1830
           },
           "RECONCILE": {
-            "ms": 329.7,
-            "checks": 343
+            "ms": 358.4,
+            "checks": 354
           },
           "REPORT": {
             "ms": 9.7
@@ -74,11 +74,11 @@
         }
       },
       "extraction": {
-        "records": 1834,
-        "records_per_second": 5916.1
+        "records": 1835,
+        "records_per_second": 6771.2
       },
       "reconciliation": {
-        "checks": 343,
+        "checks": 354,
         "overall": "PASS"
       }
     },
@@ -90,68 +90,68 @@
       "load_mode": "api",
       "simulated": true,
       "steps": {
-        "generate_and_import_s": 0.735,
-        "discovery_add_on_s": 3.261,
-        "discovery_record_store_s": 0.147,
-        "graph_s": 0.376,
-        "scope_evaluate_s": 0.317,
-        "run_s": 4.003,
-        "end_to_end_s": 9.181
+        "generate_and_import_s": 0.642,
+        "discovery_add_on_s": 3.823,
+        "discovery_record_store_s": 0.171,
+        "graph_s": 0.384,
+        "scope_evaluate_s": 0.371,
+        "run_s": 4.574,
+        "end_to_end_s": 10.353
       },
       "landscape": {
-        "tables": 62,
-        "rows": 21772,
-        "business_objects": 5705
+        "tables": 63,
+        "rows": 23631,
+        "business_objects": 6195
       },
       "discovery_add_on": {
-        "rfc_calls": 388,
-        "rows_read": 14061,
-        "tables_sized": 62,
+        "rfc_calls": 416,
+        "rows_read": 15309,
+        "tables_sized": 63,
         "complete": true
       },
       "graph": {
-        "nodes": 5706,
-        "edges": 17912
+        "nodes": 6196,
+        "edges": 19540
       },
       "scope": {
-        "objects": 1263,
-        "approvals_required": 63
+        "objects": 1265,
+        "approvals_required": 64
       },
       "run": {
-        "id": "9b6827d27ac149089ad840634461f054",
+        "id": "f9ffbfecf1064e3cae3b65d8c488011e",
         "status": "COMPLETED",
         "stages": {
           "PRECHECK": {
             "ms": 0.0
           },
           "EXTRACT": {
-            "ms": 981.1,
-            "records": 3390,
-            "records_per_second": 3887.6
+            "ms": 1193.8,
+            "records": 3351,
+            "records_per_second": 3461.8
           },
           "TRANSFORM": {
-            "ms": 1045.9,
-            "records": 3390
+            "ms": 1149.9,
+            "records": 3351
           },
           "LOAD": {
-            "ms": 1276.3,
-            "loaded": 3385
+            "ms": 1413.6,
+            "loaded": 3346
           },
           "RECONCILE": {
-            "ms": 660.9,
-            "checks": 345
+            "ms": 767.6,
+            "checks": 355
           },
           "REPORT": {
-            "ms": 6.4
+            "ms": 8.9
           }
         }
       },
       "extraction": {
-        "records": 3390,
-        "records_per_second": 3887.6
+        "records": 3351,
+        "records_per_second": 3461.8
       },
       "reconciliation": {
-        "checks": 345,
+        "checks": 355,
         "overall": "PASS"
       }
     },
@@ -163,68 +163,68 @@
       "load_mode": "api",
       "simulated": true,
       "steps": {
-        "generate_and_import_s": 0.98,
-        "discovery_add_on_s": 6.717,
-        "discovery_record_store_s": 0.206,
-        "graph_s": 0.534,
-        "scope_evaluate_s": 0.439,
-        "run_s": 5.726,
-        "end_to_end_s": 15.176
+        "generate_and_import_s": 1.069,
+        "discovery_add_on_s": 7.626,
+        "discovery_record_store_s": 0.279,
+        "graph_s": 0.531,
+        "scope_evaluate_s": 0.751,
+        "run_s": 6.319,
+        "end_to_end_s": 17.164
       },
       "landscape": {
-        "tables": 62,
-        "rows": 31820,
-        "business_objects": 8306
+        "tables": 63,
+        "rows": 33723,
+        "business_objects": 8880
       },
       "discovery_add_on": {
-        "rfc_calls": 472,
-        "rows_read": 20424,
-        "tables_sized": 62,
+        "rfc_calls": 506,
+        "rows_read": 21766,
+        "tables_sized": 63,
         "complete": true
       },
       "graph": {
-        "nodes": 8307,
-        "edges": 26446
+        "nodes": 8881,
+        "edges": 28422
       },
       "scope": {
-        "objects": 1774,
-        "approvals_required": 82
+        "objects": 1811,
+        "approvals_required": 76
       },
       "run": {
-        "id": "ca44cd4f413f4d9a921142ab107d8cdf",
+        "id": "4c77f2cea39848099dca0c30ecbb2b4f",
         "status": "COMPLETED",
         "stages": {
           "PRECHECK": {
             "ms": 0.0
           },
           "EXTRACT": {
-            "ms": 1764.9,
-            "records": 4836,
-            "records_per_second": 3169.1
+            "ms": 1889.4,
+            "records": 4980,
+            "records_per_second": 2924.3
           },
           "TRANSFORM": {
-            "ms": 1301.3,
-            "records": 4836
+            "ms": 1569.5,
+            "records": 4980
           },
           "LOAD": {
-            "ms": 1816.9,
-            "loaded": 4831
+            "ms": 1974.7,
+            "loaded": 4975
           },
           "RECONCILE": {
-            "ms": 793.3,
-            "checks": 345
+            "ms": 831.2,
+            "checks": 355
           },
           "REPORT": {
-            "ms": 9.1
+            "ms": 8.0
           }
         }
       },
       "extraction": {
-        "records": 4836,
-        "records_per_second": 3169.1
+        "records": 4980,
+        "records_per_second": 2924.3
       },
       "reconciliation": {
-        "checks": 345,
+        "checks": 355,
         "overall": "PASS"
       }
     }
