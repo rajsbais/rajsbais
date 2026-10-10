@@ -89,6 +89,18 @@ def test_all_screens_render_against_live_api():
         pg.click("button:has-text('Add lookup')")
         pg.wait_for_timeout(500)
         assert "coa_map" in pg.inner_text("main")
+        # cutover: a rehearsal created and started from the page (prompts accepted), the live execution view appears
+        pg.goto(base + "/cutover")
+        pg.wait_for_timeout(2500)
+        pg.once("dialog", lambda d: d.accept("Smoke dress rehearsal"))
+        pg.click("button:has-text('New rehearsal')")
+        pg.wait_for_timeout(2500)
+        assert "Smoke dress rehearsal" in pg.inner_text("main")
+        pg.once("dialog", lambda d: d.accept("started from the smoke"))
+        pg.click("button:has-text('Start the rehearsal')")
+        pg.wait_for_timeout(2500)
+        txt = pg.inner_text("main")
+        assert "Live execution" in txt and "Downtime clock" in txt and "Raise incident" in txt and "history: run" in txt
         # read configuration of the source (Connect page; RFC or synthetic-over-RFC systems show the card): save a ledger, reset
         pg.goto(base + "/connect")
         pg.wait_for_timeout(2500)

@@ -201,7 +201,12 @@ def _summarise(r: CutoverRehearsal) -> dict:
     blocking_open = [i["id"] for i in items if i["blocking"] and i["status"] not in ("PASS", "NOT_APPLICABLE")]
     timed = {k: v for k, v in (r.timings or {}).items() if v.get("actual_minutes") is not None}
     est = {t["id"]: t["est_minutes"] for t in r.runbook or []}
-    r.summary = {"items": len(items), **{s.lower(): n for s, n in by.items()}, "blocking_open": blocking_open, "ready_for_go": not blocking_open, "tasks_timed": len(timed), "actual_minutes": round(sum(v["actual_minutes"] for v in timed.values()), 1), "estimated_minutes_of_timed": round(sum(est.get(k, 0) for k in timed), 1), "downtime_actual_minutes": round(sum(v["actual_minutes"] for k, v in timed.items() if next((t["downtime"] for t in r.runbook or [] if t["id"] == k), False)), 1)}
+    incidents = r.incidents or []
+    open_inc = [i for i in incidents if i.get("status") != "RESOLVED"]
+    blocking_inc = [i["id"] for i in open_inc if i.get("severity") in ("HIGH", "CRITICAL")]
+    downtime_tasks = [t["id"] for t in r.runbook or [] if t.get("downtime")]
+    assigned = r.assignments or {}
+    r.summary = {"items": len(items), **{s.lower(): n for s, n in by.items()}, "blocking_open": blocking_open, "ready_for_go": not blocking_open and not blocking_inc, "incidents_open": len(open_inc), "blocking_incidents": blocking_inc, "tasks_assigned": len(assigned), "unassigned_downtime": [t for t in downtime_tasks if t not in assigned], "tasks_timed": len(timed), "actual_minutes": round(sum(v["actual_minutes"] for v in timed.values()), 1), "estimated_minutes_of_timed": round(sum(est.get(k, 0) for k in timed), 1), "downtime_actual_minutes": round(sum(v["actual_minutes"] for k, v in timed.items() if next((t["downtime"] for t in r.runbook or [] if t["id"] == k), False)), 1)}
     return r.summary
 
 
@@ -325,6 +330,8 @@ def complete_rehearsal(session: Session, r: CutoverRehearsal, verdict: str, acto
     open_items = r.summary["blocking_open"]
     if verdict == "GO" and open_items:
         raise ValueError(f"GO refused: blocking item(s) not passed: {', '.join(open_items)}")
+    if verdict == "GO" and r.summary.get("blocking_incidents"):
+        raise ValueError(f"GO refused: HIGH / CRITICAL incident(s) still open: {', '.join(r.summary['blocking_incidents'])}")
     r.status, r.verdict, r.completed_at, r.completed_by, r.completion_note = "COMPLETED", verdict, _now(), actor, note[:400]
     session.flush()
     session.add(ApprovalRecord(subject_type="REHEARSAL", subject_id=r.id, decision="APPROVED" if verdict == "GO" else "REJECTED", decided_by=actor, kind="BUSINESS" if r.kind == "FINAL" else "TECHNICAL", comment=note[:400]))
@@ -357,7 +364,7 @@ def rehearsal_actuals(session: Session, manifest_id: str) -> dict[str, dict]:
 def rehearsal_out(r: CutoverRehearsal, full: bool = True) -> dict:
     d = {"id": r.id, "project_id": r.project_id, "manifest_id": r.manifest_id, "sequence": r.sequence, "name": r.name, "kind": r.kind, "status": r.status, "verdict": r.verdict, "created_by": r.created_by, "created_at": r.created_at, "started_at": r.started_at, "started_by": r.started_by, "completed_at": r.completed_at, "completed_by": r.completed_by, "completion_note": r.completion_note, "summary": r.summary or _summarise(r)}
     if full:
-        d.update(items=r.items, runbook=r.runbook, timings=r.timings or {}, lessons=r.lessons or [])
+        d.update(items=r.items, runbook=r.runbook, timings=r.timings or {}, lessons=r.lessons or [], incidents=r.incidents or [], assignments=r.assignments or {})
     return d
 
 
@@ -372,6 +379,14 @@ def rehearsal_markdown(r: CutoverRehearsal) -> str:
         for k, t in sorted(r.timings.items()):
             md.append(f"| {k} {est.get(k, {}).get('name', '')} | {est.get(k, {}).get('est_minutes', '')} | {t.get('actual_minutes') if t.get('actual_minutes') is not None else '-'} | {t.get('started_at') or ''} | {t.get('finished_at') or ''} | {(t.get('note') or '').replace('|', '/')} |")
         md.append(f"\nTimed tasks: estimate {s['estimated_minutes_of_timed']} min, actual {s['actual_minutes']} min (downtime tasks {s['downtime_actual_minutes']} min).")
+    if r.assignments:
+        names = {t["id"]: t["name"] for t in r.runbook or []}
+        md += ["", "## Assignments", "", "| Task | Assignee | Backup | Contact |", "|---|---|---|---|"] + [f"| {k} {names.get(k, '')} | {a.get('assignee', '')} | {a.get('backup', '')} | {a.get('contact', '')} |" for k, a in sorted(r.assignments.items())]
+    if r.incidents:
+        md += ["", "## Incidents", "", "| Incident | Task | Severity | Status | Title | Raised | Escalated to | Resolution |", "|---|---|---|---|---|---|---|---|"]
+        for i in r.incidents:
+            esc = " → ".join(e["to"] for e in i.get("escalations") or [])
+            md.append(f"| {i['id']} | {i['task']} | {i['severity']} | {i['status']} | {i['title'].replace('|', '/')} | {i['raised_by']} {i['raised_at'][:16]} | {esc} | {(i.get('resolution') or '').replace('|', '/')} |")
     if r.lessons:
         md += ["", "## Lessons", ""] + [f"- {l['text']} ({l['by']}, {l['at'][:16]}{', task ' + l['task'] if l.get('task') else ''})" for l in r.lessons]
     if r.completion_note:

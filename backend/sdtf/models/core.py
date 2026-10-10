@@ -510,4 +510,6 @@ class CutoverRehearsal(IdMixin, Base):
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     completed_by: Mapped[str] = mapped_column(String(64), default="")
     completion_note: Mapped[str] = mapped_column(String(400), default="")
+    incidents: Mapped[list | None] = mapped_column(JSON, nullable=True)  # live execution: incidents with their escalation path
+    assignments: Mapped[dict | None] = mapped_column(JSON, nullable=True)  # {task_id: {assignee, backup, contact, by, at}}
     __table_args__ = (UniqueConstraint("manifest_id", "sequence", name="uq_cutover_rehearsal"),)

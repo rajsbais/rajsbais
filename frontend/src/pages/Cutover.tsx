@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { api } from "../api";
 import { useApi, useProjectDetails } from "../hooks";
 import { Banner, Card, ErrorBox, KV, Pill, Pre, Select, Stat, Table } from "../components/ui";
+import { LiveExecution } from "../components/LiveExecution";
 
 export default function Cutover() {
   const { projectId } = useProjectDetails();
@@ -47,12 +48,13 @@ export default function Cutover() {
         <div className="row" style={{ marginTop: 14 }}>
           {reh.status === "PLANNED" && <button className="secondary" onClick={() => { const note = window.prompt("Start the rehearsal: note (optional)", ""); if (note !== null) post("/start", { note }); }}>Start the rehearsal</button>}
           {active && <button className="secondary" onClick={() => post("/refresh")}>Refresh gates</button>}
-          <button disabled={!active || !s.ready_for_go} title={!active ? "start a rehearsal or go-live checklist first" : s.ready_for_go ? "" : "blocking gates still open"} onClick={() => complete("GO")}>Authorize production handover</button>
+          <button disabled={!active || !s.ready_for_go} title={!active ? "start a rehearsal or go-live checklist first" : s.ready_for_go ? "" : (s.blocking_incidents?.length ? `HIGH / CRITICAL incident(s) open: ${s.blocking_incidents.join(", ")}` : "blocking gates still open")} onClick={() => complete("GO")}>Authorize production handover</button>
           {reh.verdict && <Pill value={reh.verdict} />}
         </div>
-        <p className="muted">Gates come from the {reh.kind === "FINAL" ? "go-live checklist" : reh.kind === "DRESS" ? "dress rehearsal" : "mock cutover"} "{reh.name}": the automatic ones are evaluated from the platform's state, the manual ones are ticked by hand; the handover is refused while a blocking gate is open.</p>
+        <p className="muted">Gates come from the {reh.kind === "FINAL" ? "go-live checklist" : reh.kind === "DRESS" ? "dress rehearsal" : "mock cutover"} "{reh.name}": the automatic ones are evaluated from the platform's state, the manual ones are ticked by hand; the handover is refused while a blocking gate or a HIGH / CRITICAL incident is open.</p>
+        {reh.status !== "PLANNED" && <LiveExecution rehearsalId={reh.id} active={reh.status === "IN_PROGRESS"} onChanged={() => refreshReh()} />}
       </> : <p className="muted">No rehearsal or go-live checklist yet for this manifest: create one below to see the gates.</p>}
-      <Banner kind="warn">Cutover Command Center is <b>PARTIAL</b>: runbook generation, dependency-aware scheduling, critical path, downtime forecast, rollback gates, go/no-go criteria and the <b>cutover rehearsal checklist</b> (mock cutovers, dress rehearsals, go-live checklist with automatic readiness items, manual items, task timings and an approver verdict) are implemented; live execution tracking of the production cutover, incident escalation and resource assignment are planned. Forecasts are template-based unless a rehearsal timed the task; nothing here touches an SAP system.</Banner>
+      <Banner kind="warn">Cutover Command Center: runbook generation, dependency-aware scheduling, critical path, downtime forecast, rollback gates, go/no-go criteria, the <b>cutover rehearsal checklist</b> (mock cutovers, dress rehearsals, go-live checklist with automatic readiness items, manual items, task timings and an approver verdict) and <b>live execution</b> (timeline against the clock, task timings observed from the platform's own runs, downtime clock, incidents with an escalation path, assignments). Forecasts are template-based unless a rehearsal timed the task; the platform records what people report and what it ran itself; nothing here touches an SAP system or pages anyone.</Banner>
       <div className="row"><Select value={id} onChange={setMid} options={(manifests.data || []).map((m) => ({ value: m.id, label: `${m.name} v${m.version}` }))} /><button className="secondary" onClick={assess}>Assess cutover risk (agent)</button></div>
       <ErrorBox error={err || rb.error} />
       {r && <>

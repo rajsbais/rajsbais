@@ -123,6 +123,25 @@ def main(argv=None):
     crre = crsub.add_parser("report", help="write the checklist report (Markdown)")
     crre.add_argument("--id", required=True)
     crre.add_argument("--out", default=None)
+    crtl = crsub.add_parser("timeline", help="live execution: every runbook task against the clock, downtime clock, incidents, assignments")
+    crtl.add_argument("--id", required=True)
+    crtl.add_argument("--json", action="store_true")
+    cras = crsub.add_parser("assign", help="assign a runbook task to a person or role (empty assignee clears it)")
+    cras.add_argument("--id", required=True)
+    cras.add_argument("--task", required=True)
+    cras.add_argument("--assignee", default="")
+    cras.add_argument("--backup", default="")
+    cras.add_argument("--contact", default="")
+    crin = crsub.add_parser("incident", help="raise, escalate or resolve an incident on a runbook task")
+    crin.add_argument("--id", required=True)
+    crin.add_argument("--action", required=True, choices=["raise", "escalate", "resolve"])
+    crin.add_argument("--task", default="", help="raise: the runbook task")
+    crin.add_argument("--severity", default="MEDIUM", choices=["LOW", "MEDIUM", "HIGH", "CRITICAL"])
+    crin.add_argument("--title", default="")
+    crin.add_argument("--detail", default="")
+    crin.add_argument("--incident", default="", help="escalate / resolve: the incident id")
+    crin.add_argument("--to", default="", help="escalate: a named person or role (default: next level of the owner's path)")
+    crin.add_argument("--note", default="", help="escalate: note; resolve: the resolution")
     bch = sub.add_parser("bench", help="benchmark harness: run the vertical slice at the given scales on the simulators, time every step and rewrite the measured section of docs/benchmarks.md")
     bch.add_argument("--scales", default="1", help="comma-separated scales, e.g. 1,2,3")
     bch.add_argument("--seed", type=int, default=42)
@@ -596,6 +615,39 @@ def main(argv=None):
                 if r is None:
                     print(f"rehearsal {a.id} not found", file=sys.stderr)
                     return 2
+                if a.rcmd == "timeline":
+                    from .cutover.execution import timeline
+
+                    tl = timeline(session, r)
+                    if a.json:
+                        print(json.dumps(tl, indent=2, default=str))
+                    else:
+                        dt = tl["downtime"]
+                        print(f"rehearsal {r.sequence} [{r.kind}] {r.name}: {tl['status']}; elapsed {tl['elapsed_minutes']} min of {tl['planned_total_minutes']} planned, projected {tl['projected_total_minutes']}; downtime {dt['elapsed_minutes']} / {dt['planned_minutes']} planned / {dt['projected_minutes']} projected min; late: {', '.join(tl['late']) or 'none'}; open incidents {tl['incidents']['open']} (blocking: {', '.join(tl['incidents']['blocking']) or 'none'}); assigned {tl['assignments']['assigned']}/{tl['assignments']['tasks']}")
+                        for x in tl["tasks"]:
+                            print(f"  {x['id']} {x['status']:<8} {x['name'][:52]:<52} est {x['est_minutes']:>6} actual {x['actual_minutes'] if x['actual_minutes'] is not None else '-':>6} {'late ' + str(x['late_minutes']) if x['late_minutes'] else '':<10} {x['assignee']}" + (f" [{x['source']}]" if x["observed"] else (f" (history: {x['history']['source']}, {x['history']['actual_minutes']} min)" if x.get("history") else "")))
+                    return 0
+                if a.rcmd == "incident":
+                    from .cutover import execution as ex
+
+                    if a.action == "raise":
+                        inc = ex.raise_incident(session, r, a.task, a.severity, a.title, "cli", a.detail)
+                        print(f"{inc['id']} raised on {inc['task']} ({inc['severity']}, {inc['status']}" + (f", escalated to {inc['escalations'][-1]['to']}" if inc["escalations"] else "") + ")")
+                    elif a.action == "escalate":
+                        inc = ex.escalate_incident(session, r, a.incident, "cli", a.note, a.to)
+                        print(f"{inc['id']} escalated to level {inc['level']}: {inc['escalations'][-1]['to']}")
+                    else:
+                        inc = ex.resolve_incident(session, r, a.incident, "cli", a.note)
+                        print(f"{inc['id']} resolved")
+                    session.commit()
+                    return 0
+                if a.rcmd == "assign":
+                    from .cutover.execution import assign_task
+
+                    e_ = assign_task(session, r, a.task, "cli", a.assignee, a.backup, a.contact)
+                    session.commit()
+                    print(f"{a.task}: " + (f"{e_['assignee']}" + (f" (backup {e_['backup']})" if e_.get("backup") else "") if e_ else "assignment cleared"))
+                    return 0
                 if a.rcmd == "refresh":
                     res = reh.refresh_auto_items(session, r, "cli")
                     session.commit()
@@ -642,7 +694,7 @@ def main(argv=None):
                             print(f"  lesson: {lesson['text']} ({lesson['by']})")
                 else:
                     print(f"rehearsal {r.sequence} is now {r.status}{' ' + r.verdict if r.verdict else ''}")
-            except ValueError as e:
+            except (ValueError, LookupError) as e:
                 print(str(e), file=sys.stderr)
                 return 2
         return 0

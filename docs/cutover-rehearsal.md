@@ -90,6 +90,36 @@ Agents never create, tick or complete a rehearsal (go/no-go stays a human decisi
 * **Report**: `GET /cutover/rehearsals/{id}/report` and `sdtf cutover-rehearsal report` render the checklist,
   timings and lessons as Markdown for the cutover binder / evidence package.
 
+## Live execution
+
+Once a rehearsal (or the go-live checklist) is started, `GET /cutover/rehearsals/{id}/timeline` and
+`sdtf cutover-rehearsal timeline` show the runbook against the clock (`backend/sdtf/cutover/execution.py`):
+
+* **Planned window** per task from the start of the rehearsal and the dependency graph (earliest start and finish
+  from the estimates the runbook snapshot carries).
+* **Actual**: a task timed by hand, or, where the platform did the work itself, **observed from its own runs**: the
+  initial extraction / transformation / load (T04) from the stages of the completed run, the delta cycles (T05),
+  the final delta (T07) and its reconciliation stage (T08, or the baseline run's reconciliation when the source
+  cannot capture changes). A hand timing wins; an observation from before the rehearsal started is shown as
+  *history* on the task, never as the task done in this rehearsal.
+* **Status** per task: DONE, RUNNING, READY (dependencies done), WAITING; **late minutes** against the planned
+  window; a **projection** of the rest from what has happened (running tasks finish no earlier than now, the rest
+  follow their dependencies), hence a projected end and projected total.
+* **Downtime clock**: from the business freeze (the first downtime task) started in this rehearsal to the last
+  downtime task finished; planned, elapsed and projected minutes.
+* **Incidents** (`POST .../incidents`, `.../incidents/{id}/escalate`, `.../incidents/{id}/resolve`; `run:start`):
+  raised on a runbook task with a severity (LOW, MEDIUM, HIGH, CRITICAL), a title and a detail. The escalation
+  path follows the task's owner (for example Basis: Basis lead → IT operations manager → Cutover manager →
+  Steering committee); *escalate* moves one level up or to a named person or role, and a CRITICAL incident is
+  escalated to the first level the moment it is raised. A HIGH or CRITICAL incident that is still open **refuses
+  GO**, like a blocking checklist item. Resolution needs a note. Every step is an audit event.
+* **Assignments** (`PUT .../assignments/{task}`, `GET .../assignments`): who runs each task during this rehearsal,
+  a backup and how to reach them (a name or role and a channel, never a credential). The summary lists the downtime
+  tasks nobody is assigned to; the report carries the assignments and the incidents.
+
+Nothing here reaches an SAP system or pages anyone: the platform records what people report and what it ran
+itself; the escalation is a recorded step with a named level, the call is made by people.
+
 ## CLI
 
 ```bash
@@ -103,6 +133,11 @@ sdtf cutover-rehearsal lesson --id <rehearsal> --text "stop the IDoc inbound que
 sdtf cutover-rehearsal refresh --id <rehearsal>         # re-evaluate the automatic items
 sdtf cutover-rehearsal complete --id <rehearsal> --verdict GO --note "go for the dress rehearsal"
 sdtf cutover-rehearsal report --id <rehearsal> --out rehearsal-1.md
+sdtf cutover-rehearsal timeline --id <rehearsal>        # live execution: tasks against the clock, downtime, incidents
+sdtf cutover-rehearsal assign --id <rehearsal> --task T06 --assignee "Basis on-call" --backup "Integration lead" --contact "war room bridge"
+sdtf cutover-rehearsal incident --id <rehearsal> --action raise --task T07 --severity CRITICAL --title "final delta failed"
+sdtf cutover-rehearsal incident --id <rehearsal> --action escalate --incident I01-abc123 --note "no root cause after 20 min"
+sdtf cutover-rehearsal incident --id <rehearsal> --action resolve --incident I01-abc123 --note "delta replayed"
 ```
 
 ## Honesty notes
@@ -111,5 +146,6 @@ sdtf cutover-rehearsal report --id <rehearsal> --out rehearsal-1.md
   (synthetic landscape, simulated gateway, simulated add-on). A PASS on A04/A05/A08/A09 says the simulated run,
   reconciliation, final delta and cockpit rounds passed, not that a real system did.
 * The manual items are statements people recorded; the platform cannot verify a transport lock or a backup.
-* Live execution tracking of the production cutover (incidents, resource assignment, real-time task status fed
-  by the systems) remains planned (`docs/10-backlog.md`).
+* Live execution tracking records what people report and what the platform ran itself; "fed by the systems"
+  means the platform's own run stages. It does not read task status from an SAP system, a scheduler or a
+  ticketing tool, and it does not page anyone.

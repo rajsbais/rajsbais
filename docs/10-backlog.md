@@ -73,7 +73,7 @@ Legend: P0 next increment · P1 following · P2 later. Sizes are relative (S/M/L
 | P1 | Run the metadata check against A4H and correct the bindings it flags; confirm on A4H which FAA_MOVCAT values carry APC, whether FAAV_ANLC is readable by the technical user, and that the add-on's SELECT on MBEW returns the Material Ledger stock values (proxy view MBV_MBEW) (needs the VM; cannot be done here) | S |
 | ✅ | Benchmark harness (`sdtf bench --scales 1,2,3`): generation, both discovery paths, graph, scope evaluation, run stages with extraction throughput, reconciliation, end to end; the measured section of docs/benchmarks.md names the environment and is replaced on every run, with the JSON beside it | M |
 | ✅ | Mock cutover management: cutover rehearsal checklist (automatic readiness items, manual items, waivers, task timings fed into the forecast, lessons, approver verdict, report); API, CLI, Cutover page | M |
-| P1 | Live cutover execution tracking (task status fed by the systems), incident escalation, resource assignment | M |
+| ✅ | Live cutover execution tracking: timeline against the clock with task timings observed from the platform's own runs (initial load, delta cycles, final delta, reconciliation), hand timings winning, late minutes, projection, downtime clock; incidents with an escalation path per task owner (HIGH / CRITICAL refuse GO, CRITICAL escalated at once); task assignments with backup and contact; API, CLI, Cutover page (migration 0013). No SAP system, scheduler or ticketing tool is read and nobody is paged | M |
 
 ## Phase 7 — AI & factory
 | P | Item | Size |

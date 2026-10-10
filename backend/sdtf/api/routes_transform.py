@@ -1121,6 +1121,81 @@ def rehearsal_abort(req: RehearsalNote | None = None, r=Depends(_get_rehearsal),
     return rehearsal_out(_rehearsal_call(abort_rehearsal, db, r, p.username, (req or RehearsalNote()).note))
 
 
+class IncidentIn(BaseModel):
+    task: str
+    severity: str = Field(..., pattern="^(LOW|MEDIUM|HIGH|CRITICAL)$")
+    title: str = Field(..., max_length=200)
+    detail: str = Field("", max_length=1000)
+
+
+class IncidentEscalate(BaseModel):
+    note: str = Field("", max_length=400)
+    to: str = Field("", max_length=120, description="a named person or role; empty for the next level of the task owner's path")
+
+
+class IncidentResolve(BaseModel):
+    resolution: str = Field(..., max_length=1000)
+
+
+class AssignmentIn(BaseModel):
+    assignee: str = Field("", max_length=120, description="empty clears the assignment")
+    backup: str = Field("", max_length=120)
+    contact: str = Field("", max_length=200, description="how to reach them (channel, number); never a credential")
+
+
+@router.get("/cutover/rehearsals/{rehearsal_id}/timeline", tags=["cutover"])
+def rehearsal_timeline(r=Depends(_get_rehearsal), db: Session = Depends(get_db), p: Principal = Depends(require("project:read"))):
+    """Live execution view: every runbook task against the clock (planned window from the start, actual by hand or
+    observed from the platform's own runs, status, lateness, projection), the downtime clock, incidents, assignments."""
+    from ..cutover.execution import timeline
+
+    return timeline(db, r)
+
+
+@router.get("/cutover/rehearsals/{rehearsal_id}/assignments", tags=["cutover"])
+def rehearsal_assignments(r=Depends(_get_rehearsal), p: Principal = Depends(require("project:read"))):
+    from ..cutover.execution import assignment_table
+
+    return assignment_table(r)
+
+
+@router.put("/cutover/rehearsals/{rehearsal_id}/assignments/{task_id}", tags=["cutover"])
+def rehearsal_assign(task_id: str, req: AssignmentIn, r=Depends(_get_rehearsal), db: Session = Depends(get_db), p: Principal = Depends(require("run:start"))):
+    """Who runs a task during this rehearsal, with a backup and a contact; an empty assignee clears it."""
+    from ..cutover.execution import assign_task
+
+    return {"task": task_id, "assignment": _rehearsal_call(assign_task, db, r, task_id, p.username, req.assignee, req.backup, req.contact), "summary": r.summary}
+
+
+@router.post("/cutover/rehearsals/{rehearsal_id}/incidents", tags=["cutover"], status_code=201)
+def rehearsal_incident_raise(req: IncidentIn, r=Depends(_get_rehearsal), db: Session = Depends(get_db), p: Principal = Depends(require("run:start"))):
+    """An incident on a runbook task: HIGH / CRITICAL block GO until resolved; CRITICAL is escalated at once."""
+    from ..cutover.execution import raise_incident
+
+    return _rehearsal_call(raise_incident, db, r, req.task, req.severity, req.title, p.username, req.detail)
+
+
+@router.post("/cutover/rehearsals/{rehearsal_id}/incidents/{incident_id}/escalate", tags=["cutover"])
+def rehearsal_incident_escalate(incident_id: str, req: IncidentEscalate | None = None, r=Depends(_get_rehearsal), db: Session = Depends(get_db), p: Principal = Depends(require("run:start"))):
+    from ..cutover.execution import escalate_incident
+
+    req = req or IncidentEscalate()
+    try:
+        return _rehearsal_call(escalate_incident, db, r, incident_id, p.username, req.note, req.to)
+    except LookupError as e:
+        raise HTTPException(404, str(e)) from None
+
+
+@router.post("/cutover/rehearsals/{rehearsal_id}/incidents/{incident_id}/resolve", tags=["cutover"])
+def rehearsal_incident_resolve(incident_id: str, req: IncidentResolve, r=Depends(_get_rehearsal), db: Session = Depends(get_db), p: Principal = Depends(require("run:start"))):
+    from ..cutover.execution import resolve_incident
+
+    try:
+        return _rehearsal_call(resolve_incident, db, r, incident_id, p.username, req.resolution)
+    except LookupError as e:
+        raise HTTPException(404, str(e)) from None
+
+
 # ------------------------------------------------------------------------------------------ platform
 CAPABILITIES = [
     {"area": "Synthetic ECC landscape", "status": "IMPLEMENTED", "note": "Deterministic generator with shared masters, cross-company documents, balanced FI"},
@@ -1141,7 +1216,7 @@ CAPABILITIES = [
     {"area": "AI agents", "status": "IMPLEMENTED", "note": "12 bounded heuristic agents; LLM reasoner planned"},
     {"area": "Multi-source merger / consolidation", "status": "IMPLEMENTED", "note": "Merge groups, cross-system key collision planning, master-data dedup, group-level financial reconciliation (simulated runtime)"},
     {"area": "Delta capture / near-zero downtime", "status": "SIMULATED", "note": "CDC through the SAP add-on contract (Z_SDTF_CDC_POLL) over RFC, ordered idempotent replay, freeze, final delta + full reconciliation; verified on the simulated add-on only, no downtime figure claimed (ADR-0014)"},
-    {"area": "Cutover command center", "status": "PARTIAL", "note": "Runbook generation, critical path, forecast; cutover rehearsal checklist (mock cutover / dress rehearsal / go-live): automatic readiness items evaluated from the platform state, manual items ticked by hand with audit, runbook task timings measured by hand and fed back into the forecast, lessons, approver GO / NO_GO refused while a blocking item is open; live execution tracking of the production cutover, incident escalation and resource assignment planned"},
+    {"area": "Cutover command center", "status": "IMPLEMENTED", "note": "Runbook generation, critical path, forecast; cutover rehearsal checklist (mock cutover / dress rehearsal / go-live): automatic readiness items evaluated from the platform state, manual items ticked by hand with audit, runbook task timings measured by hand and fed back into the forecast, lessons, approver GO / NO_GO refused while a blocking item or a HIGH / CRITICAL incident is open; live execution tracking: timeline against the clock with task timings observed from the platform's own runs where it did the work, downtime clock and projection, incidents with an escalation path per task owner, task assignments. Tracking of what people report and what the platform ran; no SAP system is touched and nobody is paged by the platform"},
     {"area": "SSO / enterprise identity", "status": "IMPLEMENTED", "note": "OIDC RS256 bearer tokens verified against JWKS with group-to-role mapping; dev users remain for local use"},
     {"area": "Production SAP migration", "status": "UNSUPPORTED", "note": "This build never connects to or writes into an SAP system"},
 ]
