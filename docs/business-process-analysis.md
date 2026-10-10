@@ -35,3 +35,18 @@ How to read it for a carve-out or an S/4HANA move:
 Verified on the synthetic landscape (`backend/tests/test_process_analysis.py`: variant totals and the 80 % line
 against the record store, selectivity and age against direct counts, pushdown, an unauthorised table reported,
 API and CLI). Not yet run against NPL or A4H.
+
+## Usage: the ST03N transaction profile, imported
+
+Workload statistics stay outside the add-on. A Basis administrator exports the ST03N transaction profile (a
+delimited text or spreadsheet export with a header naming the transaction column and the dialog-step column;
+response, CPU and DB time columns are kept when their header is known) and imports it with
+`POST /systems/{id}/workload/import`, `sdtf workload-import --system <id> --file st03n.txt --period 2026-09`, or
+the *Usage* card of the Enterprise analyzer. The platform maps the transactions it knows
+(`discovery/workload.py`, `TRANSACTIONS`: sales orders, deliveries, billing, purchase orders, goods movements,
+invoices, FI postings and payments, customers, vendors, materials, production orders, assets, cost centers) to
+its business objects and process tables, separates write from read steps by the transaction's meaning, and puts
+the executed dialog steps next to the documents in the database (write steps per document). Transactions it
+does not know are listed by steps so the catalogue can be extended; nothing is guessed. The usage block of the
+analysis and its Markdown report carry the comparison, with the period and who imported it. Workflow logs and
+IDoc monitors remain unread; the discovery lists RFC destinations, IDoc partners and background jobs.

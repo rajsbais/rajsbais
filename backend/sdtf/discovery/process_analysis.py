@@ -18,6 +18,7 @@ from ..discovery.service import latest_snapshot
 from ..models import SapSystem, TableStatistic
 from ..runtime.addon import client_for
 from ..runtime.rfc import RfcError, RfcUnavailable, predicate
+from .workload import table_rows, usage_section
 
 AREAS = ("ALL", "O2C", "P2P", "R2R")
 
@@ -65,7 +66,7 @@ MATRIX = [
     {"objective": "Understand data selectivity", "transactions": "DB05", "here": "selectivity: distinct customers, vendors, materials and accounts behind the transactional tables, and the share of the top value"},
     {"objective": "Detect process overloads", "transactions": "DB02 + DB15", "here": "growth: rows per fiscal year from the discovery statistics with the year-over-year change; links: which business object populates each table"},
     {"objective": "Size the archiving and the historical scope", "transactions": "TAANA + DB15", "here": "age: documents per year and the share older than the retention horizon, per process table"},
-    {"objective": "Understand user execution", "transactions": "ST03N, STAD", "here": "not available through the add-on: see usage"},
+    {"objective": "Understand user execution", "transactions": "ST03N, STAD", "here": "not readable through the add-on; an ST03N transaction-profile export imported here is compared with the footprint (usage)"},
     {"objective": "Workflow and interface frequencies", "transactions": "SWI1, SWI2_FREQ, WE02, BD87", "here": "not available through the add-on; the discovery lists the RFC destinations, IDoc partners and background jobs"},
 ]
 
@@ -101,6 +102,7 @@ def analyse(session: Session, system: SapSystem, area: str = "ALL", company_code
         out["errors"]["connection"] = str(e)
         out["transport"] = None
         out["growth"], out["links"] = growth(session, system), links(tables)
+        out["usage"] = usage_section(system, out["variants"], table_rows(session, system)) or USAGE_NOT_AVAILABLE
         return out
     out["transport"] = transport
 
@@ -135,6 +137,7 @@ def analyse(session: Session, system: SapSystem, area: str = "ALL", company_code
             out["errors"][f"{table}:{yfield}"] = f"{e.key}: {e.message}"
     out["growth"] = growth(session, system)
     out["links"] = links(tables)
+    out["usage"] = usage_section(system, out["variants"], table_rows(session, system)) or USAGE_NOT_AVAILABLE
     out["rfc_calls"], out["snapshot"] = client.calls, client.snapshot
     return out
 
@@ -192,6 +195,13 @@ def report_markdown(res: dict) -> str:
         prev = g["previous_rows"] if g["previous_rows"] is not None else "-"
         md.append(f"| {g['table']} | {g['rows']} | {g['latest_year']} | {g['latest_rows']} | {prev} | {change} | {', '.join(g['objects'])} |")
     md += ["", "## Usage", "", res["usage"]["reason"], ""]
+    if res["usage"].get("status") == "IMPORTED":
+        u = res["usage"]
+        md += [f"ST03N transaction profile ({u.get('period') or 'period not given'}), imported {str(u.get('imported_at', ''))[:16]} by {u.get('by')}: {u['total_steps']} dialog steps in {u['transactions']} transactions, {u['mapped_share']:.0%} mapped to business objects.", "", "| Business object | Table | Steps | Write steps | Documents in DB | Write steps / document | Transactions |", "|---|---|---|---|---|---|---|"]
+        for d in u["by_object"]:
+            md.append(f"| {d['object']} | {d['table']} | {d['steps']} | {d['write_steps']} | {d['documents_in_db'] if d['documents_in_db'] is not None else '-'} | {d['write_steps_per_document'] if d['write_steps_per_document'] is not None else '-'} | {', '.join(f'{k} {v}' for k, v in list(d['transactions'].items())[:4])} |")
+        if u["unmapped_top"]:
+            md += ["", "Not mapped to a business object: " + ", ".join(f"{x['tcode']} ({x['steps']})" for x in u["unmapped_top"][:10]), ""]
     if res["errors"]:
         md += ["## Not readable", ""] + [f"- {k}: {v}" for k, v in res["errors"].items()] + [""]
     return "\n".join(md)

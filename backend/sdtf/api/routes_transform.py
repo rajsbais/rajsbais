@@ -1401,6 +1401,39 @@ def portfolio(db: Session = Depends(get_db), p: Principal = Depends(require("pro
     return out
 
 
+@router.get("/platform/portfolio/kpis", tags=["platform"])
+def portfolio_kpis(db: Session = Depends(get_db), p: Principal = Depends(require("project:read"))):
+    """Migration factory KPIs across the tenant's projects and the cross-project benchmarks of the completed
+    runs (extraction throughput, stage durations). Figures come from the platform's own runs; on this build
+    those are simulated runs, which the response says."""
+    from ..models import CutoverRehearsal, Project, ResidualCleanupPlan
+
+    projects = db.execute(select(Project).where(Project.tenant_id == p.tenant_id)).scalars().all()
+    rows, rps, durations = [], [], []
+    for proj in projects:
+        manifests = db.execute(select(ScopeManifest).where(ScopeManifest.project_id == proj.id)).scalars().all()
+        rulesets = db.execute(select(RuleSet).where(RuleSet.project_id == proj.id)).scalars().all()
+        runs = db.execute(select(MigrationRun).where(MigrationRun.project_id == proj.id)).scalars().all()
+        completed = [r for r in runs if r.status == "COMPLETED" and (r.metrics or {}).get("kind") != "DELTA"]
+        rehearsals = db.execute(select(CutoverRehearsal).where(CutoverRehearsal.project_id == proj.id)).scalars().all()
+        plans = db.execute(select(ResidualCleanupPlan).where(ResidualCleanupPlan.project_id == proj.id)).scalars().all()
+        open_inc = sum(1 for r in rehearsals for i in (r.incidents or []) if i.get("status") != "RESOLVED")
+        last = max(completed, key=lambda r: r.created_at) if completed else None
+        ext = next((s for s in last.stages if s.name == "EXTRACT"), None) if last else None
+        last_rps = (ext.metrics or {}).get("records_per_second") if ext else None
+        for r in completed:
+            e = next((s for s in r.stages if s.name == "EXTRACT"), None)
+            if e and (e.metrics or {}).get("records_per_second"):
+                rps.append(float(e.metrics["records_per_second"]))
+            if r.started_at and r.finished_at:
+                durations.append((r.finished_at - r.started_at).total_seconds())
+        recon = ((last.report or {}).get("reconciliation") or {}).get("overall") if last else None
+        rows.append({"id": proj.id, "name": proj.name, "scenario_type": proj.scenario_type, "status": proj.status, "manifests": len(manifests), "approved_manifests": sum(1 for m in manifests if m.status == "APPROVED"), "objects_in_scope": max((m.impact.get("objects_total", 0) for m in manifests), default=0), "est_bytes": max((m.impact.get("est_bytes", 0) for m in manifests), default=0), "rulesets": len(rulesets), "approved_rulesets": sum(1 for r in rulesets if r.status == "APPROVED"), "runs": len(runs), "completed_runs": len(completed), "last_reconciliation": recon, "last_extraction_rec_s": last_rps, "rehearsals": len(rehearsals), "rehearsals_go": sum(1 for r in rehearsals if r.verdict == "GO"), "open_incidents": open_inc, "cleanup_plans": len(plans), "cleanup_executed": sum(1 for x in plans if x.status == "EXECUTED"), "phase": ("CUTOVER_READY" if any(r.verdict == "GO" for r in rehearsals) else "REHEARSING" if rehearsals else "RUN_RECONCILED" if recon in ("PASS", "WARN") else "RUNNING" if runs else "SCOPED" if any(m.status == "APPROVED" for m in manifests) else "SCOPING" if manifests else "DISCOVERY")})
+    totals = {"projects": len(rows), "manifests": sum(r["manifests"] for r in rows), "approved_manifests": sum(r["approved_manifests"] for r in rows), "objects_in_scope": sum(r["objects_in_scope"] for r in rows), "est_bytes": sum(r["est_bytes"] for r in rows), "runs": sum(r["runs"] for r in rows), "completed_runs": sum(r["completed_runs"] for r in rows), "reconciled_pass": sum(1 for r in rows if r["last_reconciliation"] == "PASS"), "rehearsals_go": sum(r["rehearsals_go"] for r in rows), "open_incidents": sum(r["open_incidents"] for r in rows), "by_phase": {ph: sum(1 for r in rows if r["phase"] == ph) for ph in sorted({r["phase"] for r in rows})}}
+    bench = {"completed_runs": len(durations), "extraction_rec_s": {"min": round(min(rps), 1), "avg": round(sum(rps) / len(rps), 1), "max": round(max(rps), 1)} if rps else None, "run_seconds": {"min": round(min(durations), 1), "avg": round(sum(durations) / len(durations), 1), "max": round(max(durations), 1)} if durations else None, "note": "measured on the platform's own completed runs; on this build those run against the simulators, so the figures size the engine, not an SAP system (docs/benchmarks.md)"}
+    return {"totals": totals, "benchmarks": bench, "projects": rows}
+
+
 @router.get("/platform/delta/status", tags=["platform"])
 def delta_status(p: Principal = Depends(current_principal)):
     stages = ["Initial extraction", "Initial transformation", "Initial target load", "Delta capture", "Delta transformation", "Continuous synchronization", "Backlog monitoring", "Business freeze coordination", "Final delta synchronization", "Final reconciliation", "Cutover authorization", "Business validation", "Production handover"]

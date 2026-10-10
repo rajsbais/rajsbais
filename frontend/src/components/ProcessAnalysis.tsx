@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { fmtNum } from "../api";
+import { api, fmtNum } from "../api";
 import { useApi } from "../hooks";
 import { Bars, Card, ErrorBox, Pill, Segmented, Table } from "./ui";
 
@@ -14,6 +14,13 @@ export function ProcessAnalysis({ systemId }: { systemId: string }) {
   const [years, setYears] = useState(7);
   const q = useApi<any>(`/systems/${systemId}/process-analysis`, { area, bukrs: bukrs || undefined, top: 8, retention_years: years }, [systemId, area, bukrs, years]);
   const d = q.data;
+  const [wlText, setWlText] = useState("");
+  const [wlPeriod, setWlPeriod] = useState("");
+  const [wlFile, setWlFile] = useState("");
+  const [wlErr, setWlErr] = useState<string | null>(null);
+  const [wlBusy, setWlBusy] = useState(false);
+  const readFile = (f: File | undefined) => { if (!f) return; setWlFile(f.name); f.text().then(setWlText); };
+  const importWorkload = async () => { setWlErr(null); setWlBusy(true); try { await api(`/systems/${systemId}/workload/import`, { body: { text: wlText, period: wlPeriod, source_file: wlFile } }); setWlText(""); q.reload(); } catch (e: any) { setWlErr(e.message); } finally { setWlBusy(false); } };
   return (
     <div>
       <Segmented value={area} onChange={setArea} options={AREAS} />
@@ -41,9 +48,21 @@ export function ProcessAnalysis({ systemId }: { systemId: string }) {
           <Card title="Growth (DB02-style, from the discovery statistics)">
             <Table cols={[{ k: "table", h: "Table", r: (r) => <span className="mono">{r.table}</span> }, { k: "rows", h: "Rows", r: (r) => fmtNum(r.rows) }, { k: "latest_year", h: "Latest year" }, { k: "latest_rows", h: "Rows", r: (r) => fmtNum(r.latest_rows) }, { k: "change", h: "vs previous", r: (r) => (r.change === null || r.change === undefined ? "-" : `${r.change >= 0 ? "+" : ""}${(100 * r.change).toFixed(0)} %`) }, { k: "objects", h: "Business objects (DB15)", r: (r) => r.objects.join(", ") }]} rows={d.growth.slice(0, 15)} empty="Run discovery first" />
           </Card>
-          <Card title="Usage and workflow (not available through the add-on)">
-            <p><Pill value={d.usage.status} /> {d.usage.transactions.join(", ")}</p>
+          <Card title={d.usage.status === "IMPORTED" ? `Usage: ST03N transaction profile (${d.usage.period || "period not given"})` : "Usage and workflow (not readable through the add-on)"}>
+            <p><Pill value={d.usage.status} /> {d.usage.transactions.join(", ")}{d.usage.status === "IMPORTED" && <span className="muted"> · imported {String(d.usage.imported_at).slice(0, 16)} by {d.usage.by}{d.usage.source_file ? ` from ${d.usage.source_file}` : ""}</span>}</p>
             <p className="muted">{d.usage.reason}</p>
+            {d.usage.status === "IMPORTED" && <>
+              <p>{fmtNum(d.usage.total_steps)} dialog steps in {d.usage.transactions_mapped} of {d.usage.transactions} transactions mapped · {pct(d.usage.mapped_share)} of the steps on known business objects</p>
+              <Table cols={[{ k: "object", h: "Business object" }, { k: "table", h: "Table", r: (r) => <span className="mono">{r.table}</span> }, { k: "steps", h: "Steps", r: (r) => fmtNum(r.steps) }, { k: "write_steps", h: "Write", r: (r) => fmtNum(r.write_steps) }, { k: "documents_in_db", h: "Documents in DB", r: (r) => r.documents_in_db === null ? "–" : fmtNum(r.documents_in_db) }, { k: "write_steps_per_document", h: "Write steps / doc", r: (r) => r.write_steps_per_document ?? "–" }, { k: "transactions", h: "Transactions", r: (r) => Object.entries(r.transactions).slice(0, 4).map(([k, v]) => `${k} ${fmtNum(v as number)}`).join(" · ") }]} rows={d.usage.by_object} />
+              {d.usage.unmapped_top?.length > 0 && <p className="muted">Not mapped to a business object: {d.usage.unmapped_top.slice(0, 8).map((x: any) => `${x.tcode} (${fmtNum(x.steps)})`).join(", ")}</p>}
+            </>}
+            <div className="rc-form" style={{ marginTop: 10 }}>
+              <h4>Import an ST03N transaction-profile export</h4>
+              <div className="row"><label>Export file<input type="file" accept=".txt,.csv,.tsv" onChange={(e) => readFile(e.target.files?.[0])} /></label><label>Period covered<input value={wlPeriod} onChange={(e) => setWlPeriod(e.target.value)} placeholder="2026-09" /></label></div>
+              <label>Or paste the rows<textarea className="code" style={{ minHeight: 60 }} value={wlText} onChange={(e) => setWlText(e.target.value)} placeholder={"Transaction\t# Steps\nVA01\t1.234"} /></label>
+              <div className="row"><button className="secondary" disabled={!wlText || wlBusy} onClick={importWorkload}>{wlBusy ? "Importing…" : "Import and compare"}</button><span className="muted">The export replaces the previous one; the platform maps the transactions it knows and lists the rest.</span></div>
+              <ErrorBox error={wlErr} />
+            </div>
             {Object.keys(d.errors || {}).length > 0 && <><h4>Not readable</h4><ul className="muted">{Object.entries(d.errors).map(([k, v]: any) => <li key={k}><span className="mono">{k}</span>: {v}</li>)}</ul></>}
           </Card>
         </div>

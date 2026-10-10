@@ -89,6 +89,17 @@ def test_all_screens_render_against_live_api():
         pg.click("button:has-text('Add lookup')")
         pg.wait_for_timeout(500)
         assert "coa_map" in pg.inner_text("main")
+        # portfolio KPIs and the analyzer's usage import form
+        pg.goto(base + "/portfolio")
+        pg.wait_for_timeout(2500)
+        txt = pg.inner_text("main")
+        assert "Migration factory KPIs" in txt and "Extraction rec/s" in txt
+        pg.goto(base + "/analyzer")
+        pg.wait_for_timeout(2500)
+        pg.click("text=Process analysis")
+        pg.wait_for_timeout(6000)
+        txt = pg.inner_text("main")
+        assert "Import an ST03N transaction-profile export" in txt and "NOT_AVAILABLE" in txt
         # carve-out studio: the deal template card, a cleanup plan created from the residual tab
         pg.goto(base + "/carveout")
         pg.wait_for_timeout(3000)

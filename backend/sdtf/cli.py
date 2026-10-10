@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 
 from .db import init_schema, session_scope
@@ -203,6 +204,11 @@ def main(argv=None):
     le = sub.add_parser("llm-eval", help="run the reasoner evaluation cases through the configured reasoner (heuristic unless SDTF_LLM_PROVIDER is set) and report which explanations cite the facts, leak nothing and mention no foreign value")
     le.add_argument("--json", action="store_true")
     le.add_argument("--out", default=None, help="write the Markdown report here")
+    wl = sub.add_parser("workload-import", help="import an ST03N transaction-profile export for a registered system and compare it with the footprint (workload statistics are not table reads)")
+    wl.add_argument("--system", required=True)
+    wl.add_argument("--file", required=True, help="the export (tab, semicolon, comma or pipe delimited, with a header)")
+    wl.add_argument("--period", default="", help="the period the profile covers")
+    wl.add_argument("--json", action="store_true")
     mdp = sub.add_parser("metadata", help="verify the API bindings against a service's $metadata: from a downloaded EDMX file or fetched from a registered API target")
     mdsub = mdp.add_subparsers(dest="mdcmd", required=True)
     mdc = mdsub.add_parser("check", help="check one service against an EDMX file, or every bound service against a target")
@@ -513,6 +519,33 @@ def main(argv=None):
             print(json.dumps(res, indent=2, default=str))
         elif not a.out:
             print(md)
+        return 0
+    if a.cmd == "workload-import":
+        from .discovery.workload import import_workload, table_rows, usage_section
+        from .models import SapSystem
+
+        with open(a.file, encoding="utf-8-sig") as fh:
+            text = fh.read()
+        with session_scope() as s_:
+            system = s_.get(SapSystem, a.system)
+            if system is None:
+                print(f"system {a.system} not found", file=sys.stderr)
+                return 2
+            try:
+                w = import_workload(s_, system, text, a.period, "cli", os.path.basename(a.file))
+            except ValueError as e:
+                print(str(e), file=sys.stderr)
+                return 2
+            s_.commit()
+            u = usage_section(system, None, table_rows(s_, system))
+        if a.json:
+            print(json.dumps(u, indent=2, default=str))
+        else:
+            print(f"imported {w['row_count']} transactions, {w['total_steps']} dialog steps ({w['period'] or 'period not given'}); {u['mapped_share']:.0%} of the steps mapped to business objects")
+            for d in u["by_object"][:15]:
+                print(f"  {d['object']:<24} {d['steps']:>9} steps ({d['write_steps']} write) · documents in DB {d['documents_in_db'] if d['documents_in_db'] is not None else '-'} · {', '.join(f'{k} {v}' for k, v in list(d['transactions'].items())[:3])}")
+            if u["unmapped_top"]:
+                print("  not mapped: " + ", ".join(f"{x['tcode']} ({x['steps']})" for x in u["unmapped_top"][:8]))
         return 0
     if a.cmd == "llm-eval":
         from .agents.framework import default_reasoner

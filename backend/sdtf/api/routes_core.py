@@ -558,6 +558,37 @@ def process_analysis(area: str = Query("ALL", pattern="^(ALL|O2C|P2P|R2R|all|o2c
     return res
 
 
+class WorkloadImport(BaseModel):
+    text: str = Field(..., max_length=20_000_000, description="the ST03N transaction-profile export (delimited text with a header)")
+    period: str = Field("", max_length=60, description="the period the profile covers, e.g. 2026-09 or 'last 3 months'")
+    source_file: str = Field("", max_length=120)
+
+
+@router.post("/systems/{system_id}/workload/import", tags=["discovery"])
+def workload_import(req: WorkloadImport, s: SapSystem = Depends(get_system), db: Session = Depends(get_db), p: Principal = Depends(require("project:write"))):
+    """Import an ST03N transaction-profile export for the system: workload statistics are not table reads, so
+    they come from the export a Basis administrator makes, never from a guess."""
+    from ..discovery.workload import import_workload
+
+    try:
+        w = import_workload(db, s, req.text, req.period, p.username, req.source_file)
+    except ValueError as e:
+        raise HTTPException(422, str(e)) from None
+    return {k: v for k, v in w.items() if k != "rows"}
+
+
+@router.get("/systems/{system_id}/workload", tags=["discovery"])
+def workload_get(s: SapSystem = Depends(get_system), db: Session = Depends(get_db), p: Principal = Depends(require("project:read"))):
+    """The imported workload compared with the footprint (variants from the record store / add-on are not re-read
+    here: the comparison uses the discovery statistics for the documents in the database)."""
+    from ..discovery.workload import table_rows, usage_section
+
+    u = usage_section(s, None, table_rows(db, s))
+    if u is None:
+        return {"status": "NOT_AVAILABLE", "reason": "no ST03N transaction profile imported for this system"}
+    return u
+
+
 # ------------------------------------------------------------------------------------------- graph
 @router.post("/systems/{system_id}/graph/build", tags=["graph"])
 def graph_build(s: SapSystem = Depends(get_system), db: Session = Depends(get_db), p: Principal = Depends(require("project:write"))):
