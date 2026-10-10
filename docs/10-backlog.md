@@ -21,7 +21,6 @@ Legend: P0 next increment · P1 following · P2 later. Sizes are relative (S/M/L
 | ✅ | Rule editor: grid of the rules in words with inline editing, reordering and removal, lookup tables from CSV exports (duplicates and conflicts reported), structured document composed into the canonical YAML and back, per-rule approval / rejection under four eyes with decisions carried into the next version for unchanged rules; set approval refused while a rule is rejected (migration 0012) | M |
 | ✅ | Scope designer: scenario matrix across up to eight manifests of a project (classification counts side by side, identical / differing objects with the objects that differ, pairwise deltas; `GET /projects/{id}/manifests/matrix`, Scope designer card with the manifests ticked) | S |
 | P1 | Carve-out: asset vs share deal templates, residual cleanup execution with approval workflow | M |
-| P1 | Rule editor: visual mapping grid, lookup table upload, per-rule approval | M |
 
 ## Phase 4 — SAP connectivity
 | P | Item | Size |
@@ -78,6 +77,6 @@ Legend: P0 next increment · P1 following · P2 later. Sizes are relative (S/M/L
 ## Phase 7 — AI & factory
 | P | Item | Size |
 |---|---|---|
-| P1 | LLM reasoner behind `Reasoner` interface (evidence bundle only), prompt/eval harness | M |
+| ✅ | LLM reasoner behind the `Reasoner` interface (ADR-0018): redacted evidence bundle only, Anthropic Messages API or any OpenAI-compatible endpoint over httpx, key from a named environment variable, guard against numbers absent from the facts, fallback to the heuristic text with the outcome recorded on every proposal; `GET /agents/reasoner`, evaluation harness `sdtf llm-eval`. HTTP contract verified with a mocked transport only, never against a live provider in this build | M |
 | P1 | Rule factory v2: learn mappings from approved rulesets across projects | M |
 | P2 | Migration factory portfolio KPIs, cross-project benchmarks | S |

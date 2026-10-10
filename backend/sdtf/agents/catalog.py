@@ -239,7 +239,8 @@ class ReconciliationExplanationAgent(Agent):
             cat = "SCOPE_POLICY" if "retained" in root.lower() or "excluded" in root.lower() or "partially" in root.lower() else ("TRANSFORMATION" if "rule" in root.lower() else ("LOAD" if "target" in root.lower() else "UNKNOWN"))
             expl.append({"layer": r.layer, "check": r.check_name, "subject": r.subject, "status": r.status, "root_cause_category": cat, "explanation": root, "recommended_action": {"SCOPE_POLICY": "No action if the policy is intended; otherwise amend the scope", "TRANSFORMATION": "Fix the rule and re-run the dry run", "LOAD": "Inspect load exceptions and re-run the LOAD stage", "UNKNOWN": "Manual investigation"}[cat]})
         conf = 0.8 if all(e["root_cause_category"] != "UNKNOWN" for e in expl) else 0.5
-        return Proposal(f"{len(expl)} non-passing check(s) explained", {"explanations": expl}, conf, [Evidence("RECONCILIATION", run.id)], requires_approval=False, subject_type="RUN", subject_id=run.id)
+        facts = {"non_passing_checks": len(expl), "categories": dict(Counter(e["root_cause_category"] for e in expl)), "unknown": sum(1 for e in expl if e["root_cause_category"] == "UNKNOWN")}
+        return Proposal(f"{len(expl)} non-passing check(s) explained", {"explanations": expl, "facts": facts, "narrative": self.reasoner.explain(facts)}, conf, [Evidence("RECONCILIATION", run.id)], requires_approval=False, subject_type="RUN", subject_id=run.id)
 
 
 @register
@@ -263,7 +264,8 @@ class CutoverRiskAgent(Agent):
         iface_item = next((i for i in (latest.items if latest else []) if i["id"] == "M02"), None)
         factors = {"open_documents": m.impact.get("open_documents", 0), "pending_approvals": m.impact.get("approvals_required", 0), "interfaces": interfaces, "last_run_status": last.status if last else "NONE", "reconciliation": (last.report or {}).get("reconciliation", {}).get("overall", "NONE") if last else "NONE", "completed_runs": len([r for r in runs if r.status == "COMPLETED"]), "rehearsals_completed": len(done), "rehearsals_go": len(go), "latest_rehearsal": f"{latest.sequence} {latest.status}{' ' + latest.verdict if latest.verdict else ''}" if latest else "NONE", "blocking_items_open": len((latest.summary or {}).get("blocking_open", [])) if latest else None, "interface_plan": iface_item["status"] if iface_item else "NONE"}
         score = min(100, factors["open_documents"] * 0.2 + factors["pending_approvals"] * 5 + interfaces * 4 + (30 if factors["reconciliation"] in ("FAIL", "NONE") else (10 if factors["reconciliation"] == "WARN" else 0)) + (20 if not go else 0) + (10 if latest and factors["blocking_items_open"] else 0))
-        return Proposal(f"Cutover risk score {round(score)}", {"score": round(score), "band": "HIGH" if score > 60 else ("MEDIUM" if score > 30 else "LOW"), "factors": factors, "go_no_go_criteria": [{"criterion": "Reconciliation overall PASS or explained WARN", "met": factors["reconciliation"] in ("PASS", "WARN")}, {"criterion": "No pending business dispositions", "met": factors["pending_approvals"] == 0}, {"criterion": "At least one completed cutover rehearsal with verdict GO", "met": bool(go), "note": "" if go else ("latest rehearsal " + factors["latest_rehearsal"] if latest else "no rehearsal created (Cutover page)")}, {"criterion": "Interface cut-over plan reviewed (rehearsal item M02)", "met": factors["interface_plan"] in ("PASS", "NOT_APPLICABLE"), "note": "" if iface_item else "not recorded in a rehearsal yet"}]}, 0.6, [Evidence("MANIFEST", m.id)] + [Evidence("RUN", r.id) for r in runs] + [Evidence("REHEARSAL", r.id) for r in reh], requires_approval=False, subject_type="MANIFEST", subject_id=m.id)
+        band = "HIGH" if score > 60 else ("MEDIUM" if score > 30 else "LOW")
+        return Proposal(f"Cutover risk score {round(score)}", {"score": round(score), "band": band, "factors": factors, "narrative": self.reasoner.explain({"score": round(score), "band": band, **factors}), "go_no_go_criteria": [{"criterion": "Reconciliation overall PASS or explained WARN", "met": factors["reconciliation"] in ("PASS", "WARN")}, {"criterion": "No pending business dispositions", "met": factors["pending_approvals"] == 0}, {"criterion": "At least one completed cutover rehearsal with verdict GO", "met": bool(go), "note": "" if go else ("latest rehearsal " + factors["latest_rehearsal"] if latest else "no rehearsal created (Cutover page)")}, {"criterion": "Interface cut-over plan reviewed (rehearsal item M02)", "met": factors["interface_plan"] in ("PASS", "NOT_APPLICABLE"), "note": "" if iface_item else "not recorded in a rehearsal yet"}]}, 0.6, [Evidence("MANIFEST", m.id)] + [Evidence("RUN", r.id) for r in runs] + [Evidence("REHEARSAL", r.id) for r in reh], requires_approval=False, subject_type="MANIFEST", subject_id=m.id)
 
 
 @register
@@ -319,5 +321,8 @@ class DocumentationAgent(Agent):
 
 def agent_catalog() -> list[dict]:
     from .framework import REGISTRY
+    from .llm import reasoner_status
 
-    return [{"name": n, "description": c.description, "permission": c.permission, "forbidden_actions": list(c.forbidden_actions), "reasoner": "heuristic (deterministic)", "status": "IMPLEMENTED"} for n, c in REGISTRY.items()]
+    rs = reasoner_status()
+    label = "heuristic (deterministic)" if rs["name"] == "heuristic" else f"llm ({rs['provider']}, {rs['model'] or 'no model'}{'' if rs['configured'] else ', not configured: heuristic fallback'})"
+    return [{"name": n, "description": c.description, "permission": c.permission, "forbidden_actions": list(c.forbidden_actions), "reasoner": label, "status": "IMPLEMENTED"} for n, c in REGISTRY.items()]

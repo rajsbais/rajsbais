@@ -167,6 +167,9 @@ def main(argv=None):
     lk.add_argument("--key-column", default=None)
     lk.add_argument("--value-column", default=None)
     lk.add_argument("--json", action="store_true", help="print the parse report instead of the YAML")
+    le = sub.add_parser("llm-eval", help="run the reasoner evaluation cases through the configured reasoner (heuristic unless SDTF_LLM_PROVIDER is set) and report which explanations cite the facts, leak nothing and mention no foreign value")
+    le.add_argument("--json", action="store_true")
+    le.add_argument("--out", default=None, help="write the Markdown report here")
     mdp = sub.add_parser("metadata", help="verify the API bindings against a service's $metadata: from a downloaded EDMX file or fetched from a registered API target")
     mdsub = mdp.add_subparsers(dest="mdcmd", required=True)
     mdc = mdsub.add_parser("check", help="check one service against an EDMX file, or every bound service against a target")
@@ -478,6 +481,21 @@ def main(argv=None):
         elif not a.out:
             print(md)
         return 0
+    if a.cmd == "llm-eval":
+        from .agents.framework import default_reasoner
+        from .agents.llm import eval_markdown, evaluate, reasoner_status
+
+        rep = evaluate(default_reasoner())
+        rep["configuration"] = reasoner_status()
+        if a.out:
+            with open(a.out, "w", encoding="utf-8") as fh:
+                fh.write(eval_markdown(rep))
+            print(f"written {a.out}")
+        if a.json:
+            print(json.dumps(rep, indent=2))
+        elif not a.out:
+            print(eval_markdown(rep), end="")
+        return 0 if rep["passed"] == rep["cases"] else 1
     if a.cmd == "lookup-csv":
         from .rules.editor import lookup_yaml, parse_lookup_csv
 

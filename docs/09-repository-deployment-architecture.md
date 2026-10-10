@@ -44,6 +44,7 @@ evidence; with `SDTF_STAGING_DIR=s3://…` or `gs://…` staging needs no shared
 | SDTF_STAGING_FS_OPTIONS | JSON fsspec options for the staging filesystem, e.g. `{"endpoint_url": "http://minio:9000"}` |
 | SDTF_JOB_LEASE_SECONDS, SDTF_WORKER_POLL_SECONDS | distributed worker lease and poll interval |
 | OTEL_EXPORTER_OTLP_ENDPOINT, OTEL_SERVICE_NAME, SDTF_OTEL_ENABLED, SDTF_OTEL_CONSOLE, SDTF_LOG_FORMAT | telemetry export and log format (ADR-0011) |
+| SDTF_LLM_PROVIDER, SDTF_LLM_MODEL, SDTF_LLM_BASE_URL, SDTF_LLM_API_KEY_ENV, SDTF_LLM_TIMEOUT, SDTF_LLM_MAX_TOKENS | LLM reasoner for the agents (ADR-0018): `none` (default, heuristic), `anthropic` or `openai`-compatible; the key is read from the variable named by SDTF_LLM_API_KEY_ENV |
 | SDTF_GRAPH_BACKEND, SDTF_NEO4J_URI, SDTF_NEO4J_USER, SDTF_NEO4J_PASSWORD, SDTF_NEO4J_DATABASE | dependency-graph store: `relational` (default) or `neo4j` (ADR-0004) |
 
 ## Observability

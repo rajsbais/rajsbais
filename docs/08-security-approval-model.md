@@ -46,6 +46,10 @@ rulesets, runs) are checked against their project on every access.
 Agents receive stored evidence only; proposals are persisted with confidence and citations; `forbidden_actions`
 (authorize_production_migration, delete_data, post_financial_adjustment, change_security_policy) are structural —
 no agent has a code path to those operations.
+The LLM reasoner (ADR-0018) keeps these bounds: it sees a redacted copy of the facts an agent computed, nothing
+else; the provider key lives in an environment variable named by `SDTF_LLM_API_KEY_ENV` and is never stored,
+logged or returned; an answer that mentions values absent from the facts is rejected and the heuristic text is used,
+with the reason recorded on the proposal.
 
 ## Security tests (backend/tests/test_api.py)
 401 without/with tampered token · 403 for viewer writes and audit reads · creator cannot approve · PRODUCTION mode

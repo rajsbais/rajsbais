@@ -24,7 +24,7 @@ migrations, deployment) for the Phase 1 foundation and the first vertical slice.
 * Simulated migration run: partitioned/parallel/checkpointed extraction → transformation → idempotent load →
   **technical, functional and financial reconciliation** (233 checks PASS on the demo) → hash-chained audit and
   evidence package. Failed runs resume from checkpoints.
-* 12 bounded AI agents (heuristic reasoner) that propose, with confidence and evidence; humans decide.
+* 12 bounded AI agents that propose, with confidence and evidence; humans decide. Deterministic heuristic reasoner by default, an LLM reasoner behind the same interface when configured (evidence bundle only, guarded, falls back; ADR-0018).
 * Multi-source merger: merge groups, cross-system key-collision planning, master-data deduplication with survivor
   redirection, per-source number ranges, group-level financial reconciliation.
 * Distributed stage workers: extraction, transformation and load as pipelined per-partition jobs and

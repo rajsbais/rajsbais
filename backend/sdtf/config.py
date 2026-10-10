@@ -28,6 +28,12 @@ class Settings:
     neo4j_database: str = field(default_factory=lambda: os.getenv("SDTF_NEO4J_DATABASE", ""))
     job_lease_seconds: int = field(default_factory=lambda: int(os.getenv("SDTF_JOB_LEASE_SECONDS", "300")))
     worker_poll_seconds: float = field(default_factory=lambda: float(os.getenv("SDTF_WORKER_POLL_SECONDS", "1.0")))
+    llm_provider: str = field(default_factory=lambda: os.getenv("SDTF_LLM_PROVIDER", "none"))  # none | anthropic | openai (any OpenAI-compatible chat completions endpoint)
+    llm_model: str = field(default_factory=lambda: os.getenv("SDTF_LLM_MODEL", ""))  # the model id the provider offers; required when a provider is set
+    llm_base_url: str = field(default_factory=lambda: os.getenv("SDTF_LLM_BASE_URL", ""))  # default per provider; a gateway or local server otherwise
+    llm_api_key_env: str = field(default_factory=lambda: os.getenv("SDTF_LLM_API_KEY_ENV", "SDTF_LLM_API_KEY"))  # the NAME of the variable holding the key; the key itself is never stored or logged
+    llm_timeout_seconds: float = field(default_factory=lambda: float(os.getenv("SDTF_LLM_TIMEOUT", "20")))
+    llm_max_tokens: int = field(default_factory=lambda: int(os.getenv("SDTF_LLM_MAX_TOKENS", "400")))
     cors_origins: tuple[str, ...] = field(
         default_factory=lambda: tuple(o for o in os.getenv("SDTF_CORS_ORIGINS", "http://localhost:5173").split(",") if o)
     )

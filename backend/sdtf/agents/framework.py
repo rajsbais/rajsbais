@@ -3,8 +3,9 @@
 Agents operate on authorised metadata and evidence already stored in the platform. They *propose*; a human
 with the right permission accepts or rejects. Every proposal carries a confidence score, evidence citations
 (record ids / check names) and is persisted as an AgentDecision. Reasoning is pluggable: the default
-HeuristicReasoner is deterministic; an LLM-backed reasoner is a planned extension behind the same interface
-and would receive only the evidence bundle, never raw SAP credentials.
+HeuristicReasoner is deterministic; the LLM-backed reasoner (`sdtf.agents.llm`, ADR-0018) sits behind the same
+interface, receives only the redacted evidence bundle, never raw SAP credentials, and falls back to the heuristic
+text whenever it is not configured, fails, or answers something the guard rejects.
 """
 from __future__ import annotations
 
@@ -48,17 +49,20 @@ class HeuristicReasoner:
     status = "IMPLEMENTED"
 
     def explain(self, facts: dict) -> str:
-        return "; ".join(f"{k}={v}" for k, v in facts.items())
+        from .llm import heuristic_text
+
+        return heuristic_text(facts)
 
 
-class LlmReasoner:
-    """Planned: LLM-backed explanation over the evidence bundle with the same contract."""
+def default_reasoner(agent_name: str = "") -> Reasoner:
+    """The reasoner the configuration asks for: the LLM reasoner when a provider is set, else the heuristic one."""
+    from ..config import settings
 
-    name = "llm"
-    status = "PLANNED"
+    if settings.llm_provider and settings.llm_provider != "none":
+        from .llm import LlmReasoner
 
-    def explain(self, facts: dict) -> str:
-        raise NotImplementedError("LLM reasoner is planned; the platform ships with the deterministic heuristic reasoner")
+        return LlmReasoner(agent_name=agent_name)
+    return HeuristicReasoner()
 
 
 class Agent:
@@ -68,14 +72,18 @@ class Agent:
     forbidden_actions = ("authorize_production_migration", "delete_data", "post_financial_adjustment", "change_security_policy")
 
     def __init__(self, reasoner: Reasoner | None = None):
-        self.reasoner = reasoner or HeuristicReasoner()
+        self.reasoner = reasoner or default_reasoner(self.name)
+        if hasattr(self.reasoner, "agent_name") and not getattr(self.reasoner, "agent_name", ""):
+            self.reasoner.agent_name = self.name
 
     def propose(self, session: Session, project_id: str, context: dict) -> Proposal:  # pragma: no cover - abstract
         raise NotImplementedError
 
     def run(self, session: Session, project_id: str, context: dict, actor: str) -> AgentDecision:
         p = self.propose(session, project_id, context)
-        d = AgentDecision(project_id=project_id, agent=self.name, subject_type=p.subject_type, subject_id=p.subject_id, proposal={"summary": p.summary, **p.proposal, "requires_approval": p.requires_approval, "forbidden_actions": list(self.forbidden_actions)}, confidence=round(max(0.0, min(1.0, p.confidence)), 3), evidence=[e.as_dict() for e in p.evidence], status="PROPOSED", requested_by=actor)
+        last = getattr(self.reasoner, "last", None)
+        reasoning = {"reasoner": self.reasoner.name, **(last.as_dict() if last is not None else {"status": "HEURISTIC"})}
+        d = AgentDecision(project_id=project_id, agent=self.name, subject_type=p.subject_type, subject_id=p.subject_id, proposal={"summary": p.summary, **p.proposal, "reasoning": reasoning, "requires_approval": p.requires_approval, "forbidden_actions": list(self.forbidden_actions)}, confidence=round(max(0.0, min(1.0, p.confidence)), 3), evidence=[e.as_dict() for e in p.evidence], status="PROPOSED", requested_by=actor)
         session.add(d)
         session.flush()
         return d

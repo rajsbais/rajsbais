@@ -929,6 +929,15 @@ def agents(p: Principal = Depends(current_principal)):
     return agent_catalog()
 
 
+@router.get("/agents/reasoner", tags=["agents"])
+def agents_reasoner(p: Principal = Depends(current_principal)):
+    """What the agents reason with: the deterministic heuristic, or the LLM reasoner and whether it is configured
+    (provider, model, the name of the key variable; never the key)."""
+    from ..agents.llm import reasoner_status
+
+    return reasoner_status()
+
+
 class AgentRunRequest(BaseModel):
     context: dict = Field(default_factory=dict)
 
