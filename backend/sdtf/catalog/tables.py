@@ -89,6 +89,8 @@ TABLES: dict[str, TableDef] = {
         _t("PLPO", "Task list operation", ["PLNNR", "PLNTY", "PLNKN"], ["PLNAL", "VORNR", "ARBID", "WERKS", "LTXA1", "VGW01", "VGE01", "BMSCH", "STEUS"], domain="PP", note="reduced model: PLNAL carried on the operation (PLAS folded in)"),
         _t("MCH1", "Batch (client level)", ["CHARG", "MATNR"], ["ERSDA", "VFDAT", "HSDAT", "LICHA"], domain="MM", note="batch unique at material level"),
         _t("MCHA", "Batch (plant level)", ["CHARG", "MATNR", "WERKS"], ["ERSDA", "VFDAT", "BWTAR"], org="WERKS", domain="MM"),
+        _t("EQUI", "Equipment master (serial number)", ["EQUNR"], ["EQTYP", "EQART", "MATNR", "SERNR", "ERDAT", "HERST", "TYPBZ"], domain="PM", note="serial numbers of serialised materials are equipment records (MATNR / SERNR); plant-scoped through the serial number stock (EQBS)"),
+        _t("EQBS", "Serial number stock", ["EQUNR"], ["B_WERK", "B_LAGER", "MATNR", "SERNR", "LBBSA"], org="B_WERK", domain="PM", note="plant and storage location the serial number is in stock at; LBBSA is the stock type"),
         _t("MCHB", "Batch stock", ["CHARG", "MATNR", "WERKS", "LGORT"], ["CLABS", "CINSM", "CSPEM"], org="WERKS", domain="MM"),
         _t("AFRU", "Order confirmations", ["RUECK", "RMZHL"], ["AUFNR", "LMNGA", "ISM01", "WERKS", "BUDAT"], org="WERKS", domain="PP"),
         _t("AUFK", "Order master (settlement)", ["AUFNR"], ["AUART", "KOKRS", "BUKRS", "WERKS", "KOSTL", "PRCTR"], org="BUKRS", domain="CO"),

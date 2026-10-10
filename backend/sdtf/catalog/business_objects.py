@@ -82,6 +82,7 @@ BUSINESS_OBJECTS: dict[str, BusinessObjectType] = {
         BusinessObjectType("MD.Routing", "Routing", "PP", "MASTER", "PLKO", ("MAPL", "PLPO"), ("PLNNR", "PLNTY", "PLNAL"), "PLANT", "WERKS", load_methods=(LoadMethod("S4HANA", "MIGRATION_COCKPIT", "Routing (migration object)", "task list with operations; work centers must exist in the target"),), description="routing: the task list header and group counter with its operations and its material-plant assignments (MAPL)"),
         BusinessObjectType("MD.WorkCenter", "Work center", "PP", "MASTER", "CRHD", ("CRCO",), ("OBJID",), "PLANT", "WERKS", load_methods=(LoadMethod("S4HANA", "MIGRATION_COCKPIT", "Work center (migration object)", "with the cost center assignment; the cost center must exist in the target"),), description="work center with its cost center assignment"),
         BusinessObjectType("MD.Batch", "Batch", "MM", "MASTER", "MCH1", ("MCHA", "MCHB"), ("CHARG", "MATNR"), "PLANT", None, load_methods=(LoadMethod("S4HANA", "MIGRATION_COCKPIT", "Batch (migration object)", "batch master; batch stock quantities through the inventory balance object"),), description="batch of a material (unique at material level) with its plant batches and batch stock; plant-scoped through the plant batches"),
+        BusinessObjectType("MD.Equipment", "Equipment / serial number", "PM", "MASTER", "EQUI", ("EQBS",), ("EQUNR",), "PLANT", None, load_methods=(LoadMethod("S4HANA", "MIGRATION_COCKPIT", "Equipment (migration object)", "equipment master with the serial number; the stock at the plant follows the inventory balance object"),), description="equipment record: the serial number of a serialised material (MATNR / SERNR) with the plant and storage location it is in stock at (EQBS); plant-scoped through the serial number stock"),
         BusinessObjectType("BASIS.RfcDestination", "RFC destination", "BASIS", "TECHNICAL", "RFCDES", (), ("RFCDEST",), "CLIENT", None, load_methods=(_UNSUPPORTED,)),
         BusinessObjectType("BASIS.IdocPartner", "IDoc partner profile", "BASIS", "TECHNICAL", "EDPP1", (), ("PARNUM", "PARTYP"), "CLIENT", None, load_methods=(_UNSUPPORTED,)),
         BusinessObjectType("BASIS.BackgroundJob", "Background job", "BASIS", "TECHNICAL", "TBTCO", (), ("JOBNAME", "JOBCOUNT"), "CLIENT", None, load_methods=(_UNSUPPORTED,)),
@@ -127,11 +128,13 @@ def retype_by_header(bo_id: str, header_row: dict | None) -> str:
 
 
 def _plants_of(t: str, row: dict, store: RecordStore) -> list[str]:
-    """Plants a BOM, routing or batch is assigned in (MAST / MAPL / MCHA), owner first, duplicates removed."""
+    """Plants a BOM, routing, batch or equipment is assigned in (MAST / MAPL / MCHA / EQBS), owner first, duplicates removed."""
     if t == "MD.BillOfMaterial":
         plants = [m["WERKS"] for m in store.lookup("MAST", "STLNR", row["STLNR"]) if str(m["STLAL"]) == str(row["STLAL"])]
     elif t == "MD.Routing":
         plants = ([row["WERKS"]] if row.get("WERKS") else []) + [m["WERKS"] for m in store.lookup("MAPL", "PLNNR", row["PLNNR"]) if m["PLNTY"] == row["PLNTY"] and str(m["PLNAL"]) == str(row["PLNAL"])]
+    elif t == "MD.Equipment":
+        plants = [b["B_WERK"] for b in store.lookup("EQBS", "EQUNR", row["EQUNR"])]
     else:
         plants = [b["WERKS"] for b in store.lookup("MCHA", "CHARG", row["CHARG"]) if b["MATNR"] == row["MATNR"]]
     return list(dict.fromkeys(p for p in plants if p))
@@ -201,7 +204,7 @@ def instance_company_codes(bo_type: BusinessObjectType, row: dict, store: Record
     elif t == "MD.WorkCenter":
         k = store.get("T001K", BWKEY=row["WERKS"])
         add(k["BUKRS"] if k else None)
-    elif t in ("MD.BillOfMaterial", "MD.Routing", "MD.Batch"):
+    elif t in ("MD.BillOfMaterial", "MD.Routing", "MD.Batch", "MD.Equipment"):
         for werks in _plants_of(t, row, store):
             k = store.get("T001K", BWKEY=werks)
             add(k["BUKRS"] if k else None)
@@ -381,6 +384,10 @@ RELATIONSHIPS: list[Relationship] = [
     Relationship("MD.WorkCenter", "CO.CostCenter", "MASTER_REF", "WorkCenter→CostCenter", lambda r, s: sorted({f"{c['KOKRS']}|{c['KOSTL']}" for c in s.lookup("CRCO", "OBJID", r["OBJID"]) if c.get("KOSTL")}), "Cost center the work center's activities settle to"),
     Relationship("MD.Batch", "MD.Material", "MASTER_REF", "Batch→Material", lambda r, s: [r["MATNR"]]),
     Relationship("MD.Batch", "CFG.Plant", "ORG_OWNERSHIP", "Batch→Plant", lambda r, s: _plants_of("MD.Batch", r, s), "Plants holding the batch"),
+    # --- serial numbers (equipment)
+    Relationship("MD.Material", "MD.Equipment", "PARENT_CHILD", "Material→SerialNumber", lambda r, s: sorted({e["EQUNR"] for e in s.lookup("EQUI", "MATNR", r["MATNR"])}), "Serial numbers (equipment records) of the material"),
+    Relationship("MD.Equipment", "MD.Material", "MASTER_REF", "SerialNumber→Material", lambda r, s: [r["MATNR"]] if r.get("MATNR") else []),
+    Relationship("MD.Equipment", "CFG.Plant", "ORG_OWNERSHIP", "SerialNumber→Plant", lambda r, s: _plants_of("MD.Equipment", r, s), "Plant the serial number is in stock at"),
     # --- accounting
     Relationship("FI.AccountingDocument", "FI.AccountingDocument", "DOC_FLOW", "AccountingDocument→Clearing", _clearing_docs, "Open item cleared by clearing/payment document"),
     Relationship("FI.AccountingDocument", "FI.AccountingDocument", "CROSS_COMPANY", "AccountingDocument→CrossCompanyCounterpart", _cross_company_docs, "Cross-company posting counterpart (BVORG)"),

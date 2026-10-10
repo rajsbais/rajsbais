@@ -25,9 +25,10 @@ Last updated: 2026-10-10 (branch `claude/clever-maxwell-ues8be`, PR #1).
 | 11 | Preflight before the first live test | 5b04050 | Connect page "Preflight" button, `sdtf preflight` |
 | 12 | Period-end reconciliation (trial balance per period, cut-off, foreign-currency items, valuation per area, price control) | 88c7c45 | Finance page, financial layer |
 | 13 | Manufacturing masters: BOM, routing, work center, batch | f775762 | Landscape and Carve-out pages list the four object types; cockpit export routes them to their migration objects |
-| 14 | Scheduling agreements and purchase contracts (shared purchasing header typed by BSTYP) | this push | three purchasing types in discovery, graph, scope, run, reconciliation and cockpit export |
+| 14 | Scheduling agreements and purchase contracts (shared purchasing header typed by BSTYP) | b7ef7b6 | three purchasing types in discovery, graph, scope, run, reconciliation and cockpit export |
+| 15 | Serial numbers as equipment records | this push | serialised materials' serial numbers move with the carved-out plants |
 
-Test suite at the last push: 244 tests, 241 passed, 3 skipped by default (UI e2e, OIDC e2e, Neo4j). CI green on
+Test suite at the last push: 247 tests, 244 passed, 3 skipped by default (UI e2e, OIDC e2e, Neo4j). CI green on
 every pushed head today.
 
 ## 2. In progress now
@@ -42,8 +43,8 @@ every pushed head today.
 
 | # | Item | Size | Build plan |
 |---|---|---|---|
-| O1 | Scheduling agreements and contracts | M | DONE (this push): header filter on BSTYP applied by discovery, graph, RFC extraction, delta typing and cockpit grouping; generator adds agreements with schedule lines and receipts, contracts with release orders; open-document validity extended; migration objects resolved by release. 7 tests. |
-| O2 | Serial numbers | S | EQUI / SERI with the equipment master as header, batch-like plant scoping through the plant of the equipment; relationship material → serial number; cockpit object "Equipment". |
+| O1 | Scheduling agreements and contracts | M | DONE (b7ef7b6): header filter on BSTYP applied by discovery, graph, RFC extraction, delta typing and cockpit grouping; generator adds agreements with schedule lines and receipts, contracts with release orders; open-document validity extended; migration objects resolved by release. 7 tests. |
+| O2 | Serial numbers | S | DONE (this push): equipment records (EQUI) with the serial number stock (EQBS) as the plant view; material → serial number and plant links; plant map covers B_WERK; Equipment migration object. Document serial number lists come with the PM package (O5). 3 tests. |
 | O3 | CDS / ODP extraction adapter for S/4HANA sources (simulated) and OData adapter for masters | L | a second source transport next to the RFC add-on: CDS views read through the ABAP CDS reader interface of the add-on or ODP extraction (`RODPS_REPL_*` contract), with the same partitioning, pushdown and count evidence as the RFC path; a simulator of the contract for the tests; OData reads of business partner / product masters for the discovery sample. Metadata check extended to the CDS views. |
 | O4 | Loader contracts: Business Partner API, Product API, Journal Entry SOAP, Migration Cockpit staging tables | XL | the simulated targets already accept the payloads; this item builds the real client code (OData batch with CSRF token, SOAP envelope for journal entries, staging-table inserts through the add-on) behind the existing load-method selection, with recorded fixtures from the public API documentation and the same idempotency keys. Verification against A4H is a BLOCKED-VM item (V4). |
 | O5 | QM, PM, PS, EWM, TM packages | XL | one package at a time in the order PM (equipment, functional location, maintenance order), QM (inspection lot, results), PS (project, WBS, network), EWM (warehouse stock, HU), TM (freight order). Each package = tables + object types + relationships + generator data + load method + reconciliation checks + tests, as the manufacturing package was built. |

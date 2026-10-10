@@ -29,13 +29,13 @@ Report template: `docs/benchmarks.md` sections per environment (source release, 
 <!-- benchmark:measured:start -->
 ## Measured on this environment (simulated run, no SAP system)
 
-Python 3.13.16 · Linux-6.18.44-fc-v114-x86_64-with-glibc2.39 · 4 CPUs · database sqlite · staging relational · measured 2026-10-10T18:50:53.069678+00:00
+Python 3.13.16 · Linux-6.18.44-fc-v114-x86_64-with-glibc2.39 · 4 CPUs · database sqlite · staging relational · measured 2026-10-10T18:58:07.650379+00:00
 
 No throughput or downtime guarantee is derived from these figures: the source and the target are the platform's simulators on the synthetic landscape; they validate the measurement plumbing and give the order of magnitude of the engine itself.
 
 | Scale | Rows | Objects | Generate + import | Discovery (store / add-on) | Graph | Scope | Extract (rec/s) | Transform | Load | Reconcile (checks) | End to end |
 |---:|---:|---:|---:|---|---:|---:|---|---:|---:|---|---:|
-| 1 | 11,885 | 3,299 | 0.29 s | 0.09 s / 1.07 s | 0.17 s | 0.13 s | 0.33 s (6,771) | 0.57 s | 0.76 s | 0.36 s (354) | 4.03 s |
-| 2 | 23,631 | 6,195 | 0.64 s | 0.17 s / 3.82 s | 0.38 s | 0.37 s | 1.19 s (3,462) | 1.15 s | 1.41 s | 0.77 s (355) | 10.35 s |
-| 3 | 33,723 | 8,880 | 1.07 s | 0.28 s / 7.63 s | 0.53 s | 0.75 s | 1.89 s (2,924) | 1.57 s | 1.97 s | 0.83 s (355) | 17.16 s |
+| 1 | 12,177 | 3,312 | 0.32 s | 0.08 s / 1.30 s | 0.16 s | 0.12 s | 0.40 s (5,863) | 0.63 s | 0.72 s | 0.45 s (363) | 4.42 s |
+| 2 | 23,567 | 6,227 | 0.70 s | 0.20 s / 3.77 s | 0.41 s | 0.36 s | 1.15 s (3,593) | 1.11 s | 1.39 s | 0.71 s (363) | 10.20 s |
+| 3 | 33,596 | 8,867 | 1.01 s | 0.26 s / 7.48 s | 0.80 s | 0.76 s | 2.37 s (2,363) | 1.55 s | 2.31 s | 0.96 s (364) | 18.11 s |
 <!-- benchmark:measured:end -->

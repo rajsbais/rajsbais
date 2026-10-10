@@ -40,6 +40,7 @@ SAMPLE_DEPENDENCIES: dict[str, list[tuple[str, str, str]]] = {
     "MD.BillOfMaterial": [("MAST", "STLNR", "STLNR")],
     "MD.Routing": [("MAPL", "PLNNR", "PLNNR")],
     "MD.Batch": [("MCHA", "CHARG", "CHARG")],
+    "MD.Equipment": [("EQBS", "EQUNR", "EQUNR")],
     "Z.ExportControl": [("MARC", "MATNR", "MATNR")],
     "Z.SupplierExt": [("LFB1", "LIFNR", "LIFNR")],
 }

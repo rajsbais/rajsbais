@@ -114,7 +114,7 @@ class EccLandscapeGenerator:
             "VBELN_SO": Counter(1000000), "VBELN_DL": Counter(80000000), "VBELN_BI": Counter(90000000),
             "EBELN": Counter(4500000000), "MBLNR": Counter(4900000000), "RBKP": Counter(5105600000),
             "BELNR": Counter(100000000), "AUFNR": Counter(1000100), "RUECK": Counter(10000), "BVORG": Counter(0),
-            "STLNR": Counter(1000), "PLNNR": Counter(50000000), "OBJID": Counter(10000000), "CHARG": Counter(1000000),
+            "STLNR": Counter(1000), "PLNNR": Counter(50000000), "OBJID": Counter(10000000), "CHARG": Counter(1000000), "EQUNR": Counter(10000000),
         }
         self.plant_work_centers: dict[str, list[str]] = {}
         self.cc_contracts: dict[str, list[dict]] = {}
@@ -147,6 +147,7 @@ class EccLandscapeGenerator:
         self._work_centers()
         self._materials()
         self._manufacturing_masters()
+        self._serial_numbers()
         self._assets()
         self._contracts()
         for cc in self.spec.company_codes:
@@ -309,6 +310,21 @@ class EccLandscapeGenerator:
                     self.add("MCH1", {"CHARG": charg, "MATNR": matnr, "ERSDA": "20240115", "VFDAT": "20261231", "HSDAT": "20240110", "LICHA": ""})
                     self.add("MCHA", {"CHARG": charg, "MATNR": matnr, "WERKS": werks, "ERSDA": "20240115", "VFDAT": "20261231", "BWTAR": ""})
                     self.add("MCHB", {"CHARG": charg, "MATNR": matnr, "WERKS": werks, "LGORT": "0001", "CLABS": stock["LABST"], "CINSM": 0, "CSPEM": 0})
+
+    def _serial_numbers(self):
+        """Serialised materials: every fifth finished material carries serial numbers, one equipment record per
+        serial number with the serial number stock at the plant's storage location."""
+        rng = self.rng
+        serialised = [r["MATNR"] for i, r in enumerate(self.tables["MARA"]) if r["MTART"] == "FERT" and i % 5 == 0]
+        for werks, mats in self.plant_materials.items():
+            for matnr in mats:
+                if matnr not in serialised:
+                    continue
+                for n in range(rng.randint(2, 4)):
+                    equnr = self.counters["EQUNR"].next()
+                    sernr = f"SN{matnr[-5:]}{werks}{n + 1:03d}"
+                    self.add("EQUI", {"EQUNR": equnr, "EQTYP": "M", "EQART": "SERIAL", "MATNR": matnr, "SERNR": sernr, "ERDAT": "20240110", "HERST": "ACME", "TYPBZ": f"T{matnr[-3:]}"})
+                    self.add("EQBS", {"EQUNR": equnr, "B_WERK": werks, "B_LAGER": "0001", "MATNR": matnr, "SERNR": sernr, "LBBSA": "01"})
 
     def _assets(self):
         for cc in self.spec.company_codes:

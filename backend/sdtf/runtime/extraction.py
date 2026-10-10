@@ -118,8 +118,8 @@ class ManifestExtractor:
                 # company-code / plant views of client-level master data: only views of carved-out org units move
                 if it in ("KNB1", "LFB1") and row.get("BUKRS") not in self.scope_ccs:
                     continue
-                if it in ("MARC", "MBEW", "MARD", "MAST", "MAPL", "MCHA", "MCHB"):
-                    k = rows.get("T001K", BWKEY=row.get("WERKS") or row.get("BWKEY"))
+                if it in ("MARC", "MBEW", "MARD", "MAST", "MAPL", "MCHA", "MCHB", "EQBS"):
+                    k = rows.get("T001K", BWKEY=row.get("WERKS") or row.get("BWKEY") or row.get("B_WERK"))
                     if not k or k["BUKRS"] not in self.scope_ccs:
                         continue
                 yield it, row

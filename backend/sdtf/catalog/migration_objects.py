@@ -99,7 +99,7 @@ MIGRATION_OBJECTS: tuple[MigrationObject, ...] = (
     MigrationObject("ROUTING", (("1610", "Routing"),), ("MD.Routing",), ("MAPL", "PLKO", "PLPO"), "SIF_ROUTING", notes="task list with operations; work centers first"),
     MigrationObject("WORK_CENTER", (("1610", "Work center"),), ("MD.WorkCenter",), ("CRHD", "CRCO"), "SIF_WORK_CENTER", notes="with the cost center assignment"),
     MigrationObject("PRICING_CONDITION", (("1610", "Condition record for pricing (general template)"),), (), (), "SIF_PRICING_CONDITION"),
-    MigrationObject("EQUIPMENT", (("1610", "Equipment"),), (), (), "SIF_EQUIPMENT"),
+    MigrationObject("EQUIPMENT", (("1610", "Equipment"),), ("MD.Equipment",), ("EQUI", "EQBS"), "SIF_EQUIPMENT", notes="equipment master incl. serial numbers of serialised materials; the serial number stock follows the inventory balance"),
     MigrationObject("FUNCTIONAL_LOCATION", (("1610", "Functional location"),), (), (), "SIF_FUNC_LOCATION"),
     MigrationObject("EXCHANGE_RATE", (("1610", "Exchange rate"),), (), (), "SIF_EXCHANGE_RATE"),
 )

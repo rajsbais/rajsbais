@@ -20,12 +20,17 @@ company codes are its selling company code **plus** the company codes of its del
 document's company codes include all BVORG counterparts. This is how cross-company and shared objects are detected
 without relying on DDIC foreign keys.
 
-## Implemented object types (32)
+## Implemented object types (33)
 CFG: CompanyCode, Plant, SalesOrg, PurchOrg, ControllingArea · FI: GLAccount, FixedAsset, AccountingDocument ·
-CO: CostCenter, ProfitCenter · MD: Customer, Vendor, Material, BillOfMaterial, Routing, WorkCenter, Batch ·
-SD: SalesOrder, Delivery, BillingDocument · MM: PurchaseOrder, SchedulingAgreement, Contract, MaterialDocument,
-InvoiceReceipt · PP: ProductionOrder · BASIS: RfcDestination, IdocPartner, BackgroundJob · Z: ExportControl, TsaScope,
-SupplierExt.
+CO: CostCenter, ProfitCenter · MD: Customer, Vendor, Material, BillOfMaterial, Routing, WorkCenter, Batch,
+Equipment (serial number) · SD: SalesOrder, Delivery, BillingDocument · MM: PurchaseOrder, SchedulingAgreement,
+Contract, MaterialDocument, InvoiceReceipt · PP: ProductionOrder · BASIS: RfcDestination, IdocPartner, BackgroundJob ·
+Z: ExportControl, TsaScope, SupplierExt.
+
+Serial numbers are equipment records (EQUI with MATNR / SERNR) whose plant is the one the serial number is in stock
+at (EQBS); they are plant-scoped like batches, linked to their material and plant, renamed through the plant map
+(B_WERK) and loaded through the Equipment migration object. The serial number lists of documents (SER01 / SER03)
+are not modelled yet; the plant maintenance package will extend the equipment with functional locations and orders.
 
 Three purchasing types share the purchasing document header (EKKO) and are told apart by the document category
 (BSTYP): purchase order F, scheduling agreement L, contract K. The object type carries a header filter, and every
@@ -56,7 +61,7 @@ operation) and the work center text into the header.
 | Finance | GL accounts, accounting documents (incl. open items/clearing), fixed assets, cost/profit centers | SIMULATED end to end incl. reconciliation |
 | Sales | customers (BP), sales orders, deliveries, billing | SIMULATED |
 | Procurement/Inventory | vendors (BP), materials incl. plant/valuation/stock views, POs, scheduling agreements with schedule lines, contracts with release orders, goods movements, invoices | SIMULATED |
-| Manufacturing | production orders, component consumption, confirmations, settlement cost center; bills of material, routings, work centers, batches as plant-scoped masters | SIMULATED (serial numbers PLANNED) |
+| Manufacturing | production orders, component consumption, confirmations, settlement cost center; bills of material, routings, work centers, batches and serial numbers (equipment) as plant-scoped masters | SIMULATED |
 | QM, PM, PS, WM/EWM, TM, MDG, industry | — | PLANNED |
 Each package = object type + relationships + load methods + reconciliation checks + tests (`tests/`). Raw table copy
 is never treated as object migration: objects are extracted by instance, split at company-code boundaries, and
