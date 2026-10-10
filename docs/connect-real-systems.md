@@ -20,7 +20,9 @@ Two VMs on the Windows host (Hyper-V switch `SAP-Net`), only one running at a ti
 
 So the honest plan is not "ECC first, S/4HANA second" but:
 
-1. **NPL up**: build the add-on (`sap-abap/`), run the connector test and discovery against NPL. Expect T001 with at most the
+1. **NPL up**: build the add-on (`sap-abap/`), run the connector test and discovery against NPL (the discovery of an RFC
+   source goes through the add-on, ADR-0017: organisational tables, DDIC, sizes and distributions counted in the system; the
+   technical user needs `S_TABU_NAM` for DD02L, DD02T, DD03L and the organisational tables). Expect T001 with at most the
    delivery company code 0001 and no business objects; what this step proves is the RFC path (SDK, destination, authorisations,
    the four function modules, snapshot token, checksums). Keep the transport request: the same objects go into A4H.
 2. **A4H up, as source**: create the add-on in A4H (or import the transport), register A4H a second time with role SOURCE and

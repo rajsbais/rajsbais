@@ -64,7 +64,8 @@ Z_SDTF_AGGREGATE       -> COUNT / SUM per group computed in the database (reconc
   `ACDOCA` (predicates on `RLDNR`, `RBUKRS`, `KOART`, `AUGBL`, `RASSC`, `ANLN1`; sums of `HSL`, `WSL`) and reads the
   compatibility views (`BSID`, `BSIK`) through the same dynamic SELECT; the technical user needs `S_TABU_NAM` for them, for `FAAV_ANLC` and `FAAT_DOC_IT` when asset values are
   reconciled, and for `CKMLHD`, `CKMLCR` and `CKMLPP` when the inventory values are read from the Material Ledger
-  period totals. The dynamic SELECT on `MBEW` goes through Open SQL, so on S/4HANA it is served by the Material
+  period totals, and for `DD02L`, `DD02T`, `DD03L` and the organisational tables (T001, T001K, T001W, TVKO, T024E,
+  TKA01, TKA02, CSKS, CEPC, RFCDES, EDPP1, TBTCO) for the discovery through the add-on (ADR-0017). The dynamic SELECT on `MBEW` goes through Open SQL, so on S/4HANA it is served by the Material
   Ledger proxy view (`MBV_MBEW`) and returns the current LBKUM/SALK3; the add-on never reads the database directly.
 * **No writes**: the function group contains read modules only.
 

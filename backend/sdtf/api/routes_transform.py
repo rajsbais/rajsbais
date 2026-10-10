@@ -33,6 +33,7 @@ from ..scope.service import (
     apply_disposition,
     approve_manifest,
     compare_manifests,
+    compare_many,
     create_manifest,
     evaluate_scope,
     pending_dispositions,
@@ -45,9 +46,18 @@ router = APIRouter()
 
 
 # -------------------------------------------------------------------------------------------- scope
+def _require_complete_discovery(db: Session, system_id: str) -> None:
+    from ..discovery.service import discovery_completeness
+
+    ok, why = discovery_completeness(db, system_id)
+    if not ok:
+        raise HTTPException(409, why)
+
+
 @router.post("/projects/{project_id}/scopes/evaluate", tags=["scope"])
 def scope_evaluate(project_id: str, defn: ScopeDefinition, db: Session = Depends(get_db), p: Principal = Depends(require("project:read"))):
     assert_project_access(db, p, project_id)
+    _require_complete_discovery(db, defn.source_system_id)
     ev = evaluate_scope(db, defn)
     by_cls = {}
     for n, c in ev["classification"].items():
@@ -58,6 +68,7 @@ def scope_evaluate(project_id: str, defn: ScopeDefinition, db: Session = Depends
 @router.post("/projects/{project_id}/manifests", tags=["scope"], status_code=201)
 def manifest_create(project_id: str, defn: ScopeDefinition, db: Session = Depends(get_db), p: Principal = Depends(require("scope:write"))):
     assert_project_access(db, p, project_id)
+    _require_complete_discovery(db, defn.source_system_id)
     m = create_manifest(db, project_id, defn, p.username)
     record_event(db, p.username, "MANIFEST_CREATED", "MANIFEST", m.id, {"version": m.version, "hash": m.content_hash})
     return manifest_out(m)
@@ -135,6 +146,26 @@ def manifest_compare(other_id: str, m: ScopeManifest = Depends(get_manifest), db
     if o is None or o.project_id != m.project_id:
         raise HTTPException(404, "other manifest not found in project")
     return compare_manifests(m, o)
+
+
+@router.get("/projects/{project_id}/manifests/matrix", tags=["scope"])
+def manifest_matrix(project_id: str, ids: str | None = Query(None, description="comma-separated manifest ids (default: every manifest of the project, newest first, at most 8)"), sample: int = Query(100, ge=1, le=1000), db: Session = Depends(get_db), p: Principal = Depends(require("project:read"))):
+    """Scenario matrix: the classification counts of several manifests side by side with the objects that differ."""
+    assert_project_access(db, p, project_id)
+    if ids:
+        wanted = list(dict.fromkeys(x.strip() for x in ids.split(",") if x.strip()))
+        rows = db.execute(select(ScopeManifest).where(ScopeManifest.project_id == project_id, ScopeManifest.id.in_(wanted))).scalars().all()
+        if len(rows) != len(set(wanted)):
+            raise HTTPException(404, "a manifest was not found in this project")
+        by = {m.id: m for m in rows}
+        rows = [by[x] for x in wanted]
+    else:
+        rows = db.execute(select(ScopeManifest).where(ScopeManifest.project_id == project_id).order_by(ScopeManifest.created_at.desc()).limit(8)).scalars().all()
+    if len(rows) > 8:
+        raise HTTPException(400, "at most 8 manifests in one matrix")
+    if not rows:
+        return {"manifests": [], "classifications": [], "matrix": {}, "objects_in_any": 0, "objects_identical": 0, "objects_differing": 0, "differing": [], "pairwise": []}
+    return compare_many(rows, sample)
 
 
 # ----------------------------------------------------------------------------------------- carve-out

@@ -18,7 +18,7 @@ Legend: P0 next increment · P1 following · P2 later. Sizes are relative (S/M/L
 | ✅ | OpenTelemetry traces/metrics/JSON logs (ADR-0011) | M |
 | ✅ | Property-graph backend adapter: Neo4j store behind `GraphStore` (ADR-0004) | M |
 | ✅ | Server-side policy traversal in Neo4j (frontier traversal with identical policy semantics); scope evaluation no longer loads edges | M |
-| P1 | Scope designer: saved scenarios, scenario matrix comparison across >2 manifests | S |
+| ✅ | Scope designer: scenario matrix across up to eight manifests of a project (classification counts side by side, identical / differing objects with the objects that differ, pairwise deltas; `GET /projects/{id}/manifests/matrix`, Scope designer card with the manifests ticked) | S |
 | P1 | Carve-out: asset vs share deal templates, residual cleanup execution with approval workflow | M |
 | P1 | Rule editor: visual mapping grid, lookup table upload, per-rule approval | M |
 
@@ -27,7 +27,8 @@ Legend: P0 next increment · P1 following · P2 later. Sizes are relative (S/M/L
 |---|---|---|
 | ✅ | RFC adapter against the add-on contract: transports (pyrfc, simulated add-on), pushdown, keyset packages, snapshot token, checksums, connector test endpoint, `demo --connector RFC` (ADR-0013) | L |
 | P0 | ABAP add-on activation: compile/review `sap-abap/src/` on an SAP development system, authorizations, transport; live verification of the adapter | XL (needs an SAP system) |
-| P0 | Discovery against real DDIC (DD02L/DD03L, table sizes via DBSTATC/HANA views), real org tables | M |
+| ✅ | Discovery through the add-on (ADR-0017): organisational and interface tables read in full, catalogue tables sized with Z_SDTF_TABLE_METADATA (DB_GET_TABLE_SIZE), custom tables from DD02L / DD02T / DD03L, distributions counted with Z_SDTF_AGGREGATE, the complete instance index read with the dependent rows by key, a labelled quick-look sample the scope engine refuses, unreadable tables listed; route by connector with override, CLI | M |
+| P1 | Discovery through the add-on: derive the open-item status from BSID / BSIK and the document company codes from aggregates instead of reading BSEG / MSEG for the instance index (volume on a live ECC) | M |
 | P1 | CDS/ODP adapter for S/4 sources; OData adapter for masters | L |
 | P1 | Loaders: Business Partner API, Product API, Journal Entry SOAP, Migration Cockpit staging | XL |
 
@@ -69,7 +70,7 @@ Legend: P0 next increment · P1 following · P2 later. Sizes are relative (S/M/L
 | ✅ | Read configuration front end: per-system journal table / ledger / asset chain / inventory chain managed on the Landscape page through a validated, audited endpoint (transport and destination untouched); measures used shown on the Reconciliation page | S |
 | ✅ | RFC read-back of the inventory values on S/4HANA: MBEW through the Material Ledger proxy view, else the Material Ledger period totals CKMLCR / CKMLHD by valuation area (period and currency type configured per system), else the inventory accounts of the Universal Journal declared as a different measure; rows and aggregate mode | S |
 | P1 | Run the metadata check against A4H and correct the bindings it flags; confirm on A4H which FAA_MOVCAT values carry APC, whether FAAV_ANLC is readable by the technical user, and that the add-on's SELECT on MBEW returns the Material Ledger stock values (proxy view MBV_MBEW) (needs the VM; cannot be done here) | S |
-| P0 | Benchmark harness and benchmark report (docs/benchmarks.md) | M |
+| ✅ | Benchmark harness (`sdtf bench --scales 1,2,3`): generation, both discovery paths, graph, scope evaluation, run stages with extraction throughput, reconciliation, end to end; the measured section of docs/benchmarks.md names the environment and is replaced on every run, with the JSON beside it | M |
 | ✅ | Mock cutover management: cutover rehearsal checklist (automatic readiness items, manual items, waivers, task timings fed into the forecast, lessons, approver verdict, report); API, CLI, Cutover page | M |
 | P1 | Live cutover execution tracking (task status fed by the systems), incident escalation, resource assignment | M |
 

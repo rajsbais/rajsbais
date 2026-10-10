@@ -13,18 +13,11 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from ..catalog.business_objects import BUSINESS_OBJECTS
-from ..catalog.store import RecordStore
 from ..catalog.tables import TABLES
 from ..discovery.service import latest_snapshot
 from ..models import SapSystem, TableStatistic
-from ..runtime.rfc import (
-    AbapAddonClient,
-    RfcError,
-    RfcUnavailable,
-    SimulatedAbapAddon,
-    make_transport,
-    predicate,
-)
+from ..runtime.addon import client_for
+from ..runtime.rfc import RfcError, RfcUnavailable, predicate
 
 AREAS = ("ALL", "O2C", "P2P", "R2R")
 
@@ -77,19 +70,6 @@ MATRIX = [
 ]
 
 
-def _client_for(session: Session, system: SapSystem, tables: list[str]) -> tuple[AbapAddonClient, str]:
-    """An add-on client for the system: the simulated add-on over the record store for synthetic systems and
-    simulated transports, pyrfc for a live one."""
-    rfc = (system.meta or {}).get("rfc") or {}
-    if system.connector == "SYNTHETIC" or rfc.get("transport") == "simulated" or (system.connector == "API" and not rfc):
-        transport = SimulatedAbapAddon(RecordStore.load(session, system.id, tables=tables))
-    else:
-        transport = make_transport(system.sid, system.meta, store_loader=lambda: RecordStore.load(session, system.id, tables=tables))
-    client = AbapAddonClient(transport)
-    client.open_snapshot(tables)
-    return client, getattr(transport, "name", "?")
-
-
 def _pareto(rows: list[dict], fields: list[str], top: int) -> dict:
     total = sum(int(r["COUNT"]) for r in rows)
     ordered = sorted(rows, key=lambda r: -int(r["COUNT"]))
@@ -116,7 +96,7 @@ def analyse(session: Session, system: SapSystem, area: str = "ALL", company_code
     tables = sorted({v[1] for v in sel_v} | {s[1] for s in sel_s} | {a[1] for a in sel_a})
     out: dict = {"system": {"id": system.id, "sid": system.sid, "client": system.client, "product": system.product, "connector": system.connector}, "area": area, "company_codes": ccs, "top": top, "retention_years": retention_years, "analysed_at": datetime.now(UTC).isoformat(), "variants": [], "selectivity": [], "age": [], "growth": [], "links": [], "usage": USAGE_NOT_AVAILABLE, "matrix": MATRIX, "errors": {}}
     try:
-        client, transport = _client_for(session, system, tables)
+        client, transport = client_for(session, system, tables)
     except (RfcError, RfcUnavailable) as e:
         out["errors"]["connection"] = str(e)
         out["transport"] = None

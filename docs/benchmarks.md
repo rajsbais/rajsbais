@@ -1,5 +1,10 @@
 # Benchmarks — protocol and current (simulated) numbers
 
+Measured with `sdtf bench --scales 1,2,3 --out docs/benchmarks.md` (`backend/sdtf/benchmark.py`): the harness runs the
+vertical slice at each scale through the simulated add-on and gateway, times every step, and rewrites the measured
+section below with the environment it ran on; `docs/benchmarks.json` holds the raw figures. The hand-written table
+that follows is the earlier reading kept for comparison.
+
 No throughput or downtime guarantee is made. Numbers below are from the synthetic, in-memory, single-process
 run on the development container and exist only to validate the measurement plumbing.
 
@@ -20,3 +25,17 @@ run on the development container and exist only to validate the measurement plum
 5. Recovery: time to resume after worker loss at 25/50/75% progress.
 6. Window fit: Migration Performance Agent output vs actual rehearsal duration.
 Report template: `docs/benchmarks.md` sections per environment (source release, DB, sizing, network).
+
+<!-- benchmark:measured:start -->
+## Measured on this environment (simulated run, no SAP system)
+
+Python 3.13.16 · Linux-6.18.44-fc-v114-x86_64-with-glibc2.39 · 4 CPUs · database sqlite · staging relational · measured 2026-10-10T15:17:49.405691+00:00
+
+No throughput or downtime guarantee is derived from these figures: the source and the target are the platform's simulators on the synthetic landscape; they validate the measurement plumbing and give the order of magnitude of the engine itself.
+
+| Scale | Rows | Objects | Generate + import | Discovery (store / add-on) | Graph | Scope | Extract (rec/s) | Transform | Load | Reconcile (checks) | End to end |
+|---:|---:|---:|---:|---|---:|---:|---|---:|---:|---|---:|
+| 1 | 11,089 | 2,978 | 0.29 s | 0.09 s / 1.75 s | 0.15 s | 0.13 s | 0.35 s (6,211) | 0.68 s | 0.78 s | 0.38 s (240) | 4.91 s |
+| 2 | 21,251 | 5,603 | 0.58 s | 0.14 s / 6.08 s | 0.29 s | 0.29 s | 0.82 s (4,429) | 1.08 s | 1.38 s | 0.50 s (240) | 11.54 s |
+| 3 | 31,738 | 8,220 | 0.97 s | 0.24 s / 13.54 s | 0.50 s | 0.51 s | 1.80 s (2,818) | 1.30 s | 1.80 s | 0.84 s (240) | 21.99 s |
+<!-- benchmark:measured:end -->

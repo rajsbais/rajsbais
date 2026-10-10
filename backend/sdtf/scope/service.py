@@ -245,6 +245,39 @@ def compare_manifests(a: ScopeManifest, b: ScopeManifest) -> dict:
 DISPOSITION_TO_CLASS = {"TRANSFER": "FULLY_TRANSFERRED", "TRANSFER_PARTIAL": "PARTIALLY_TRANSFERRED", "RETAIN": "RETAINED_BY_SELLER", "DUPLICATE": "SHARED_DUPLICATED", "REFERENCE": "REFERENCE_ONLY", "EXCLUDE": "EXCLUDED"}
 
 
+
+
+def compare_many(manifests: list[ScopeManifest], sample: int = 100) -> dict:
+    """Scenario matrix across N manifests of one project: the classification counts side by side, the volume,
+    approvals and the objects whose classification differs between any two of them."""
+    cls = {m.id: m.selection.get("classification", {}) for m in manifests}
+    all_classes = sorted({c["classification"] for d in cls.values() for c in d.values()})
+    matrix = {k: {m.id: sum(1 for c in cls[m.id].values() if c["classification"] == k) for m in manifests} for k in all_classes}
+    union = set().union(*cls.values()) if cls else set()
+    common_same, differing = 0, []
+    for n in sorted(union):
+        values = {m.id: cls[m.id].get(n, {}).get("classification", "NOT_IN_SCOPE") for m in manifests}
+        if len(set(values.values())) == 1 and "NOT_IN_SCOPE" not in values.values():
+            common_same += 1
+        elif len(set(values.values())) > 1:
+            differing.append({"node": n, "type": next((cls[m.id][n]["type"] for m in manifests if n in cls[m.id]), ""), **values})
+    pairwise = []
+    for i, a in enumerate(manifests):
+        for b in manifests[i + 1 :]:
+            d = compare_manifests(a, b)
+            pairwise.append({"a": a.id, "b": b.id, "only_in_a": d["only_in_a"], "only_in_b": d["only_in_b"], "reclassified": d["reclassified"], "delta_objects": d["delta_objects"], "delta_bytes": d["delta_bytes"]})
+    return {
+        "manifests": [{"id": m.id, "name": m.name, "version": m.version, "status": m.status, "objects": m.impact.get("objects_total", 0), "est_bytes": m.impact.get("est_bytes", 0), "approvals_required": m.impact.get("approvals_required", 0), "open_documents": m.impact.get("open_documents", 0), "company_codes": m.definition.get("company_codes", []), "shared_object_policy": m.definition.get("shared_object_policy"), "cross_company_policy": m.definition.get("cross_company_policy"), "historical_policy": m.definition.get("historical_policy")} for m in manifests],
+        "classifications": all_classes,
+        "matrix": matrix,
+        "objects_in_any": len(union),
+        "objects_identical": common_same,
+        "objects_differing": len(differing),
+        "differing": differing[:sample],
+        "pairwise": pairwise,
+    }
+
+
 def pending_dispositions(m: ScopeManifest) -> list[str]:
     return [n for n, c in m.selection.get("classification", {}).items() if c.get("requires_approval")]
 

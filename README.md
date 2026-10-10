@@ -73,6 +73,7 @@ Or: `docker compose -f deploy/docker-compose.yml up --build` (UI :8080, API :800
 | [capability review](docs/capability-review.md) | built / pending / cannot be built here, per brief section |
 | [test report](docs/test-report.md) | test campaign results, scenario matrix, scale timings, defects fixed |
 | [metadata verification](docs/metadata-verification.md) | what the public references confirmed about the API bindings, and how to check them against A4H's `$metadata` with one command |
+| [ADR-0017 discovery through the add-on](docs/adr/ADR-0017-discovery-through-the-add-on.md) | how an RFC source is discovered without copying it: organisational tables read, DDIC sizes, distributions counted in the system, bounded samples |
 | [ADR-0016 reconciliation through the adapters](docs/adr/ADR-0016-reconciliation-through-adapters.md) | how RECONCILE reads a real source over the add-on (with read-integrity evidence) and a real target over the released APIs, and what it cannot verify |
 | [cutover rehearsal checklist](docs/cutover-rehearsal.md) | mock cutovers, dress rehearsals and the go-live checklist: automatic readiness items, manual items, task timings fed into the forecast, approver verdict |
 | [business process analysis](docs/business-process-analysis.md) | TAANA-style variants, DB05 selectivity, age profiles, DB02 growth and DB15 links computed in the source through the add-on; what the workload transactions would add and why they are not faked |

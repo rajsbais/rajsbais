@@ -473,11 +473,24 @@ def system_tables(s: SapSystem = Depends(get_system), db: Session = Depends(get_
 
 
 # --------------------------------------------------------------------------------------- discovery
+def discovery_path(s: SapSystem) -> str:
+    """rfc: through the read-only add-on (every RFC source, simulated or live); record_store: the platform's copy
+    (synthetic systems, API targets)."""
+    return "rfc" if s.connector == "RFC" else "record_store"
+
+
 @router.post("/systems/{system_id}/discover", tags=["discovery"])
-def run_discovery(s: SapSystem = Depends(get_system), db: Session = Depends(get_db), p: Principal = Depends(require("project:write"))):
-    snap = discover_system(db, s, p.username)
-    record_event(db, p.username, "DISCOVERY_COMPLETED", "SYSTEM", s.id, {"snapshot": snap.id})
-    return {"snapshot_id": snap.id, "summary": snap.summary}
+def run_discovery(path: str | None = Query(None, pattern="^(rfc|record_store)$", description="override the read path: rfc (through the add-on) or record_store"), sample: int | None = Query(None, ge=10, le=10000, description="rfc path: read only the first N instances per business object (quick look; the scope engine refuses a sampled discovery)"), s: SapSystem = Depends(get_system), db: Session = Depends(get_db), p: Principal = Depends(require("project:write"))):
+    from ..discovery.rfc_discovery import discover_over_rfc
+
+    chosen = path or discovery_path(s)
+    if chosen == "rfc" and s.connector not in ("RFC", "API", "SYNTHETIC"):
+        raise HTTPException(409, f"no RFC path for connector {s.connector}")
+    snap = discover_over_rfc(db, s, p.username, sample=sample) if chosen == "rfc" else discover_system(db, s, p.username)
+    if snap.status == "FAILED":
+        raise HTTPException(502, f"discovery through the add-on failed: {snap.summary.get('read', {}).get('error', '')}")
+    record_event(db, p.username, "DISCOVERY_COMPLETED", "SYSTEM", s.id, {"snapshot": snap.id, "path": chosen})
+    return {"snapshot_id": snap.id, "path": chosen, "summary": snap.summary}
 
 
 @router.get("/systems/{system_id}/discovery", tags=["discovery"])

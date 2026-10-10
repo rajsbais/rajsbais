@@ -133,6 +133,7 @@ def discover_system(session: Session, system: SapSystem, actor: str, store: Reco
         "s4_impacts": s4_impacts,
         "complexity": complexity,
         "estimates": _estimates(total_bytes, inventory),
+        "read": {"path": "record_store", "rows_read": sum(len(store.rows(t)) for t in store.tables())},
     }
     snap.status = "COMPLETE"
     session.flush()
@@ -143,16 +144,11 @@ def _complexity_score(inventory, interfaces, custom_tables, store) -> dict:
     shared = sum(i["shared"] for i in inventory.values())
     cross_company_docs = sum(1 for r in store.rows("BKPF") if r.get("BVORG"))
     open_docs = sum(i["open"] for i in inventory.values() if i["kind"] == "TRANSACTIONAL")
-    factors = {
-        "company_codes": store.count("T001"),
-        "plants": store.count("T001W"),
-        "shared_master_data": shared,
-        "cross_company_documents": cross_company_docs,
-        "open_documents": open_docs,
-        "interfaces": len(interfaces),
-        "custom_tables": len(custom_tables),
-    }
-    score = min(100, int(factors["company_codes"] * 3 + factors["plants"] * 1.5 + shared * 0.2 + cross_company_docs * 0.3 + len(interfaces) * 2 + len(custom_tables) * 3))
+    return _complexity_from({"company_codes": store.count("T001"), "plants": store.count("T001W"), "shared_master_data": shared, "cross_company_documents": cross_company_docs, "open_documents": open_docs, "interfaces": len(interfaces), "custom_tables": len(custom_tables)})
+
+
+def _complexity_from(factors: dict) -> dict:
+    score = min(100, int(factors["company_codes"] * 3 + factors["plants"] * 1.5 + factors["shared_master_data"] * 0.2 + factors["cross_company_documents"] * 0.3 + factors["interfaces"] * 2 + factors["custom_tables"] * 3))
     return {"score": score, "band": "HIGH" if score > 70 else ("MEDIUM" if score > 35 else "LOW"), "factors": factors}
 
 
@@ -165,3 +161,16 @@ def _estimates(total_bytes: int, inventory) -> dict:
 
 def latest_snapshot(session: Session, system_id: str) -> DiscoverySnapshot | None:
     return session.execute(select(DiscoverySnapshot).where(DiscoverySnapshot.system_id == system_id).order_by(DiscoverySnapshot.created_at.desc())).scalars().first()
+
+
+def discovery_completeness(session: Session, system_id: str) -> tuple[bool, str]:
+    """Whether the latest discovery holds the complete instance inventory the scope engine classifies from: a
+    record-store discovery always does; a discovery through the add-on only when it was not sampled."""
+    snap = latest_snapshot(session, system_id)
+    if snap is None:
+        return False, "no discovery snapshot: run discovery first"
+    read = (snap.summary or {}).get("read") or {}
+    if read.get("path") == "rfc" and not read.get("complete", False):
+        partial = [b for b, i in (snap.summary.get("business_objects") or {}).items() if i.get("sampled", 0) < i.get("count", 0)]
+        return False, f"the discovery through the add-on was sampled ({read.get('sample')} instances per object type; incomplete for {', '.join(partial[:6])}{'…' if len(partial) > 6 else ''}): run a full discovery before scoping"
+    return True, ""

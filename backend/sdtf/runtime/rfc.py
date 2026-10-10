@@ -39,6 +39,7 @@ ABAP_TRUE, ABAP_FALSE = "X", ""
 POSITIVE_OPS = ("EQ", "BT", "GE", "GT", "LE", "LT", "CP")
 NEGATIVE_OPS = ("NE", "NB", "NP")
 SERVER_MAX_PACKAGE = 10000  # the add-on clamps IV_PACKAGE to this
+DDIC_TABLES = ("DD02L", "DD02T", "DD03L")  # answered from the catalogue by the simulator when the store has no such rows
 
 
 class RfcError(Exception):
@@ -178,8 +179,31 @@ class SimulatedAbapAddon:
 
     def _rows_sorted(self, table: str) -> list[tuple[tuple[str, ...], dict]]:
         if table not in self._sorted:
-            self._sorted[table] = sorted(((self._key_tuple(table, r), r) for r in self.store.rows(table)), key=lambda kr: kr[0])
+            self._sorted[table] = sorted(((self._key_tuple(table, r), r) for r in self._table_rows(table)), key=lambda kr: kr[0])
         return self._sorted[table]
+
+    def _table_rows(self, table: str) -> list[dict]:
+        """The store's rows, or, for the DDIC tables a store never carries, what an SAP system would answer: one
+        DD02L / DD02T row per catalogued or present table and one DD03L row per field (the catalogue is the DDIC
+        of the synthetic landscape)."""
+        rows = self.store.rows(table)
+        if rows or table not in DDIC_TABLES:
+            return rows
+        present = set(self.store.tables())
+        names = sorted(set(TABLES) | {t for t in present if t.startswith(("Z", "Y"))})
+        out = []
+        for name in names:
+            td = TABLES.get(name)
+            if table == "DD02L":
+                out.append({"TABNAME": name, "AS4LOCAL": "A", "AS4VERS": "0000", "TABCLASS": "TRANSP", "CONTFLAG": "A" if td and td.domain != "CONFIG" else "C", "SQLTAB": "", "DEVCLASS": "ZSDTF" if name.startswith(("Z", "Y")) else "SAPAPPL"})
+            elif table == "DD02T":
+                out.append({"TABNAME": name, "DDLANGUAGE": "E", "AS4LOCAL": "A", "AS4VERS": "0000", "DDTEXT": td.description if td else f"Custom table {name}"})
+            else:
+                fields = list(td.fields) if td else sorted({k for r in self.store.rows(name)[:50] for k in r})
+                keys = set(td.key_fields) if td else set()
+                for i, f in enumerate(fields, start=1):
+                    out.append({"TABNAME": name, "FIELDNAME": f, "AS4LOCAL": "A", "AS4VERS": "0000", "POSITION": str(i).zfill(4), "KEYFLAG": "X" if f in keys else "", "ROLLNAME": f, "DATATYPE": "CHAR", "LENG": "000040"})
+        return out
 
     @staticmethod
     def _encode_cursor(table: str, phash: str, last_key: tuple[str, ...], snapshot: str) -> str:
@@ -215,7 +239,7 @@ class SimulatedAbapAddon:
         self._authorize(table)
         td = TABLES.get(table)
         fields = [{"FIELDNAME": f, "KEYFLAG": ABAP_TRUE if (td and f in td.key_fields) else ABAP_FALSE, "DATATYPE": "CHAR", "LENG": 0} for f in (td.fields if td else sorted({k for r in self.store.rows(table)[:50] for k in r}))]
-        n = self.store.count(table)
+        n = len(self._table_rows(table)) if table in DDIC_TABLES else self.store.count(table)
         return {"ET_FIELDS": fields, "EV_ROWS": n, "EV_SIZE_MB": round(n * (td.avg_row_bytes if td else 256) / 1048576, 3), "EV_TABCLASS": "TRANSP", "EV_AUTHORIZED": ABAP_TRUE}
 
     def _read_package(self, IV_TABLE: str = "", IT_PREDICATE: list | None = None, IV_PACKAGE: int = 1000, IV_CURSOR: str = "", IV_SNAPSHOT: str = "", **_: Any) -> dict:

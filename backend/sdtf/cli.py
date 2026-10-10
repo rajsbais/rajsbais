@@ -123,6 +123,17 @@ def main(argv=None):
     crre = crsub.add_parser("report", help="write the checklist report (Markdown)")
     crre.add_argument("--id", required=True)
     crre.add_argument("--out", default=None)
+    bch = sub.add_parser("bench", help="benchmark harness: run the vertical slice at the given scales on the simulators, time every step and rewrite the measured section of docs/benchmarks.md")
+    bch.add_argument("--scales", default="1", help="comma-separated scales, e.g. 1,2,3")
+    bch.add_argument("--seed", type=int, default=42)
+    bch.add_argument("--workers", type=int, default=4)
+    bch.add_argument("--out", default=None, help="Markdown document whose measured section is replaced (the JSON is written beside it)")
+    bch.add_argument("--json", action="store_true")
+    dsc = sub.add_parser("discover", help="discover a registered system: through the read-only add-on (RFC sources) or from the platform's record store")
+    dsc.add_argument("--system", required=True, help="registered system id")
+    dsc.add_argument("--path", choices=["rfc", "record_store"], default=None, help="override the read path (default: rfc for RFC sources, record_store otherwise)")
+    dsc.add_argument("--sample", type=int, default=None, help="rfc path: read only the first N instances per business object (quick look; the scope engine refuses a sampled discovery)")
+    dsc.add_argument("--json", action="store_true")
     bpa = sub.add_parser("process-analysis", help="business process analysis from the database footprint of a registered system (TAANA-style variants, DB05 selectivity, age, DB02 growth, DB15 links) through the add-on")
     bpa.add_argument("--system", required=True, help="registered system id")
     bpa.add_argument("--area", choices=["ALL", "O2C", "P2P", "R2R"], default="ALL")
@@ -377,6 +388,50 @@ def main(argv=None):
                     print(f"  {ot}: {o['instances']} instances, {o['with_messages']} in log, {o['rejected']} rejected, {o['errors']} E / {o['warnings']} W; categories {o['categories'] or '-'}")
                 for reason, n in summ["unmatched_reasons"].items():
                     print(f"  unmatched x{n}: {reason}")
+        return 0
+    if a.cmd == "bench":
+        from .benchmark import environment, report_markdown, run_benchmark, write_report
+
+        results = []
+        for sc in [int(x) for x in a.scales.split(",") if x.strip()]:
+            with session_scope() as s_:
+                r = run_benchmark(s_, scale=sc, seed=a.seed, workers=a.workers)
+            results.append(r)
+            print(f"scale {sc}: {r['landscape']['rows']} rows, run {r['run']['status']} in {r['steps']['run_s']} s, end to end {r['steps']['end_to_end_s']} s, reconciliation {r['reconciliation']['overall']} over {r['reconciliation']['checks']} checks")
+        env = environment()
+        if a.out:
+            write_report(results, a.out, env)
+            print(f"written {a.out}")
+        if a.json:
+            print(json.dumps({"environment": env, "results": results}, indent=2, default=str))
+        elif not a.out:
+            print(report_markdown(results, env))
+        return 0
+    if a.cmd == "discover":
+        from .discovery.rfc_discovery import discover_over_rfc
+        from .discovery.service import discover_system
+        from .models import SapSystem
+
+        with session_scope() as s_:
+            system = s_.get(SapSystem, a.system)
+            if system is None:
+                print(f"system {a.system} not found", file=sys.stderr)
+                return 2
+            chosen = a.path or ("rfc" if system.connector == "RFC" else "record_store")
+            snap = discover_over_rfc(s_, system, "cli", sample=a.sample) if chosen == "rfc" else discover_system(s_, system, "cli")
+            summary, status = dict(snap.summary), snap.status
+        if status == "FAILED":
+            print(f"discovery failed: {summary.get('read', {}).get('error', '')}", file=sys.stderr)
+            return 1
+        if a.json:
+            print(json.dumps(summary, indent=2, default=str))
+        else:
+            rd = summary.get("read", {})
+            print(f"{summary['system']['sid']}/{summary['system']['client']} discovered through {rd.get('path')}{' (' + str(rd.get('transport')) + ')' if rd.get('transport') else ''}: {summary['tables']['count']} tables ({summary['tables']['custom']} custom), {summary['tables']['total_rows']} rows, org units {summary['org_units']}, {len(summary['business_objects'])} business object types, complexity {summary['complexity']['band']} ({summary['complexity']['score']})")
+            if rd.get("unreadable"):
+                print("not readable: " + ", ".join(f"{k} ({v})" for k, v in rd["unreadable"].items()))
+            for n in rd.get("notes", []):
+                print("note: " + n)
         return 0
     if a.cmd == "process-analysis":
         from .discovery import process_analysis as pa
