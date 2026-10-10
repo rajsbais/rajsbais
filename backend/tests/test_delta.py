@@ -162,7 +162,9 @@ def test_replay_is_idempotent_and_stale_events_conflict(delta_world):
         cap = eng.capture()
         assert cap["captured"] > 0 and cap["duplicates_ignored"] == cap["captured"] and cap["in_scope"] == 0
         # stale event: an older sequence for a key the target already updated with a newer one -> CONFLICT, target untouched
-        applied = s.execute(select(DeltaEvent).where(DeltaEvent.run_id == ids["c1"], DeltaEvent.status == "APPLIED", DeltaEvent.action == "UPDATED")).scalars().first()
+        events = s.execute(select(DeltaEvent).where(DeltaEvent.run_id == ids["c1"]).order_by(DeltaEvent.seq)).scalars().all()
+        latest = {(e.table_name, e.record_key): e for e in events}  # the last event of every key decides the target row
+        applied = next(e for e in reversed(events) if e.status == "APPLIED" and e.action == "UPDATED" and latest[(e.table_name, e.record_key)] is e)
         stale_payload = {**applied.target_payload, "NETWR": 1.0}
         s.add(DeltaEvent(run_id=probe.id, baseline_run_id=base.id, seq=-1, changenr="STALE", object_type=applied.object_type, object_key=applied.object_key, table_name=applied.table_name, record_key=applied.record_key, op="U", source_payload=applied.source_payload, target_payload=stale_payload, target_key=applied.target_key, status="CAPTURED"))
         s.flush()

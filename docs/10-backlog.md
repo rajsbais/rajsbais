@@ -37,7 +37,8 @@ Legend: P0 next increment · P1 following · P2 later. Sizes are relative (S/M/L
 | P | Item | Size |
 |---|---|---|
 | P0 | Finance: Universal Journal posting path, open-item migration objects, asset balances via migration object | L |
-| P1 | BOM, routing, work center, batches, serial numbers, scheduling agreements, contracts | L |
+| ✅ | Manufacturing masters: bills of material (STKO/STPO with the MAST assignments), routings (PLKO/PLPO with the MAPL assignments), work centers with cost center assignment (CRHD/CRCO), batches with plant batches and batch stock (MCH1/MCHA/MCHB) as plant-scoped master data with company codes through the valuation area; only the carved-out plants' assignment views move; merger number ranges and batch prefix; graph links to material, production order, work center, cost center; migration cockpit objects BOM / Routing / Work center / Batch; synthetic landscape generates them consistently | L |
+| P1 | Serial numbers (EQUI/SER* needs the equipment master), scheduling agreements and contracts (EKKO is shared with the purchase order header: needs a header filter on BSTYP) | M |
 | P1 | QM, PM, PS, EWM, TM packages | XL |
 | ✅ | Period-end reconciliation: the target's trial balance per fiscal period (from rows, or from ACDOCA aggregates by POPER), the period cut-off of the transferred documents, open items per document currency with the foreign currency valuation note (document-currency amounts must agree, local amounts may be restated), valuation per area with the held materials explained, price control of the transferred materials (prices from rows, counts on an aggregate side); the classic BSEG line in aggregate mode says it cannot know (NOT_VERIFIED); the synthetic landscape bills every fifth invoice in a foreign currency | M |
 

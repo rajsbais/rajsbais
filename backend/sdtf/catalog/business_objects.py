@@ -75,6 +75,10 @@ BUSINESS_OBJECTS: dict[str, BusinessObjectType] = {
         BusinessObjectType("MM.InvoiceReceipt", "Logistics invoice", "MM", "TRANSACTIONAL", "RBKP", ("RSEG",), ("BELNR", "GJAHR"), "COMPANY_CODE", "BUKRS", "GJAHR", load_methods=(_S4_MC,)),
         BusinessObjectType("FI.AccountingDocument", "Accounting document", "FI", "TRANSACTIONAL", "BKPF", ("BSEG", "BSID", "BSIK"), ("BUKRS", "BELNR", "GJAHR"), "COMPANY_CODE", "BUKRS", "GJAHR", load_methods=(_S4_JOURNAL, _S4_MC), s4_simplification="Universal Journal (ACDOCA); open items via migration objects, history via journal entry API"),
         BusinessObjectType("PP.ProductionOrder", "Production order", "PP", "TRANSACTIONAL", "AFKO", ("AFPO", "AUFK", "AFRU"), ("AUFNR",), "PLANT", "DWERK", load_methods=(LoadMethod("S4HANA", "API", "API_PRODUCTION_ORDER_2_SRV", "Only open orders re-created"),)),
+        BusinessObjectType("MD.BillOfMaterial", "Bill of material", "PP", "MASTER", "STKO", ("MAST", "STPO"), ("STLNR", "STLAL"), "PLANT", None, load_methods=(LoadMethod("S4HANA", "MIGRATION_COCKPIT", "Bill of material (migration object)", "material BOM per plant and usage; components must exist as products in the target"),), description="material BOM: the BOM header and alternative with its items and its material-plant-usage assignments (MAST); plant-scoped through the assignments"),
+        BusinessObjectType("MD.Routing", "Routing", "PP", "MASTER", "PLKO", ("MAPL", "PLPO"), ("PLNNR", "PLNTY", "PLNAL"), "PLANT", "WERKS", load_methods=(LoadMethod("S4HANA", "MIGRATION_COCKPIT", "Routing (migration object)", "task list with operations; work centers must exist in the target"),), description="routing: the task list header and group counter with its operations and its material-plant assignments (MAPL)"),
+        BusinessObjectType("MD.WorkCenter", "Work center", "PP", "MASTER", "CRHD", ("CRCO",), ("OBJID",), "PLANT", "WERKS", load_methods=(LoadMethod("S4HANA", "MIGRATION_COCKPIT", "Work center (migration object)", "with the cost center assignment; the cost center must exist in the target"),), description="work center with its cost center assignment"),
+        BusinessObjectType("MD.Batch", "Batch", "MM", "MASTER", "MCH1", ("MCHA", "MCHB"), ("CHARG", "MATNR"), "PLANT", None, load_methods=(LoadMethod("S4HANA", "MIGRATION_COCKPIT", "Batch (migration object)", "batch master; batch stock quantities through the inventory balance object"),), description="batch of a material (unique at material level) with its plant batches and batch stock; plant-scoped through the plant batches"),
         BusinessObjectType("BASIS.RfcDestination", "RFC destination", "BASIS", "TECHNICAL", "RFCDES", (), ("RFCDEST",), "CLIENT", None, load_methods=(_UNSUPPORTED,)),
         BusinessObjectType("BASIS.IdocPartner", "IDoc partner profile", "BASIS", "TECHNICAL", "EDPP1", (), ("PARNUM", "PARTYP"), "CLIENT", None, load_methods=(_UNSUPPORTED,)),
         BusinessObjectType("BASIS.BackgroundJob", "Background job", "BASIS", "TECHNICAL", "TBTCO", (), ("JOBNAME", "JOBCOUNT"), "CLIENT", None, load_methods=(_UNSUPPORTED,)),
@@ -90,6 +94,17 @@ def bo(id_: str) -> BusinessObjectType:
 
 
 # ------------------------------------------------------------------------- instance derivation
+
+def _plants_of(t: str, row: dict, store: RecordStore) -> list[str]:
+    """Plants a BOM, routing or batch is assigned in (MAST / MAPL / MCHA), owner first, duplicates removed."""
+    if t == "MD.BillOfMaterial":
+        plants = [m["WERKS"] for m in store.lookup("MAST", "STLNR", row["STLNR"]) if str(m["STLAL"]) == str(row["STLAL"])]
+    elif t == "MD.Routing":
+        plants = ([row["WERKS"]] if row.get("WERKS") else []) + [m["WERKS"] for m in store.lookup("MAPL", "PLNNR", row["PLNNR"]) if m["PLNTY"] == row["PLNTY"] and str(m["PLNAL"]) == str(row["PLNAL"])]
+    else:
+        plants = [b["WERKS"] for b in store.lookup("MCHA", "CHARG", row["CHARG"]) if b["MATNR"] == row["MATNR"]]
+    return list(dict.fromkeys(p for p in plants if p))
+
 def instance_company_codes(bo_type: BusinessObjectType, row: dict, store: RecordStore) -> list[str]:
     """All company codes an instance touches (owner first). Used for shared / cross-company detection."""
     ccs: list[str] = []
@@ -152,6 +167,13 @@ def instance_company_codes(bo_type: BusinessObjectType, row: dict, store: Record
     elif t == "PP.ProductionOrder":
         k = store.get("T001K", BWKEY=row["DWERK"])
         add(k["BUKRS"] if k else None)
+    elif t == "MD.WorkCenter":
+        k = store.get("T001K", BWKEY=row["WERKS"])
+        add(k["BUKRS"] if k else None)
+    elif t in ("MD.BillOfMaterial", "MD.Routing", "MD.Batch"):
+        for werks in _plants_of(t, row, store):
+            k = store.get("T001K", BWKEY=werks)
+            add(k["BUKRS"] if k else None)
     elif t == "Z.ExportControl":
         for r in store.lookup("MARC", "MATNR", row["MATNR"]):
             k = store.get("T001K", BWKEY=r["WERKS"])
@@ -298,6 +320,20 @@ RELATIONSHIPS: list[Relationship] = [
     Relationship("PP.ProductionOrder", "MM.MaterialDocument", "DOC_FLOW", "ProductionOrder→ComponentConsumption", lambda r, s: sorted({f"{i['MBLNR']}|{i['MJAHR']}" for i in s.lookup("MSEG", "AUFNR", r["AUFNR"])})),
     Relationship("PP.ProductionOrder", "MD.Material", "MASTER_REF", "ProductionOrder→Product", lambda r, s: [r["PLNBEZ"]]),
     Relationship("PP.ProductionOrder", "CO.CostCenter", "MASTER_REF", "ProductionOrder→SettlementCostCenter", lambda r, s: [f"{a['KOKRS']}|{a['KOSTL']}" for a in [s.get("AUFK", AUFNR=r["AUFNR"])] if a]),
+    Relationship("PP.ProductionOrder", "MD.BillOfMaterial", "MASTER_REF", "ProductionOrder→BillOfMaterial", lambda r, s: sorted({f"{m['STLNR']}|{m['STLAL']}" for m in s.lookup("MAST", "MATNR", r["PLNBEZ"]) if m["WERKS"] == r["DWERK"]}), "BOM of the product in the producing plant"),
+    Relationship("PP.ProductionOrder", "MD.Routing", "MASTER_REF", "ProductionOrder→Routing", lambda r, s: sorted({f"{m['PLNNR']}|{m['PLNTY']}|{m['PLNAL']}" for m in s.lookup("MAPL", "MATNR", r["PLNBEZ"]) if m["WERKS"] == r["DWERK"]}), "Routing of the product in the producing plant"),
+    # --- manufacturing masters
+    Relationship("MD.Material", "MD.BillOfMaterial", "PARENT_CHILD", "Material→BillOfMaterial", lambda r, s: sorted({f"{m['STLNR']}|{m['STLAL']}" for m in s.lookup("MAST", "MATNR", r["MATNR"])}), "BOMs assigned to the material (per plant and usage)"),
+    Relationship("MD.Material", "MD.Routing", "PARENT_CHILD", "Material→Routing", lambda r, s: sorted({f"{m['PLNNR']}|{m['PLNTY']}|{m['PLNAL']}" for m in s.lookup("MAPL", "MATNR", r["MATNR"])}), "Routings assigned to the material (per plant)"),
+    Relationship("MD.Material", "MD.Batch", "PARENT_CHILD", "Material→Batch", lambda r, s: [f"{b['CHARG']}|{b['MATNR']}" for b in s.lookup("MCH1", "MATNR", r["MATNR"])], "Batches of the material"),
+    Relationship("MD.BillOfMaterial", "MD.Material", "MASTER_REF", "BillOfMaterial→Component", lambda r, s: sorted({i["IDNRK"] for i in s.lookup("STPO", "STLNR", r["STLNR"]) if str(i["STLAL"]) == str(r["STLAL"])}), "Components of the BOM"),
+    Relationship("MD.BillOfMaterial", "CFG.Plant", "ORG_OWNERSHIP", "BillOfMaterial→Plant", lambda r, s: _plants_of("MD.BillOfMaterial", r, s), "Plants the BOM is assigned in"),
+    Relationship("MD.Routing", "MD.WorkCenter", "MASTER_REF", "Routing→WorkCenter", lambda r, s: sorted({str(o["ARBID"]) for o in s.lookup("PLPO", "PLNNR", r["PLNNR"]) if str(o["PLNAL"]) == str(r["PLNAL"]) and o.get("ARBID")}), "Work centers of the operations"),
+    Relationship("MD.Routing", "CFG.Plant", "ORG_OWNERSHIP", "Routing→Plant", lambda r, s: _plants_of("MD.Routing", r, s), "Plant of the task list and the plants it is assigned in"),
+    Relationship("MD.WorkCenter", "CFG.Plant", "ORG_OWNERSHIP", "WorkCenter→Plant", lambda r, s: [r["WERKS"]]),
+    Relationship("MD.WorkCenter", "CO.CostCenter", "MASTER_REF", "WorkCenter→CostCenter", lambda r, s: sorted({f"{c['KOKRS']}|{c['KOSTL']}" for c in s.lookup("CRCO", "OBJID", r["OBJID"]) if c.get("KOSTL")}), "Cost center the work center's activities settle to"),
+    Relationship("MD.Batch", "MD.Material", "MASTER_REF", "Batch→Material", lambda r, s: [r["MATNR"]]),
+    Relationship("MD.Batch", "CFG.Plant", "ORG_OWNERSHIP", "Batch→Plant", lambda r, s: _plants_of("MD.Batch", r, s), "Plants holding the batch"),
     # --- accounting
     Relationship("FI.AccountingDocument", "FI.AccountingDocument", "DOC_FLOW", "AccountingDocument→Clearing", _clearing_docs, "Open item cleared by clearing/payment document"),
     Relationship("FI.AccountingDocument", "FI.AccountingDocument", "CROSS_COMPANY", "AccountingDocument→CrossCompanyCounterpart", _cross_company_docs, "Cross-company posting counterpart (BVORG)"),

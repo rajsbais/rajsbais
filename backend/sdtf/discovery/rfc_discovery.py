@@ -35,6 +35,9 @@ SAMPLE_DEPENDENCIES: dict[str, list[tuple[str, str, str]]] = {
     "MM.PurchaseOrder": [("EKPO", "EBELN", "EBELN"), ("EKBE", "EBELN", "EBELN")],
     "FI.AccountingDocument": [("BSID", "BELNR", "BELNR"), ("BSIK", "BELNR", "BELNR"), ("BKPF", "BVORG", "BVORG")],
     "PP.ProductionOrder": [("AFPO", "AUFNR", "AUFNR")],
+    "MD.BillOfMaterial": [("MAST", "STLNR", "STLNR")],
+    "MD.Routing": [("MAPL", "PLNNR", "PLNNR")],
+    "MD.Batch": [("MCHA", "CHARG", "CHARG")],
     "Z.ExportControl": [("MARC", "MATNR", "MATNR")],
     "Z.SupplierExt": [("LFB1", "LIFNR", "LIFNR")],
 }

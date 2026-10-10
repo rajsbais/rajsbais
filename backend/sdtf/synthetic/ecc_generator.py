@@ -114,7 +114,9 @@ class EccLandscapeGenerator:
             "VBELN_SO": Counter(1000000), "VBELN_DL": Counter(80000000), "VBELN_BI": Counter(90000000),
             "EBELN": Counter(4500000000), "MBLNR": Counter(4900000000), "RBKP": Counter(5105600000),
             "BELNR": Counter(100000000), "AUFNR": Counter(1000100), "RUECK": Counter(10000), "BVORG": Counter(0),
+            "STLNR": Counter(1000), "PLNNR": Counter(50000000), "OBJID": Counter(10000000), "CHARG": Counter(1000000),
         }
+        self.plant_work_centers: dict[str, list[str]] = {}
 
     # ---------------------------------------------------------------- helpers
     def add(self, table: str, row: dict) -> dict:
@@ -141,7 +143,9 @@ class EccLandscapeGenerator:
         self._gl_accounts()
         self._cost_objects()
         self._partners()
+        self._work_centers()
         self._materials()
+        self._manufacturing_masters()
         self._assets()
         for cc in self.spec.company_codes:
             for year in self.spec.fiscal_years:
@@ -262,6 +266,46 @@ class EccLandscapeGenerator:
             own = [m for p in cc.plants for m in self.plant_materials.get(p, [])]
             if own and not flagged.intersection(own):
                 self.add("ZSD_EXPORT_CTRL", {"MATNR": own[0], "ECCN": "3A001", "CONTROLLED": "X", "LICENSE_REQ": "X"})
+
+    def _work_centers(self):
+        """Two work centers per plant, each settling to a cost center of the plant's company code."""
+        for werks, bukrs in self.plant_cc.items():
+            for n in (1, 2):
+                objid = str(self.counters["OBJID"].next())
+                self.add("CRHD", {"OBJID": objid, "OBJTY": "A", "ARBPL": f"WC{werks}{n}", "WERKS": werks, "VERWE": "0001", "VGWTS": "SAP1", "KTEXT": f"Work center {n} plant {werks}"})
+                self.add("CRCO", {"OBJID": objid, "LASET": 1, "KOKRS": self.cc_by_code[bukrs].kokrs, "KOSTL": self.cc_costcenters[bukrs][1], "ENDDA": "99991231"})
+                self.plant_work_centers.setdefault(werks, []).append(objid)
+
+    def _manufacturing_masters(self):
+        """BOM and routing for every produced material (FERT / HALB) in its plants; batches for a third of the
+        materials with stock. The BOM components are raw or semi-finished materials of the same plant."""
+        rng = self.rng
+        mtype = {r["MATNR"]: r["MTART"] for r in self.tables["MARA"]}
+        for werks, mats in self.plant_materials.items():
+            components = [m for m in mats if mtype[m] in ("ROH", "HALB")]
+            produced = [m for m in mats if mtype[m] in ("FERT", "HALB")]
+            for matnr in produced:
+                comps = [c for c in components if c != matnr]
+                if not comps:
+                    continue
+                stlnr = str(self.counters["STLNR"].next())
+                self.add("MAST", {"MATNR": matnr, "WERKS": werks, "STLAN": "1", "STLNR": stlnr, "STLAL": "01"})
+                self.add("STKO", {"STLNR": stlnr, "STLAL": "01", "STLTY": "M", "STLST": "01", "BMENG": 1, "BMEIN": "EA", "DATUV": "20200101"})
+                for i, comp in enumerate(rng.sample(comps, min(len(comps), rng.randint(2, 3))), start=1):
+                    self.add("STPO", {"STLNR": stlnr, "STLAL": "01", "STLKN": i, "STLTY": "M", "POSNR": f"{i * 10:04d}", "IDNRK": comp, "MENGE": rng.randint(1, 5), "MEINS": "EA", "POSTP": "L"})
+                plnnr = str(self.counters["PLNNR"].next())
+                self.add("MAPL", {"PLNNR": plnnr, "PLNTY": "N", "PLNAL": "01", "MATNR": matnr, "WERKS": werks})
+                self.add("PLKO", {"PLNNR": plnnr, "PLNTY": "N", "PLNAL": "01", "WERKS": werks, "STATU": "4", "VERWE": "1", "PLNME": "EA", "LOSVN": 1, "LOSBS": 99999999, "KTEXT": f"Routing {matnr}"})
+                wcs = self.plant_work_centers.get(werks, [])
+                for i, op in enumerate(("Setup and assembly", "Inspection and packing"), start=1):
+                    self.add("PLPO", {"PLNNR": plnnr, "PLNTY": "N", "PLNKN": i, "PLNAL": "01", "VORNR": f"{i * 10:04d}", "ARBID": wcs[(i - 1) % len(wcs)] if wcs else "", "WERKS": werks, "LTXA1": op, "VGW01": rng.randint(5, 60), "VGE01": "MIN", "BMSCH": 1, "STEUS": "PP01"})
+            for matnr in mats:
+                stock = next((r for r in self.tables["MARD"] if r["MATNR"] == matnr and r["WERKS"] == werks), None)
+                if stock and stock["LABST"] > 0 and rng.random() < 0.34:
+                    charg = "B" + self.counters["CHARG"].next()
+                    self.add("MCH1", {"CHARG": charg, "MATNR": matnr, "ERSDA": "20240115", "VFDAT": "20261231", "HSDAT": "20240110", "LICHA": ""})
+                    self.add("MCHA", {"CHARG": charg, "MATNR": matnr, "WERKS": werks, "ERSDA": "20240115", "VFDAT": "20261231", "BWTAR": ""})
+                    self.add("MCHB", {"CHARG": charg, "MATNR": matnr, "WERKS": werks, "LGORT": "0001", "CLABS": stock["LABST"], "CINSM": 0, "CSPEM": 0})
 
     def _assets(self):
         for cc in self.spec.company_codes:

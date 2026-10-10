@@ -44,6 +44,10 @@ def generate_candidate_ruleset(defn: ScopeDefinition, target_product: str = "S4H
         # merger: every document / asset number of a non-leading source moves into a disjoint range so that
         # references (document flow, PO history, clearing, settlement) stay consistent across tables
         rules.append({"id": "merge-document-numbers", "type": "number_range", "description": f"Disjoint document number range for source #{source_index + 1}", "tables": ["VBAK", "VBAP", "VBFA", "LIKP", "LIPS", "VBRK", "VBRP", "EKKO", "EKPO", "EKBE", "MKPF", "MSEG", "RBKP", "RSEG", "BKPF", "BSEG", "BSID", "BSIK", "AFKO", "AFPO", "AUFK", "AFRU", "ANLA", "ANLC"], "fields": ["VBELN", "VGBEL", "AUBEL", "VBELV", "EBELN", "MBLNR", "BELNR", "AUGBL", "AUFNR", "RUECK", "ANLN1"], "offset": 10_000_000_000 * source_index})
+        # internally numbered manufacturing masters (BOM, task list, work center object) move with the documents;
+        # batch numbers are external keys and get a source prefix instead (applied once per record)
+        rules.append({"id": "merge-master-numbers", "type": "number_range", "description": f"Disjoint BOM, task list and work center numbers for source #{source_index + 1}", "tables": ["MAST", "STKO", "STPO", "MAPL", "PLKO", "PLPO", "CRHD", "CRCO"], "fields": ["STLNR", "PLNNR", "OBJID", "ARBID"], "offset": 10_000_000_000 * source_index})
+        rules.append({"id": "merge-batch-numbers", "type": "key_map", "description": f"Batch numbers of source #{source_index + 1} prefixed to stay unique per material", "tables": ["MCH1", "MCHA", "MCHB"], "fields": ["CHARG"], "strategy": "prefix", "prefix": f"M{source_index + 1}", "when": {"field": "CHARG", "not_prefix": f"M{source_index + 1}"}})
     if target_product == "S4HANA":
         bp_when = {"field": "KUNNR", "not_prefix": "BP"}
         rules += [
